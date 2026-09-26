@@ -1,0 +1,58 @@
+# Exercises every error rule of spec §2.3.
+[meta]
+schema = 1
+last_refresh = "2026-09-26"
+benchmark = "aa"
+benchmark_version = "v1"
+default_main_tier = "nope"
+default_subagent_tier = "sub"
+
+[models.a]
+label = "A"
+status = "active"
+context = 1000
+efforts = ["low", "high"]
+price = { input = 1.0, output = 2.0 }
+
+[models.b]
+status = "bogus"
+
+[models.c]
+status = "dominated"
+reason = "x"
+api_id = "c"
+
+[models.d]
+status = "active"
+api_id = "d"
+alias = "d"
+context = 400_000
+price = { input = 1.0, output = 2.0 }
+scopes = ["subagent"]
+
+[tiers.main.one]
+rank = 1
+model = "a"
+effort = "max"
+criteria = "one"
+
+[tiers.main.two]
+rank = 1
+model = "ghost"
+criteria = "two"
+
+[tiers.main.three]
+rank = 3
+model = "c"
+criteria = ""
+
+[tiers.main.four]
+rank = 4
+model = "d"
+criteria = "four"
+
+[tiers.subagent.sub]
+rank = 1
+model = "a"
+effort = "low"
+criteria = "sub"

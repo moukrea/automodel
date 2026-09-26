@@ -1,0 +1,42 @@
+# ~/.config/automodel/config.toml — router behaviour only (models live in the catalog).
+listen = "127.0.0.1:8788"
+upstream = "https://api.anthropic.com"
+custom_model_id = "jev"
+catalog = "/path/to/automodel/catalog.toml"   # hot-reloaded; relative paths resolve from this file
+# state_dir = "~/.local/state/automodel"      # sessions, prompt index, hooks.log, catalog.lastgood.toml
+# ledger = "~/.local/state/automodel/ledger.jsonl"
+cache_ttl = "1h"
+jev_timeout = "2s"
+state_budget_tokens = 24000
+theta_act = 0.6
+theta_low = 0.35
+respect_explicit_subagent_model = true
+jev_shadow_model = ""            # set during a new Jev version's observation period
+# stale_days = 60                # catalog data older than this warns
+# repo_policy_file = ".automodel.toml"   # min_tier / max_tier / min_subagent_tier / max_subagent_tier
+# statusline_flash = "30s"
+# OpenRouter key for Jev ($OPENROUTER_API_KEY wins if set). Keep this file 0600.
+openrouter_api_key = ""
+
+# statusline_command = "~/.claude/statusline-command.sh"   # your own statusline, shown before ours
+# route_workflow_steps = true
+
+# v2 features (all default on). With all three off the router behaves as v1:
+# decisions only when the prompt cache is already lost (first prompt,
+# compaction, cold cache), with the confidence-escalation policy.
+[features]
+# Re-evaluate the tier on warm turns too. A switch has to beat its cost
+# (see cost_aware) and clear warm_min_confidence.
+warm_decisions = true
+# Change effort mid-conversation without losing the prompt cache
+# (effort-only system messages; models with per_turn_effort in the catalog).
+per_turn_effort = true
+# Pick tiers by expected cost: working at a wrong effort (underprovision
+# costs catalog meta.underprovision_penalty x the gap) against the cost of a
+# switch (a cache rebuild of the whole context, unless per-turn effort keeps
+# it). When no switch could pay back, Jev is not even asked.
+cost_aware = true
+warm_min_confidence = 0.7
+warm_timeout = "3s"
+# Prompts a switch is expected to serve, when weighed against a cache rebuild.
+switch_horizon_prompts = 3

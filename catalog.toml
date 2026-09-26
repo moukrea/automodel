@@ -1,0 +1,265 @@
+# Model catalog: the single source of truth for models, prices, measurements,
+# tiers and Jev criteria. Hot-reloaded by the proxy and hooks.
+# Change it through the refresh-model-catalog skill; log every change in
+# catalog-history.md. Validate with: automodel catalog check
+
+[meta]
+schema = 1
+last_refresh = "2026-09-26"
+benchmark = "artificial-analysis-intelligence-index"
+benchmark_version = "v4.3.2"
+jev_model = "typesafe/jev-1.13"
+default_main_tier = "high"
+default_subagent_tier = "opus-medium"
+# Windows above 200k: long_context = "native" models get it without a beta
+# (the proxy strips the beta for them: on a native model it defeats the
+# prompt cache); long_context = "beta" models need this anthropic-beta value.
+long_context_beta = "context-1m-2025-08-07"
+# Main-session tiers must offer at least this window (long sessions break on less).
+main_min_context = 1_000_000
+# Effort-only system messages mid conversation (models with per_turn_effort):
+# an effort change keeps the prompt cache. Claude Code uses the same beta.
+per_turn_effort_beta = "per-turn-control-2026-07-01"
+# Working below the right tier costs this many times the cost gap (rework,
+# wrong answers); working above it costs the gap once. Calibrate from the ledger.
+underprovision_penalty = 3.0
+# Warm turns: a prompt continuing the work in progress (Jev yes-probability
+# at or above this) keeps the mode and is never downgraded. Set from
+# `automodel eval` (yes-cases vs no-cases distribution).
+continues_threshold = 0.7
+
+# ---------------------------------------------------------------- models
+
+[models.claude-opus-5-5]
+label = "Opus 5.5"
+status = "active"
+api_id = "claude-opus-5-5"
+alias = "opus"
+context = 1_000_000
+long_context = "native"
+max_output = 128_000
+efforts = ["low", "medium", "high", "xhigh", "max"]
+default_effort = "medium"
+per_turn_effort = true
+price = { input = 4.0, output = 20.0, cache_read = 0.20, cache_write_5m = 5.0, cache_write_1h = 8.0 }
+fast = { allowed = false, input = 8.0, output = 40.0, speedup = 2.5 }
+verified_at = "2026-09-26"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/models/overview",
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+]
+
+[models.claude-haiku-4-5]
+label = "Haiku 4.5"
+status = "active"
+reason = "Not measured on index v4.3.2; kept for mechanical subagent work pending ledger data."
+api_id = "claude-haiku-4-5-20251001"
+alias = "haiku"
+context = 200_000
+max_output = 64_000
+efforts = []
+price = { input = 1.0, output = 5.0, cache_read = 0.10, cache_write_5m = 1.25, cache_write_1h = 2.0 }
+scopes = ["subagent"]
+verified_at = "2026-09-26"
+sources = ["https://platform.claude.com/docs/en/about-claude/pricing"]
+
+[models.claude-sonnet-5]
+label = "Sonnet 5"
+status = "dominated"
+reason = "Every effort dominated by Opus 5.5 low (index 38 max vs 42); low is quasi-dominated (7% cheaper than Opus 5.5 low for -18 points). Cache read costs the same as Opus 5.5 ($0.20/M)."
+api_id = "claude-sonnet-5"
+alias = "sonnet"
+context = 1_000_000
+long_context = "native"
+max_output = 128_000
+efforts = ["low", "medium", "high", "xhigh", "max"]
+price = { input = 2.0, output = 10.0, cache_read = 0.20, cache_write_5m = 2.50, cache_write_1h = 4.0 }
+verified_at = "2026-09-26"
+sources = ["https://platform.claude.com/docs/en/about-claude/pricing"]
+
+[models.claude-opus-5]
+label = "Opus 5"
+status = "dominated"
+reason = "Superseded by Opus 5.5 at equal or lower cost per task; figures to record at the first refresh."
+
+[models.claude-opus-4-8]
+label = "Opus 4.8"
+status = "dominated"
+reason = "Dominated by Opus 5.5; still used automatically by Opus 5.5 cyber safeguards, nothing to route. Figures to record at the first refresh."
+
+[models.claude-fable-5-1]
+label = "Fable 5.1"
+status = "excluded"
+reason = "Replaced by Opus 5.5."
+
+# ---------------------------------------------------------- measurements
+# Artificial Analysis Intelligence Index v4.3.2 (knowledge work + terminal
+# agentic; not pure Claude Code — the ledger confirms or corrects).
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "low"
+index = 42
+cost_per_task = 0.55
+time_per_task_s = 80
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "medium"
+index = 51
+cost_per_task = 1.34
+time_per_task_s = 203
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "high"
+index = 54
+cost_per_task = 1.82
+time_per_task_s = 262
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "xhigh"
+index = 56
+cost_per_task = 3.46
+time_per_task_s = 458
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "max"
+index = 58
+cost_per_task = 5.98
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "low"
+index = 24
+cost_per_task = 0.51
+time_per_task_s = 150
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "medium"
+index = 28
+cost_per_task = 1.00
+time_per_task_s = 253
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+# Sonnet 5 high/xhigh: not recorded (range medium→max 28→38 is dominated).
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "max"
+index = 38
+cost_per_task = 5.09
+time_per_task_s = 862
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-26"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+# ------------------------------------------------------------ main tiers
+# The main session stays on one model; only effort varies (per-turn effort
+# keeps the prompt cache across effort changes). Tier criteria are the levels
+# of Jev's Score question, lowest first: describe situations, not degrees.
+
+[tiers.main.low]
+rank = 1
+model = "claude-opus-5-5"
+effort = "low"
+criteria = "Answering a question or making a small, fully specified change: lookups, explaining a known concept, renames, typo fixes, formatting, commit messages, summaries of work already done."
+
+[tiers.main.medium]
+rank = 2
+model = "claude-opus-5-5"
+effort = "medium"
+criteria = "A routine change with a clear recipe in one area: a small feature or endpoint with tests, a bug whose cause is evident, straightforward tests or docs for existing code."
+
+[tiers.main.high]
+rank = 3
+model = "claude-opus-5-5"
+effort = "high"
+criteria = "A change spanning several files or components, with real edge cases and some design choices: refactors, integrations, migrating a module, performance work on a known bottleneck."
+
+[tiers.main.xhigh]
+rank = 4
+model = "claude-opus-5-5"
+effort = "xhigh"
+criteria = "A hard problem where a wrong answer is expensive: race conditions and concurrency, security-sensitive logic, subtle bugs of unknown cause, architecture with trade-offs, correctness arguments."
+
+[tiers.main.max]
+rank = 5
+model = "claude-opus-5-5"
+effort = "max"
+criteria = "Exceptional difficulty: long-standing bugs nobody could find, research-grade algorithms or proofs, where exhaustive reasoning is worth any cost."
+
+# ------------------------------------------------------------------ modes
+# A mode is layered on top of whatever tier (and model) is chosen.
+
+[modes.ultracode]
+scopes = ["main"]
+workflows = true
+effort = "xhigh"
+min_tier = "high"
+threshold = 0.75  # from `automodel eval`: yes-cases >= 0.85, no-cases <= 0.68
+question = "Would this work be done better by several agents working in parallel (workflow orchestration) than by one assistant working alone?"
+yes = "Broad work that splits into many independent parts: auditing or reviewing a whole codebase, sweeping migrations across many files or services, multi-angle research or plans cross-checked by independent reviewers."
+no = "Work one assistant does well alone: a single feature, bug, question, or refactor of one area, and anything small or sequential."
+
+# -------------------------------------------------------- subagent tiers
+# The Agent tool only accepts model aliases, so subagent models need `alias`.
+
+[tiers.subagent.haiku]
+rank = 1
+model = "claude-haiku-4-5"
+cost = 0.15  # no measurement: Opus 5.5 low x the Haiku/Opus price ratio
+criteria = "Mechanical, fully specified work: finding files, listing or extracting facts, grepping, applying an explicit edit, one-line answers."
+
+[tiers.subagent.opus-low]
+rank = 2
+model = "claude-opus-5-5"
+effort = "low"
+criteria = "Simple self-contained tasks that need a little judgment: short summaries, quick lookups that must interpret code, small focused edits."
+
+[tiers.subagent.opus-medium]
+rank = 3
+model = "claude-opus-5-5"
+effort = "medium"
+criteria = "Routine research or implementation with clear requirements and limited scope."
+
+[tiers.subagent.opus-high]
+rank = 4
+model = "claude-opus-5-5"
+effort = "high"
+criteria = "Multi-file investigation or implementation with real edge cases and some design decisions."
+
+[tiers.subagent.opus-xhigh]
+rank = 5
+model = "claude-opus-5-5"
+effort = "xhigh"
+criteria = "Hard debugging, reviews for subtle bugs, security or concurrency analysis, proofs; a wrong answer is expensive."
+
+[tiers.subagent.opus-max]
+rank = 6
+model = "claude-opus-5-5"
+effort = "max"
+criteria = "Open-ended hardest problems needing the deepest reasoning, where cost is secondary."

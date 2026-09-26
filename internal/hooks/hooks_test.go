@@ -1,0 +1,489 @@
+package hooks
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/moukrea/automodel/internal/catalog"
+	"github.com/moukrea/automodel/internal/config"
+	"github.com/moukrea/automodel/internal/jev"
+	"github.com/moukrea/automodel/internal/ledger"
+	"github.com/moukrea/automodel/internal/router"
+	"github.com/moukrea/automodel/internal/state"
+)
+
+// fa is a scripted Jev reading: the tier Jev leans to, its confidence,
+// the ultracode yes-probability and the continuation yes-probability.
+type fa struct {
+	tier  string
+	conf  float64
+	ultra float64
+	cont  float64
+}
+
+func answer(tier string, conf float64) fa { return fa{tier: tier, conf: conf, ultra: 0.05, cont: 0.1} }
+
+// fakeJev answers every request with the next queued reading (the last one
+// repeats), shaped like Jev's Score and Noul answers.
+type fakeJev struct {
+	mu       sync.Mutex
+	cat      *catalog.Catalog
+	answers  []fa
+	requests []jev.Request
+	fail     bool
+}
+
+func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var req jev.Request
+	json.NewDecoder(r.Body).Decode(&req)
+	f.requests = append(f.requests, req)
+	if f.fail || len(f.answers) == 0 {
+		w.WriteHeader(502)
+		io.WriteString(w, `{"error":{"code":502,"message":"upstream down"}}`)
+		return
+	}
+	a := f.answers[0]
+	if len(f.answers) > 1 {
+		f.answers = f.answers[1:]
+	}
+	answers := map[string]any{}
+	for id, q := range req.Questions {
+		switch q.Type {
+		case "score":
+			var ids []string
+			for _, sc := range catalog.Scopes {
+				if f.cat.Tier(sc, a.tier) != nil {
+					for _, t := range f.cat.TiersByRank(sc) {
+						ids = append(ids, t.ID)
+					}
+				}
+			}
+			n := float64(len(ids))
+			peak := (a.conf*(n-1) + 1) / n // Jev: confidence = (n·peak - 1)/(n - 1)
+			probs := map[string]float64{}
+			for i, t := range ids {
+				switch {
+				case t == a.tier:
+					probs[fmt.Sprint(i)] = peak
+				case i > 0 && ids[i-1] == a.tier, i == len(ids)-1 && ids[i-1] != a.tier && a.tier == ids[len(ids)-1]:
+					probs[fmt.Sprint(i)] = 1 - peak
+				default:
+					probs[fmt.Sprint(i)] = 0
+				}
+			}
+			if a.tier == ids[len(ids)-1] {
+				probs[fmt.Sprint(len(ids)-2)] = 1 - peak
+			}
+			answers[id] = map[string]any{"type": "score", "probabilities": probs, "confidence": a.conf}
+		case "noul":
+			v := a.ultra
+			if id == jev.QContinues {
+				v = a.cont
+			}
+			answers[id] = map[string]any{"type": "noul", "noul": v}
+		case "choice":
+			answers[id] = map[string]any{"type": "choice", "choice": a.tier, "confidence": a.conf, "probabilities": map[string]float64{a.tier: a.conf}}
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"id": "d1", "model": req.Model, "answers": answers,
+		"usage": map[string]any{"input_tokens": 1000, "output_tokens": 0, "cost": 0.000042},
+	})
+}
+
+func (f *fakeJev) last() jev.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.requests[len(f.requests)-1]
+}
+
+func (f *fakeJev) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.requests)
+}
+
+func setup(t *testing.T, fj *fakeJev) *router.Env {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("CLAUDE_PID", "")
+	t.Setenv("CLAUDE_PROJECT_DIR", home)
+	srv := httptest.NewServer(fj)
+	t.Cleanup(srv.Close)
+	cfg := config.Default()
+	cfg.StateDir = filepath.Join(home, "state")
+	cfg.Ledger = filepath.Join(home, "state", "ledger.jsonl")
+	cfg.Catalog = "../../catalog.toml"
+	c, is, err := catalog.Load(cfg.Catalog, time.Now(), 3650)
+	if err != nil || len(is.Errors()) > 0 {
+		t.Fatal(err, is)
+	}
+	fj.cat = c
+	return &router.Env{
+		Cfg: cfg, Catalog: c, State: state.Store{Dir: cfg.StateDir}, Ledger: ledger.Ledger{Path: cfg.Ledger},
+		Jev: &jev.Client{URL: srv.URL, APIKey: "k"}, Now: time.Now,
+	}
+}
+
+func run(t *testing.T, env *router.Env, name string, in map[string]any) *Output {
+	t.Helper()
+	b, _ := json.Marshal(in)
+	var out bytes.Buffer
+	if err := Run(name, env, bytes.NewReader(b), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() == 0 {
+		return nil
+	}
+	var o Output
+	if err := json.Unmarshal(out.Bytes(), &o); err != nil {
+		t.Fatalf("bad output %q: %v", out.String(), err)
+	}
+	return &o
+}
+
+func markJev(t *testing.T, env *router.Env, sid string) {
+	env.State.Update(sid, func(s *state.Session) bool { s.Model, s.ModelSource = "jev", "proxy"; return true })
+}
+
+func TestDecideLifecycle(t *testing.T) {
+	ultra := fa{tier: "xhigh", conf: 0.9, ultra: 0.9, cont: 0.1}
+	fj := &fakeJev{answers: []fa{ultra}}
+	env := setup(t, fj)
+	sid := "s1"
+	markJev(t, env, sid)
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	prompt := func(p string) *Output {
+		return run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd, "transcript_path": tp})
+	}
+
+	// initial → xhigh with the ultracode mode, opt-in injected once.
+	out := prompt("Audit the whole codebase for injection bugs")
+	if out == nil || !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Ultracode is on") {
+		t.Fatalf("expected ultracode notice, got %+v", out)
+	}
+	if st := fj.last().State.(map[string]any); st["phase"] != "initial" || !strings.Contains(st["task"].(string), "Audit") {
+		t.Errorf("state = %v", st)
+	}
+	if q := fj.last().Questions; q[jev.QLevel].Type != "score" || q[jev.QModePfx+"ultracode"].Type != "noul" || q[jev.QContinues].Type != "" {
+		t.Errorf("initial questions = %+v", q)
+	}
+	sess, _ := env.State.Load(sid)
+	if sess.Main.Tier != "xhigh" || sess.Main.Mode != "ultracode" || sess.Main.Effort != "xhigh" || !sess.Main.Workflows || sess.Main.Epoch != 1 {
+		t.Fatalf("main = %+v", sess.Main)
+	}
+
+	// warm "continue": Jev is asked (with the continuation question), the
+	// tier is kept, no second notice.
+	fj.answers = []fa{{tier: "xhigh", conf: 0.9, ultra: 0.5, cont: 0.9}}
+	if out := prompt("continue"); out != nil {
+		t.Errorf("unexpected output %+v", out)
+	}
+	if fj.calls() != 2 || fj.last().Questions[jev.QContinues].Type != "noul" || fj.last().State.(map[string]any)["phase"] != "warm" {
+		t.Errorf("warm call: %d calls, %+v", fj.calls(), fj.last())
+	}
+	if sess, _ = env.State.Load(sid); sess.Main.Epoch != 1 || sess.Main.Mode != "ultracode" {
+		t.Errorf("warm continue changed the decision: %+v", sess.Main)
+	}
+
+	// compaction → redecide on the summary; leaving ultracode says so.
+	os.WriteFile(tp, []byte(
+		`{"type":"system","subtype":"compact_boundary"}`+"\n"+
+			`{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"Summary: fixed three SQL injections"}}`+"\n"), 0o644)
+	run(t, env, "precompact", map[string]any{"session_id": sid, "trigger": "auto"})
+	fj.answers = []fa{answer("high", 0.9)}
+	out = prompt("now write the changelog")
+	if out == nil || !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Ultracode is now off") {
+		t.Fatalf("expected off notice, got %+v", out)
+	}
+	st := fj.last().State.(map[string]any)
+	if st["phase"] != "post_compact" || !strings.Contains(st["compaction_summary"].(string), "fixed three SQL injections") ||
+		st["current"].(map[string]any)["tier"] != "xhigh" {
+		t.Errorf("compact state = %v", st)
+	}
+	sess, _ = env.State.Load(sid)
+	if sess.Main.Tier != "high" || sess.Main.Mode != "" || sess.Main.Trigger != "compact" || sess.CompactPending || sess.Main.Epoch != 2 {
+		t.Errorf("after compact: %+v", sess)
+	}
+
+	// cold: last activity older than the cache TTL.
+	env.State.Update(sid, func(s *state.Session) bool {
+		s.LastPromptAt, s.LastAPIAt = time.Now().Add(-2*time.Hour), time.Time{}
+		return true
+	})
+	fj.answers = []fa{answer("medium", 0.9)}
+	prompt("small follow-up")
+	sess, _ = env.State.Load(sid)
+	if sess.Main.Tier != "medium" || sess.Main.Trigger != "cold" {
+		t.Errorf("cold: %+v", sess.Main)
+	}
+	if st := fj.last().State.(map[string]any); st["phase"] != "resumed" {
+		t.Errorf("cold phase = %v", st["phase"])
+	}
+
+	// subagent hand-backs never trigger a decision.
+	n := fj.calls()
+	prompt("<agent-message from=\"a1\">\n report\n</agent-message>")
+	if fj.calls() != n {
+		t.Error("synthetic prompt triggered a decision")
+	}
+
+	// ledger has one decision line per Jev call.
+	data, _ := os.ReadFile(env.Cfg.Ledger)
+	if got := strings.Count(string(data), `"kind":"decision"`); got != 4 {
+		t.Errorf("ledger decisions = %d", got)
+	}
+}
+
+// warm sets up a session already on tier (epoch 1, context ctx tokens).
+func warmSession(t *testing.T, env *router.Env, sid, tier string, ctx int) {
+	// A calibrated session: 10 prompts at $0.30 each.
+	t.Helper()
+	markJev(t, env, sid)
+	d := env.DefaultDecision(catalog.ScopeMain, "initial")
+	tt := env.Catalog.Tier(catalog.ScopeMain, tier)
+	d.Tier, d.Effort, d.Epoch = tt.ID, tt.Effort, 1
+	env.State.Update(sid, func(s *state.Session) bool {
+		s.Main, s.ContextTokens, s.LastPromptAt, s.EffortBase = d, ctx, time.Now(), tier
+		s.Prompts, s.SpendUSD = 10, 3
+		return true
+	})
+}
+
+func TestWarmDecisions(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	decide := func(sid, p string) {
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": t.TempDir()})
+	}
+	main := func(sid string) *state.Session { s, _ := env.State.Load(sid); return s }
+
+	// A confident switch to a separate, lighter step: effort changes via a
+	// pending per-turn mark (the cache is kept).
+	warmSession(t, env, "w1", "xhigh", 300_000)
+	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.1, ultra: 0.05}}
+	decide("w1", "Now write the commit message")
+	if s := main("w1"); s.Main.Tier != "low" || s.PendingEffort == nil || s.PendingEffort.Effort != "low" || s.EffortBase != "xhigh" {
+		t.Errorf("per-turn switch: %+v / pending %+v / base %q", s.Main, s.PendingEffort, s.EffortBase)
+	}
+
+	// Not confident enough: kept.
+	warmSession(t, env, "w2", "xhigh", 300_000)
+	fj.answers = []fa{{tier: "low", conf: 0.5, cont: 0.1}}
+	decide("w2", "hmm")
+	if s := main("w2"); s.Main.Tier != "xhigh" || s.PendingEffort != nil {
+		t.Errorf("low confidence switched: %+v", s.Main)
+	}
+
+	// A go-ahead on the work in progress never downgrades...
+	warmSession(t, env, "w3", "xhigh", 300_000)
+	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.9}}
+	decide("w3", "yes")
+	if s := main("w3"); s.Main.Tier != "xhigh" {
+		t.Errorf("continuation downgraded: %+v", s.Main)
+	}
+	// ...but may upgrade.
+	warmSession(t, env, "w4", "low", 50_000)
+	fj.answers = []fa{{tier: "high", conf: 0.9, cont: 0.9}}
+	decide("w4", "yes, apply the fix")
+	if s := main("w4"); s.Main.Tier != "high" {
+		t.Errorf("continuation did not upgrade: %+v", s.Main)
+	}
+
+	// Without per-turn effort an effort change rebuilds the cache: on a big
+	// context no switch can pay back, so Jev is not even asked.
+	env.Cfg.Features.PerTurnEffort = false
+	warmSession(t, env, "w5", "xhigh", 800_000)
+	n := fj.calls()
+	fj.answers = []fa{{tier: "low", conf: 0.99, cont: 0}}
+	decide("w5", "Now write the commit message")
+	if s := main("w5"); s.Main.Tier != "xhigh" || fj.calls() != n {
+		t.Errorf("expensive switch: tier %s, jev calls %d", s.Main.Tier, fj.calls()-n)
+	}
+	data, _ := os.ReadFile(env.Cfg.Ledger)
+	if !strings.Contains(string(data), `"skipped":true`) {
+		t.Error("skipped decision not in the ledger")
+	}
+	// On a small context the same switch pays back: top-level change, new epoch.
+	warmSession(t, env, "w6", "xhigh", 2_000)
+	decide("w6", "Now write the commit message")
+	if s := main("w6"); s.Main.Tier != "low" || s.PendingEffort != nil || s.EffortBase != "" {
+		t.Errorf("cheap top-level switch: %+v base %q", s.Main, s.EffortBase)
+	}
+
+	// All v2 features off: warm turns are not evaluated.
+	env.Cfg.Features = config.Features{WarmMinConfidence: 0.7, SwitchHorizonPrompts: 3}
+	warmSession(t, env, "w7", "xhigh", 1_000)
+	n = fj.calls()
+	decide("w7", "Now write the commit message")
+	if s := main("w7"); s.Main.Tier != "xhigh" || fj.calls() != n {
+		t.Errorf("v1 mode evaluated a warm turn: %s, %d calls", s.Main.Tier, fj.calls()-n)
+	}
+}
+
+func TestDecideFallbackAndNonJev(t *testing.T) {
+	fj := &fakeJev{fail: true}
+	env := setup(t, fj)
+	markJev(t, env, "s2")
+	run(t, env, "decide", map[string]any{"session_id": "s2", "prompt": "hi", "cwd": t.TempDir()})
+	sess, _ := env.State.Load("s2")
+	if sess.Main == nil || sess.Main.Tier != "high" || sess.Main.Trigger != "fallback" || sess.Main.Cause != "initial" {
+		t.Errorf("fallback: %+v", sess.Main)
+	}
+
+	// A session known to be on another model is left alone.
+	env.State.Update("s3", func(s *state.Session) bool { s.Model = "opus"; return true })
+	run(t, env, "decide", map[string]any{"session_id": "s3", "prompt": "hi", "cwd": t.TempDir()})
+	if sess, _ := env.State.Load("s3"); sess.Main != nil {
+		t.Error("decided for a non-jev session")
+	}
+}
+
+func TestUnknownModelIsLeftAlone(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, ultra: 0.9}}}
+	env := setup(t, fj)
+	in := map[string]any{"session_id": "s4", "prompt": "migrate everything", "cwd": t.TempDir()}
+	if out := run(t, env, "decide", in); out != nil || fj.calls() != 0 {
+		t.Errorf("acted on an unidentified session: %+v, %d jev calls", out, fj.calls())
+	}
+	if _, err := os.Stat(filepath.Join(env.Cfg.StateDir, "sessions", "s4.json")); !os.IsNotExist(err) {
+		t.Errorf("state written for an unidentified session: %v", err)
+	}
+	markJev(t, env, "s4") // the proxy saw a jev request
+	in["prompt"] = "go on"
+	if out := run(t, env, "decide", in); out == nil || !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Ultracode is on") {
+		t.Errorf("no decision once on jev: %+v", out)
+	}
+}
+
+// Sessions on a named model: no hook changes anything, even when the
+// settings file names jev (the transcript identity wins).
+func TestNamedModelSessionsUntouched(t *testing.T) {
+	fj := &fakeJev{answers: []fa{answer("haiku", 0.9)}}
+	env := setup(t, fj)
+	home, _ := os.UserHomeDir()
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"model":"jev"}`), 0o644)
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	os.WriteFile(tp, []byte(`{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-opus-5-5[1m]"}}}`+"\n"), 0o644)
+	base := map[string]any{"session_id": "s6", "cwd": cwd, "transcript_path": tp}
+	with := func(kv ...any) map[string]any {
+		m := map[string]any{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i].(string)] = kv[i+1]
+		}
+		return m
+	}
+	for _, c := range []struct {
+		hook string
+		in   map[string]any
+	}{
+		{"decide", with("prompt", "refactor the parser")},
+		{"agent", with("tool_name", "Agent", "tool_input", map[string]any{"prompt": "list files"})},
+		{"workflow", with("tool_name", "Workflow", "tool_input", map[string]any{"script": "await agent('x')"})},
+		{"precompact", with("trigger", "auto")},
+	} {
+		if out := run(t, env, c.hook, c.in); out != nil {
+			t.Errorf("%s: output %+v", c.hook, out)
+		}
+	}
+	if fj.calls() != 0 {
+		t.Errorf("jev called %d times", fj.calls())
+	}
+	run(t, env, "session-start", map[string]any{"session_id": "s7", "model": "claude-opus-5-5", "source": "compact"})
+	if s, _ := env.State.Load("s7"); s.Model != "claude-opus-5-5" || s.CompactPending || s.Compactions != 0 {
+		t.Errorf("session-start on a named model: %+v", s)
+	}
+}
+
+func TestCompactFeedsSessionLength(t *testing.T) {
+	fj := &fakeJev{answers: []fa{answer("high", 0.9)}}
+	env := setup(t, fj)
+	markJev(t, env, "s8")
+	env.State.Update("s8", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: "high", Model: "claude-opus-5-5", Effort: "high"}
+		s.ContextTokens, s.LastPromptAt = 850_000, time.Now()
+		return true
+	})
+	run(t, env, "precompact", map[string]any{"session_id": "s8", "trigger": "auto"})
+	run(t, env, "decide", map[string]any{"session_id": "s8", "prompt": "next", "cwd": t.TempDir()})
+	st := fj.last().State.(map[string]any)
+	ss, _ := st["session"].(map[string]any)
+	if st["phase"] != "post_compact" || ss["compactions"] != float64(1) || ss["peak_context_tokens"] != float64(850_000) {
+		t.Errorf("state = %v", st)
+	}
+}
+
+func TestAgentHook(t *testing.T) {
+	fj := &fakeJev{answers: []fa{answer("haiku", 0.9)}}
+	env := setup(t, fj)
+	markJev(t, env, "s5")
+	in := map[string]any{"session_id": "s5", "tool_name": "Agent", "cwd": t.TempDir(),
+		"tool_input": map[string]any{"description": "find files", "prompt": "List all  Go files", "subagent_type": "Explore"}}
+	out := run(t, env, "agent", in)
+	if out == nil || out.HookSpecificOutput.UpdatedInput["model"] != "haiku" || out.HookSpecificOutput.UpdatedInput["prompt"] != "List all  Go files" {
+		t.Fatalf("out = %+v", out)
+	}
+	sess, _ := env.State.Load("s5")
+	if len(sess.PendingAgents) != 1 || sess.PendingAgents[0].Prompt != "List all Go files" || sess.PendingAgents[0].Decision.Tier != "haiku" {
+		t.Errorf("pending = %+v", sess.PendingAgents)
+	}
+	if q := fj.last().Questions[jev.QLevel]; q.Type != "score" || len(q.Criteria.([]any)) != 6 {
+		t.Errorf("subagent question = %+v", q)
+	}
+
+	in["tool_input"].(map[string]any)["model"] = "opus"
+	if out := run(t, env, "agent", in); out != nil {
+		t.Errorf("explicit model not respected: %+v", out)
+	}
+}
+
+func TestWorkflowHook(t *testing.T) {
+	fj := &fakeJev{answers: []fa{answer("opus-low", 0.9)}}
+	env := setup(t, fj)
+	markJev(t, env, "s6")
+	src := "export const meta = {name: 'x', description: 'y'}\n" +
+		"const a = await agent('list files', {label: 'ls'})\n" +
+		"const b = await agent('judge', {model: 'opus', effort: 'max'})\n" +
+		"const c = await agent(`fix ${a}`)\n"
+	out := run(t, env, "workflow", map[string]any{"session_id": "s6", "tool_name": "Workflow", "cwd": t.TempDir(),
+		"tool_input": map[string]any{"script": src, "args": []string{"x"}}})
+	if out == nil {
+		t.Fatal("no output")
+	}
+	got := out.HookSpecificOutput.UpdatedInput["script"].(string)
+	for _, want := range []string{
+		`agent('list files', {model: "opus", effort: "low", ...({label: 'ls'})})`,
+		`agent('judge', {model: 'opus', effort: 'max'})`,
+		"agent(`fix ${a}`, {model: \"opus\", effort: \"low\"})",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in\n%s", want, got)
+		}
+	}
+	if fj.calls() != 2 {
+		t.Errorf("jev calls = %d (explicit site must be skipped)", fj.calls())
+	}
+	if out.HookSpecificOutput.UpdatedInput["args"] == nil {
+		t.Error("other inputs must be preserved")
+	}
+}

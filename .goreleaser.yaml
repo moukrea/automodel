@@ -1,0 +1,27 @@
+version: 2
+project_name: automodel
+
+builds:
+  - main: ./cmd/automodel
+    binary: automodel
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+
+archives:
+  - formats: [tar.gz]
+    name_template: "automodel_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md, config.example.toml]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+
+release:
+  github:
+    owner: moukrea
+    name: automodel

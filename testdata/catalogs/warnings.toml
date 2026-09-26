@@ -1,0 +1,71 @@
+# Valid, but exercises every warning of spec §2.3.
+[meta]
+schema = 1
+last_refresh = "2026-01-01"
+benchmark = "aa"
+benchmark_version = "v2"
+jev_model = "typesafe/jev-1.13"
+default_main_tier = "cheap"
+default_subagent_tier = "sub"
+long_context_beta = "context-1m-2025-08-07"
+
+[models.a]
+status = "active"
+api_id = "a"
+alias = "a"
+context = 1_000_000
+long_context = "native"
+efforts = ["low", "high"]
+price = { input = 1.0, output = 2.0 }
+
+[models.b]
+status = "active"
+api_id = "b"
+alias = "b"
+context = 1000
+efforts = ["low"]
+price = { input = 1.0, output = 2.0 }
+
+[models.c]
+status = "retired"
+
+[[measurements]]
+model = "a"
+effort = "low"
+index = 50
+cost_per_task = 1.0
+benchmark_version = "v2"
+measured_at = "2026-01-01"
+
+[[measurements]]
+model = "a"
+effort = "high"
+index = 40
+cost_per_task = 2.0
+benchmark_version = "v2"
+measured_at = "2026-09-01"
+
+[[measurements]]
+model = "b"
+effort = "low"
+index = 60
+cost_per_task = 0.5
+benchmark_version = "v1"
+measured_at = "2026-09-01"
+
+[tiers.main.cheap]
+rank = 1
+model = "a"
+criteria = "cheap"
+
+[tiers.main.worse]
+rank = 2
+model = "a"
+effort = "high"
+criteria = "worse"
+
+[tiers.subagent.sub]
+rank = 1
+model = "b"
+effort = "low"
+criteria = "sub"

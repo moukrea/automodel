@@ -1,0 +1,336 @@
+// Package catalog loads, validates and hot-reloads catalog.toml, the single
+// source of truth for models, prices, measurements and routing tiers.
+package catalog
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/BurntSushi/toml"
+)
+
+const (
+	ScopeMain     = "main"
+	ScopeSubagent = "subagent"
+)
+
+var Scopes = []string{ScopeMain, ScopeSubagent}
+
+var Statuses = []string{"active", "dominated", "excluded", "retired"}
+
+type Catalog struct {
+	Meta         Meta                        `toml:"meta" json:"meta"`
+	Models       map[string]*Model           `toml:"models" json:"models"`
+	Measurements []Measurement               `toml:"measurements" json:"measurements"`
+	Tiers        map[string]map[string]*Tier `toml:"tiers" json:"tiers"`
+	Modes        map[string]*Mode            `toml:"modes" json:"modes,omitempty"`
+}
+
+type Meta struct {
+	Schema              int    `toml:"schema" json:"schema"`
+	LastRefresh         string `toml:"last_refresh" json:"last_refresh"`
+	Benchmark           string `toml:"benchmark" json:"benchmark"`
+	BenchmarkVersion    string `toml:"benchmark_version" json:"benchmark_version"`
+	JevModel            string `toml:"jev_model" json:"jev_model"`
+	DefaultMainTier     string `toml:"default_main_tier" json:"default_main_tier"`
+	DefaultSubagentTier string `toml:"default_subagent_tier" json:"default_subagent_tier"`
+	// LongContextBeta is the anthropic-beta value that unlocks windows above
+	// StandardContext on models with long_context = "beta". The proxy sends
+	// it for those and strips it everywhere else.
+	LongContextBeta string `toml:"long_context_beta" json:"long_context_beta"`
+	// MainMinContext is the smallest window a main-session tier may have:
+	// routing a long session onto a smaller window breaks it.
+	MainMinContext int `toml:"main_min_context" json:"main_min_context"`
+	// UnderprovisionPenalty weighs working below the right tier against
+	// working above it: too little effort costs this many times the cost
+	// gap (rework, wrong answers), too much effort costs the gap once.
+	UnderprovisionPenalty float64 `toml:"underprovision_penalty" json:"underprovision_penalty,omitempty"`
+	// ContinuesThresholdP is the yes-probability from which a warm prompt
+	// counts as continuing the work in progress (no downgrade, mode kept).
+	ContinuesThresholdP float64 `toml:"continues_threshold" json:"continues_threshold,omitempty"`
+	// PerTurnEffortBeta is the anthropic-beta value for per-turn effort.
+	PerTurnEffortBeta string `toml:"per_turn_effort_beta" json:"per_turn_effort_beta,omitempty"`
+}
+
+// StandardContext is the window every model gets without the long-context beta.
+const StandardContext = 200_000
+
+// DefaultMainMinContext applies when meta.main_min_context is unset.
+const DefaultMainMinContext = 1_000_000
+
+// ContinuesThreshold returns meta.continues_threshold or 0.7.
+func (m Meta) ContinuesThreshold() float64 {
+	if m.ContinuesThresholdP > 0 {
+		return m.ContinuesThresholdP
+	}
+	return 0.7
+}
+
+// MinMainContext returns meta.main_min_context or its default.
+func (m Meta) MinMainContext() int {
+	if m.MainMinContext > 0 {
+		return m.MainMinContext
+	}
+	return DefaultMainMinContext
+}
+
+// NeedsLongContextBeta reports whether requests to md need the beta for its
+// full window. Models with a native long window must not get it (it defeats
+// the prompt cache), and smaller models reject it.
+func (c *Catalog) NeedsLongContextBeta(md *Model) bool {
+	return md != nil && md.Context > StandardContext && md.LongContext == "beta" && c.Meta.LongContextBeta != ""
+}
+
+type Model struct {
+	ID      string `toml:"-" json:"id"`
+	Label   string `toml:"label" json:"label"`
+	Status  string `toml:"status" json:"status"`
+	Reason  string `toml:"reason" json:"reason,omitempty"`
+	APIID   string `toml:"api_id" json:"api_id,omitempty"`
+	Alias   string `toml:"alias" json:"alias,omitempty"`
+	Context int    `toml:"context" json:"context,omitempty"`
+	// LongContext says how a window above StandardContext is obtained:
+	// "native" (always available) or "beta" (meta.long_context_beta).
+	LongContext string `toml:"long_context" json:"long_context,omitempty"`
+	// MaxOutput is the model's output-token ceiling (routed requests are
+	// raised to it: Claude Code caps unknown models lower).
+	MaxOutput int      `toml:"max_output" json:"max_output,omitempty"`
+	Efforts   []string `toml:"efforts" json:"efforts"`
+	// PerTurnEffort: the model accepts effort-only system messages mid
+	// conversation (meta.per_turn_effort_beta), so an effort change keeps
+	// the prompt cache.
+	PerTurnEffort bool     `toml:"per_turn_effort" json:"per_turn_effort,omitempty"`
+	DefaultEffort string   `toml:"default_effort" json:"default_effort,omitempty"`
+	Price         *Price   `toml:"price" json:"price,omitempty"`
+	Fast          *Fast    `toml:"fast" json:"fast,omitempty"`
+	Scopes        []string `toml:"scopes" json:"scopes,omitempty"`
+	VerifiedAt    string   `toml:"verified_at" json:"verified_at,omitempty"`
+	Sources       []string `toml:"sources" json:"sources,omitempty"`
+}
+
+type Price struct {
+	Input        float64 `toml:"input" json:"input"`
+	Output       float64 `toml:"output" json:"output"`
+	CacheRead    float64 `toml:"cache_read" json:"cache_read"`
+	CacheWrite5m float64 `toml:"cache_write_5m" json:"cache_write_5m"`
+	CacheWrite1h float64 `toml:"cache_write_1h" json:"cache_write_1h"`
+}
+
+type Fast struct {
+	Allowed bool    `toml:"allowed" json:"allowed"`
+	Input   float64 `toml:"input" json:"input"`
+	Output  float64 `toml:"output" json:"output"`
+	Speedup float64 `toml:"speedup" json:"speedup"`
+}
+
+type Measurement struct {
+	Model               string   `toml:"model" json:"model"`
+	Effort              string   `toml:"effort" json:"effort"`
+	Index               float64  `toml:"index" json:"index"`
+	CostPerTask         float64  `toml:"cost_per_task" json:"cost_per_task"`
+	TimePerTaskS        *float64 `toml:"time_per_task_s" json:"time_per_task_s,omitempty"`
+	OutputTokensPerTask *float64 `toml:"output_tokens_per_task" json:"output_tokens_per_task,omitempty"`
+	BenchmarkVersion    string   `toml:"benchmark_version" json:"benchmark_version"`
+	MeasuredAt          string   `toml:"measured_at" json:"measured_at"`
+	Source              string   `toml:"source" json:"source"`
+}
+
+type Tier struct {
+	ID     string `toml:"-" json:"id"`
+	Scope  string `toml:"-" json:"scope"`
+	Rank   int    `toml:"rank" json:"rank"`
+	Model  string `toml:"model" json:"model"`
+	Effort string `toml:"effort" json:"effort,omitempty"`
+	// Criteria describes the situations this tier is for (one level of the
+	// Jev Score question): situations, not degrees.
+	Criteria string `toml:"criteria" json:"criteria"`
+	// Cost is the relative cost per task, used when the benchmark has no
+	// measurement for this model and effort.
+	Cost float64 `toml:"cost" json:"cost,omitempty"`
+}
+
+// Mode is a way of working layered on top of a tier, whatever its model:
+// ultracode is parallel multi-agent orchestration (workflows), and can run
+// on any main model. Jev answers a yes/no question for it.
+type Mode struct {
+	ID     string   `toml:"-" json:"id"`
+	Scopes []string `toml:"scopes" json:"scopes"`
+	// Workflows: the mode turns on workflow orchestration (Claude Code's
+	// ultracode opt-in notice).
+	Workflows bool `toml:"workflows" json:"workflows"`
+	// Effort is the minimum effort while the mode is on.
+	Effort string `toml:"effort" json:"effort,omitempty"`
+	// MinTier: the mode only applies on top of this tier or a higher one.
+	MinTier string `toml:"min_tier" json:"min_tier,omitempty"`
+	// Threshold is the yes-probability Jev must give.
+	Threshold float64 `toml:"threshold" json:"threshold"`
+	// Question, Yes and No are the Noul question and what counts as yes/no.
+	Question string `toml:"question" json:"question"`
+	Yes      string `toml:"yes" json:"yes"`
+	No       string `toml:"no" json:"no"`
+}
+
+// Issue is a validation finding. Errors reject the catalog; warnings don't.
+type Issue struct {
+	Level   string `json:"level"` // "error" | "warning"
+	Message string `json:"message"`
+}
+
+func (i Issue) String() string { return i.Level + ": " + i.Message }
+
+type Issues []Issue
+
+func (is Issues) Errors() Issues   { return is.filter("error") }
+func (is Issues) Warnings() Issues { return is.filter("warning") }
+func (is Issues) filter(l string) Issues {
+	var out Issues
+	for _, i := range is {
+		if i.Level == l {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// Parse decodes a catalog without validating it.
+func Parse(data []byte) (*Catalog, error) {
+	var c Catalog
+	if _, err := toml.NewDecoder(bytes.NewReader(data)).Decode(&c); err != nil {
+		return nil, err
+	}
+	for id, m := range c.Models {
+		if m == nil {
+			m = &Model{}
+			c.Models[id] = m
+		}
+		m.ID = id
+	}
+	for id, m := range c.Modes {
+		if m == nil {
+			m = &Mode{}
+			c.Modes[id] = m
+		}
+		m.ID = id
+	}
+	for scope, tiers := range c.Tiers {
+		for id, t := range tiers {
+			if t == nil {
+				t = &Tier{}
+				tiers[id] = t
+			}
+			t.ID, t.Scope = id, scope
+		}
+	}
+	return &c, nil
+}
+
+// Load reads, parses and validates a catalog. The catalog is returned even
+// when it has errors so callers can report them; use Issues.Errors() to gate.
+func Load(path string, now time.Time, staleDays int) (*Catalog, Issues, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	c, err := Parse(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, c.Validate(now, staleDays), nil
+}
+
+func (c *Catalog) Model(id string) *Model { return c.Models[id] }
+
+// Tier returns a tier by scope and ID, or nil.
+func (c *Catalog) Tier(scope, id string) *Tier { return c.Tiers[scope][id] }
+
+// TiersByRank returns a scope's tiers sorted by ascending rank.
+func (c *Catalog) TiersByRank(scope string) []*Tier {
+	var out []*Tier
+	for _, t := range c.Tiers[scope] {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Rank < out[j].Rank })
+	return out
+}
+
+// ModesFor returns the modes available in a scope, sorted by ID.
+func (c *Catalog) ModesFor(scope string) []*Mode {
+	var out []*Mode
+	for _, m := range c.Modes {
+		if contains(m.Scopes, scope) {
+			out = append(out, m)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// TierCost is a tier's relative cost per task: the benchmark measurement of
+// its model and effort, else the tier's own cost, else 0 (unknown).
+func (c *Catalog) TierCost(t *Tier) float64 {
+	for _, m := range c.Measurements {
+		if m.Model == t.Model && m.Effort == t.Effort && m.BenchmarkVersion == c.Meta.BenchmarkVersion && m.CostPerTask > 0 {
+			return m.CostPerTask
+		}
+	}
+	return t.Cost
+}
+
+// Resolve returns what a tier plus an optional mode runs as: the tier's
+// model, its effort raised to the mode's minimum, and whether workflows are on.
+func (c *Catalog) Resolve(t *Tier, modeID string) (model, effort string, workflows bool) {
+	model, effort = t.Model, t.Effort
+	if md := c.Modes[modeID]; md != nil {
+		workflows = md.Workflows
+		if m := c.Model(t.Model); md.Effort != "" && m != nil && m.SupportsEffort(md.Effort) && EffortRank(md.Effort) > EffortRank(effort) {
+			effort = md.Effort
+		}
+	}
+	return model, effort, workflows
+}
+
+// DefaultTier returns the fallback tier of a scope.
+func (c *Catalog) DefaultTier(scope string) *Tier {
+	if scope == ScopeSubagent {
+		return c.Tier(scope, c.Meta.DefaultSubagentTier)
+	}
+	return c.Tier(scope, c.Meta.DefaultMainTier)
+}
+
+// ModelByAPIID finds a model by the ID sent to the API.
+func (c *Catalog) ModelByAPIID(apiID string) *Model {
+	for _, m := range c.Models {
+		if m.APIID == apiID {
+			return m
+		}
+	}
+	return nil
+}
+
+// ShortLabel is the compact form used by the statusline: "Opus 5.5" -> "opus-5.5".
+func (m *Model) ShortLabel() string {
+	l := m.Label
+	if l == "" {
+		l = m.ID
+	}
+	return strings.ToLower(strings.ReplaceAll(l, " ", "-"))
+}
+
+func (m *Model) SupportsEffort(e string) bool { return contains(m.Efforts, e) }
+
+func (m *Model) AllowedIn(scope string) bool {
+	return len(m.Scopes) == 0 || contains(m.Scopes, scope)
+}
+
+func contains(xs []string, x string) bool {
+	for _, y := range xs {
+		if y == x {
+			return true
+		}
+	}
+	return false
+}

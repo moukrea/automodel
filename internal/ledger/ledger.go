@@ -1,0 +1,100 @@
+// Package ledger appends one JSON line per routing decision and per Anthropic
+// response, and aggregates them into the calibration report.
+package ledger
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"syscall"
+	"time"
+)
+
+type Shadow struct {
+	Model      string             `json:"model"`
+	Choice     string             `json:"choice,omitempty"`
+	Confidence float64            `json:"confidence,omitempty"`
+	Probs      map[string]float64 `json:"probs,omitempty"`
+	Chosen     string             `json:"chosen,omitempty"`
+	CostUSD    float64            `json:"jev_cost_usd,omitempty"`
+	Error      string             `json:"error,omitempty"`
+}
+
+type Decision struct {
+	TS          time.Time          `json:"ts"`
+	Kind        string             `json:"kind"` // "decision"
+	SessionID   string             `json:"session_id"`
+	Scope       string             `json:"scope"`
+	Trigger     string             `json:"trigger"`
+	Cause       string             `json:"cause,omitempty"`
+	AgentType   string             `json:"agent_type,omitempty"`
+	StateTokens int                `json:"state_tokens"`
+	Probs       map[string]float64 `json:"probs,omitempty"`
+	Confidence  float64            `json:"confidence"`
+	JevChoice   string             `json:"jev_choice,omitempty"`
+	Chosen      string             `json:"chosen"`
+	Model       string             `json:"model"`
+	Effort      string             `json:"effort,omitempty"`
+	JevModel    string             `json:"jev_model,omitempty"`
+	JevCostUSD  float64            `json:"jev_cost_usd"`
+	LatencyMS   int64              `json:"latency_ms"`
+	Error       string             `json:"error,omitempty"`
+	Shadow      *Shadow            `json:"shadow,omitempty"`
+
+	// v2: modes, warm turns and the cost-aware policy.
+	Mode       string             `json:"mode,omitempty"`
+	ModeP      map[string]float64 `json:"mode_p,omitempty"`
+	Warm       bool               `json:"warm,omitempty"`
+	From       string             `json:"from,omitempty"` // tier in force before a warm decision
+	Kept       bool               `json:"kept,omitempty"` // warm: stayed on From
+	KeepReason string             `json:"keep_reason,omitempty"`
+	ContinuesP *float64           `json:"continues_p,omitempty"`
+	Loss       map[string]float64 `json:"loss,omitempty"`
+	GainUSD    float64            `json:"gain_usd,omitempty"`
+	SwitchUSD  float64            `json:"switch_cost_usd,omitempty"`
+	Skipped    bool               `json:"skipped,omitempty"` // warm: Jev not asked (no switch could pay back)
+}
+
+type Usage struct {
+	TS                       time.Time `json:"ts"`
+	Kind                     string    `json:"kind"` // "usage"
+	SessionID                string    `json:"session_id"`
+	Scope                    string    `json:"scope"`
+	AgentID                  string    `json:"agent_id,omitempty"`
+	Routed                   bool      `json:"routed"`
+	Tier                     string    `json:"tier,omitempty"`
+	Model                    string    `json:"model"`
+	Effort                   string    `json:"effort,omitempty"`
+	Status                   int       `json:"status"`
+	InputTokens              int       `json:"input_tokens"`
+	OutputTokens             int       `json:"output_tokens"`
+	CacheReadInputTokens     int       `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int       `json:"cache_creation_input_tokens"`
+}
+
+type Ledger struct{ Path string }
+
+// Append writes one JSON line under an exclusive lock.
+func (l Ledger) Append(rec any) error {
+	if l.Path == "" {
+		return nil
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(l.Path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(l.Path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		return err
+	}
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_, err = f.Write(append(line, '\n'))
+	return err
+}
