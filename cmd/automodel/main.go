@@ -50,7 +50,8 @@ const usage = `automodel — automatic model/effort routing for Claude Code via 
 Usage:
   automodel serve                      run the proxy
   automodel hook <name>                run a hook (%s)
-  automodel statusline                 render the statusline segment
+  automodel statusline [--json]        render the statusline segment
+                                       (--json: the routing state as one JSON line, for status lines like agentline)
   automodel report [--json] [--since 7d] [--baseline xhigh]
   automodel why [--session id] [-n 5] [--scope main] [--follow]   explain the latest routing decisions
   automodel flag [--session id] [--n 1] --want tier [--note "..."]   label a wrong decision (local eval case)
@@ -97,6 +98,9 @@ func run(cfgPath, cmd string, args []string) error {
 	}
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
+		if cmd == "statusline" && hasFlag(args, "--json") {
+			return statusline.NotRoutedJSON(os.Stdout)
+		}
 		if cmd == "hook" || cmd == "statusline" {
 			return nil // never break Claude Code
 		}
@@ -122,12 +126,20 @@ func run(cfgPath, cmd string, args []string) error {
 		}
 		return hooks.Run(args[0], env, os.Stdin, os.Stdout)
 	case "statusline":
+		asJSON := hasFlag(args, "--json")
 		defer router.SetupLog(cfg.StateDir, "hooks.log")()
 		env, err := router.New(cfg)
 		if err != nil {
 			log.Printf("statusline: %v", err)
+			if asJSON {
+				return statusline.CatalogErrorJSON(cfg.CustomModelID, os.Stdin, os.Stdout)
+			}
 			fmt.Println(cfg.CustomModelID + " → ⚠ catalog")
 			return nil
+		}
+		if asJSON {
+			statusline.RunJSON(env, os.Stdin, os.Stdout)
+			return nil // exit 0: the caller reads the line
 		}
 		return statusline.Run(env, os.Stdin, os.Stdout)
 	case "report":
@@ -562,6 +574,15 @@ func doctorCmd(cfg *config.Config) error {
 		os.Exit(1)
 	}
 	return nil
+}
+
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag || a == "-"+strings.TrimLeft(flag, "-") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseAge(s string) (time.Duration, error) {

@@ -21,6 +21,7 @@ jev_shadow_model = ""            # set during a new Jev version's observation pe
 openrouter_api_key = ""
 
 # statusline_command = "~/.claude/statusline-command.sh"   # your own statusline, shown before ours
+#   (runs with AUTOMODEL_CHAINED=1; agentline renders the routing itself: no need to chain it)
 # route_workflow_steps = true
 
 # v2 features (all default on). With all three off the router behaves as v1:

@@ -1,5 +1,6 @@
 // Package statusline renders the routing state for Claude Code's status
-// line, optionally after the output of the user's own statusline command.
+// line, optionally after the output of the user's own statusline command,
+// or as JSON for status lines that render it themselves (agentline).
 package statusline
 
 import (
@@ -24,6 +25,11 @@ type Input struct {
 	} `json:"model"`
 }
 
+// ChainedEnv is set to 1 in the environment of the chained statusline
+// command: a status line that could call `automodel statusline --json`
+// itself (agentline) must not, since the segment is printed after it.
+const ChainedEnv = "AUTOMODEL_CHAINED"
+
 // Run reads the statusline JSON on stdin and prints the chained statusline
 // followed by the automodel segment on its own line: chained statuslines are
 // often multi-line or padded to the terminal width, which would truncate it.
@@ -32,32 +38,62 @@ func Run(env *router.Env, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	var in Input
-	_ = json.Unmarshal(raw, &in)
-
+	in := parse(raw)
 	var parts []string
 	if cmd := env.Cfg.StatuslineCommand; cmd != "" {
 		if out := chain(env.Cfg.StateDir, cmd, in.SessionID, raw); out != "" {
 			parts = append(parts, out)
 		}
 	}
-	if seg := segment(env, in); seg != "" {
-		parts = append(parts, seg)
+	if sess := observe(env, in); sess != nil {
+		parts = append(parts, Render(env, sess, env.Now()))
 	}
 	_, err = fmt.Fprintln(stdout, strings.Join(parts, "\n"))
 	return err
 }
 
-func segment(env *router.Env, in Input) string {
+// RunJSON is `statusline --json`: the same side effect as Run (model switches
+// recorded), never the chained command, and one line of JSON (View).
+func RunJSON(env *router.Env, stdin io.Reader, stdout io.Writer) error {
+	raw, _ := io.ReadAll(stdin)
+	v := View{V: 1}
+	if sess := observe(env, parse(raw)); sess != nil {
+		v = Build(env, sess, env.Now())
+	}
+	return writeJSON(stdout, v)
+}
+
+// CatalogErrorJSON is what `statusline --json` prints when the catalog can't
+// be loaded (the text statusline prints "jev → ⚠ catalog").
+func CatalogErrorJSON(alias string, stdin io.Reader, stdout io.Writer) error {
+	raw, _ := io.ReadAll(stdin)
+	in := parse(raw)
+	custom := func(m string) bool { return strings.TrimSuffix(m, "[1m]") == alias }
+	v := View{V: 1, Routed: in.SessionID != "" && (custom(in.Model.ID) || custom(in.Model.DisplayName)),
+		Alias: alias, State: "error", Issue: "catalog", Text: alias + " → ⚠ catalog", full: true}
+	return writeJSON(stdout, v)
+}
+
+// NotRoutedJSON is the JSON for a session automodel doesn't route.
+func NotRoutedJSON(stdout io.Writer) error { return writeJSON(stdout, View{V: 1}) }
+
+func parse(raw []byte) Input {
+	var in Input
+	_ = json.Unmarshal(raw, &in)
+	return in
+}
+
+// observe records model switches (the statusline sees them first) and
+// returns the session when it is routed, nil otherwise.
+func observe(env *router.Env, in Input) *state.Session {
 	if in.SessionID == "" {
-		return ""
+		return nil
 	}
 	isJev := env.IsCustom(in.Model.ID) || env.IsCustom(in.Model.DisplayName)
 	sess, err := env.State.Load(in.SessionID)
 	if err != nil {
-		return ""
+		return nil
 	}
-	// The statusline sees model switches first: record them for the hooks.
 	if in.Model.ID != "" && sess.Model != in.Model.ID && (isJev || env.IsCustom(sess.Model)) {
 		env.State.Update(in.SessionID, func(s *state.Session) bool {
 			s.Model, s.ModelSource = in.Model.ID, "statusline"
@@ -65,47 +101,71 @@ func segment(env *router.Env, in Input) string {
 		})
 	}
 	if !isJev {
-		return ""
+		return nil
 	}
-	return Render(env, sess, env.Now())
+	return sess
 }
 
-// Render formats "jev → opus-5.5·xhigh 0.82", "jev → opus-5.5·xhigh +ultracode
-// 0.74", with a "↻ compact"/"↻ cold"/"↻ switched" flash after a redecision.
-func Render(env *router.Env, sess *state.Session, now time.Time) string {
-	id := env.Cfg.CustomModelID
+// View is the routing state of a session, as `statusline --json` prints it
+// (schema v1). A session that isn't routed is {"v":1,"routed":false}.
+type View struct {
+	V          int     `json:"v"`
+	Routed     bool    `json:"routed"`
+	Alias      string  `json:"alias"`      // the custom model ("jev")
+	Model      string  `json:"model"`      // catalog model key
+	Label      string  `json:"label"`      // catalog label ("Opus 5.5")
+	Effort     string  `json:"effort"`     // "" when none
+	Mode       string  `json:"mode"`       // "ultracode", "" when none
+	State      string  `json:"state"`      // routed|default|fallback|pinned|error
+	Confidence float64 `json:"confidence"` // 0 unless routed
+	Pin        string  `json:"pin"`        // the pinned effort
+	Issue      string  `json:"issue"`      // why Jev couldn't be asked, or the error
+	Flash      string  `json:"flash"`      // switched|compact|cold after a recent redecision
+	Budget     string  `json:"budget"`     // "over" when the session is over its spending cap
+	Text       string  `json:"text"`       // the text segment
+
+	full  bool // print every field even when not routed
+	short string
+}
+
+func writeJSON(w io.Writer, v View) error {
+	var err error
+	if v.Routed || v.full {
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		err = enc.Encode(v) // one line
+	} else {
+		_, err = fmt.Fprintf(w, "{\"v\":%d,\"routed\":false}\n", v.V)
+	}
+	return err
+}
+
+// Build computes the routing state of a routed session.
+func Build(env *router.Env, sess *state.Session, now time.Time) View {
 	d := sess.Main
 	if d == nil {
 		d = env.DefaultDecision("main", "default")
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s → ", id)
-	label := d.Model
+	v := View{V: 1, Routed: true, Alias: env.Cfg.CustomModelID, Model: d.Model, Label: d.Model, short: d.Model,
+		Effort: d.Effort, Mode: d.Mode, Pin: sess.Pin, Issue: sess.JevIssue}
 	if m := env.Catalog.Model(d.Model); m != nil {
-		label = m.ShortLabel()
-	}
-	b.WriteString(label)
-	if d.Effort != "" {
-		b.WriteString("·" + d.Effort)
-	}
-	if d.Mode != "" {
-		b.WriteString(" +" + d.Mode)
+		v.short = m.ShortLabel()
+		if m.Label != "" {
+			v.Label = m.Label
+		}
 	}
 	switch {
 	case sess.Pin != "":
-		b.WriteString(" (pinned)")
+		v.State = "pinned"
 	case d.Trigger == "default":
-		b.WriteString(" (default)")
+		v.State = "default"
 	case d.Trigger == "fallback":
-		b.WriteString(" ⚠ fallback")
+		v.State = "fallback"
 	default:
-		fmt.Fprintf(&b, " %.2f", d.Confidence)
+		v.State, v.Confidence = "routed", d.Confidence
 	}
 	if env.OverBudget(sess) {
-		b.WriteString(" ⚠ budget")
-	}
-	if sess.JevIssue != "" {
-		b.WriteString(" ⚠ jev: " + sess.JevIssue)
+		v.Budget = "over"
 	}
 	cause := d.Trigger
 	if cause == "fallback" {
@@ -115,9 +175,48 @@ func Render(env *router.Env, sess *state.Session, now time.Time) string {
 		if cause == "warm" {
 			cause = "switched"
 		}
-		b.WriteString(" ↻ " + cause)
+		v.Flash = cause
+	}
+	v.Text = v.text()
+	return v
+}
+
+// text formats "jev → opus-5.5·xhigh 0.82", "jev → opus-5.5·xhigh +ultracode
+// 0.74", with a "↻ compact"/"↻ cold"/"↻ switched" flash after a redecision.
+func (v View) text() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s → %s", v.Alias, v.short)
+	if v.Effort != "" {
+		b.WriteString("·" + v.Effort)
+	}
+	if v.Mode != "" {
+		b.WriteString(" +" + v.Mode)
+	}
+	switch v.State {
+	case "pinned":
+		b.WriteString(" (pinned)")
+	case "default":
+		b.WriteString(" (default)")
+	case "fallback":
+		b.WriteString(" ⚠ fallback")
+	default:
+		fmt.Fprintf(&b, " %.2f", v.Confidence)
+	}
+	if v.Budget != "" {
+		b.WriteString(" ⚠ budget")
+	}
+	if v.Issue != "" {
+		b.WriteString(" ⚠ jev: " + v.Issue)
+	}
+	if v.Flash != "" {
+		b.WriteString(" ↻ " + v.Flash)
 	}
 	return b.String()
+}
+
+// Render formats the text segment of a routed session.
+func Render(env *router.Env, sess *state.Session, now time.Time) string {
+	return Build(env, sess, now).Text
 }
 
 // chain returns the user's own statusline. Claude Code cancels a run when
