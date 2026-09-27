@@ -27,20 +27,9 @@ a background process that is not restarted after a reboot: `install` prints
 the line to add to `~/.profile` (`automodel start` does nothing when the
 proxy already runs).
 
-Packages, once published (they install only the binary; then run
-`automodel install` as your user). For apt and dnf, add the repository first
-as its README says:
-
-```sh
-brew install moukrea/tap/automodel      # macOS, Linux
-sudo apt install automodel              # Debian, Ubuntu: https://github.com/moukrea/apt-repo
-sudo dnf install automodel              # Fedora, RHEL: https://github.com/moukrea/rpm-repo
-```
-
 - Updates: the service installs new releases by itself (checked daily,
   applied when idle). `automodel update` does it now; `[update] auto = false`
-  in the config turns it off. Package installs update through their package
-  manager instead, and the proxy restarts on the new binary by itself.
+  in the config turns it off.
 - Uninstall: `automodel uninstall` (config and state are kept).
 - From source: `go build -o ~/.local/bin/automodel ./cmd/automodel && automodel install`.
 

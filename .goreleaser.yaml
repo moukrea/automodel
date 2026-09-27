@@ -14,27 +14,6 @@ archives:
     name_template: "automodel_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files: [README.md, config.example.toml]
 
-# The packages only install the binary: each user runs `automodel install`.
-# Published to moukrea/apt-repo and moukrea/rpm-repo by
-# scripts/publish-packages.sh (release workflow).
-nfpms:
-  - package_name: automodel
-    file_name_template: "{{ .ConventionalFileName }}"
-    vendor: moukrea
-    homepage: https://github.com/moukrea/automodel
-    maintainer: Emeric Favarel <47535798+moukrea@users.noreply.github.com>
-    description: Picks the model and effort for each Claude Code prompt, via TypeSafe Jev on OpenRouter.
-    section: devel
-    formats: [deb, rpm]
-    bindir: /usr/bin
-    scripts:
-      postinstall: packaging/postinstall.sh
-
-# Snapshots (CI package test) are named like a release, so that packages and
-# archives share one version string.
-snapshot:
-  version_template: "{{ incpatch .Version }}"
-
 checksum:
   name_template: checksums.txt
 
