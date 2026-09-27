@@ -178,6 +178,18 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 		}
 		v := env.Judge(req, env.Read(ans, ids, c.Scope), cur, policy.RepoPolicy{}, policy.Params{Penalty: cat.Meta.UnderprovisionPenalty, Scale: 1})
 		r.Decision, r.Mode, r.Kept = v.Tier.ID, v.Mode, v.Keep
+		// A bare go-ahead keeps the decision in force without asking Jev
+		// (the hooks' fast path on warm turns, the carry-over after a
+		// compaction or a pause).
+		if cs, ok := c.State["current"].(map[string]any); ok && env.Cfg.Features.FastPath && c.State["phase"] != "initial" {
+			task, _ := c.State["task"].(string)
+			id, _ := cs["tier"].(string)
+			last, _ := c.State["last_assistant"].(string)
+			if cat.Tier(c.Scope, id) != nil && router.GoAhead(task) && (c.State["phase"] == "post_compact" || !router.Proposes(last)) {
+				mode, _ := cs["mode"].(string)
+				r.Decision, r.Mode, r.Kept = id, mode, "go-ahead"
+			}
+		}
 	}
 	return r
 }

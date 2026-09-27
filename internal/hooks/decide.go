@@ -106,12 +106,27 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			trigger = "pinned-" + trigger
 		}
 	}
-	if trigger == "warm" && pin == "" && env.Cfg.Features.FastPath && goAhead(in.Prompt) {
-		// A bare go-ahead continues the work in progress: nothing to ask.
-		env.LogKept(in.SessionID, sess.Main, "go-ahead: continues the work in progress")
-		trigger = ""
+	// A bare go-ahead continues the work in progress: its tier is kept
+	// without asking Jev, which rates the bare word as trivial. Warm turns
+	// keep the decision; after a compaction or a pause it is carried over.
+	// A go-ahead to a proposal ("Want me to fix it?") starts that work,
+	// which may be bigger: it is routed.
+	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && goAhead(in.Prompt) &&
+		(trigger == "warm" || trigger == "compact" || trigger == "cold") {
+		if tr == nil {
+			tr = readTranscript(in.TranscriptPath)
+		}
+		switch {
+		case trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant):
+		case trigger == "warm":
+			env.LogKept(in.SessionID, sess.Main, "go-ahead: continues the work in progress")
+			trigger = ""
+		default:
+			dec = env.Carry(in.SessionID, sess.Main, trigger)
+			trigger = "carried-" + trigger
+		}
 	}
-	if trigger != "" && pin == "" { // no routing while pinned
+	if trigger != "" && pin == "" && dec == nil { // no routing while pinned or carried
 		if tr == nil && trigger != "initial" {
 			tr = readTranscript(in.TranscriptPath)
 		}
@@ -156,7 +171,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			s.Main = dec
 			s.CompactPending, s.CompactTrigger, s.ColdHint = false, "", false
 			switch {
-			case trigger == "initial" || trigger == "compact" || trigger == "pinned-initial" || trigger == "pinned-compact":
+			case trigger == "initial" || strings.HasSuffix(trigger, "compact") || trigger == "pinned-initial":
 				// A new conversation for the API: fresh top-level effort.
 				s.ResetEffortEpoch()
 				if strings.HasSuffix(trigger, "compact") {
@@ -336,27 +351,8 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	return req
 }
 
-// goAheads are prompts that only tell Claude to carry on.
-var goAheads = map[string]bool{}
-
-func init() {
-	for _, p := range []string{"y", "yes", "yep", "yeah", "yup", "ok", "okay", "k", "sure", "go", "go ahead", "go on",
-		"continue", "carry on", "keep going", "proceed", "do it", "lgtm", "sounds good", "looks good", "perfect", "great",
-		"oui", "ouais", "ok go", "vas y", "vas-y", "go go", "continue stp", "continue please", "please continue", "yes please",
-		"d'accord", "dac", "parfait", "fonce", "allez", "allez-y", "c'est bon", "c'est parti", "on y va", "ok vas-y", "oui vas-y"} {
-		goAheads[p] = true
-	}
-}
-
-var goAheadTrim = regexp.MustCompile(`[\s.!,;:]+$`)
-
 // goAhead reports whether a prompt is only a go-ahead.
-func goAhead(prompt string) bool {
-	p := strings.ToLower(strings.TrimSpace(prompt))
-	p = goAheadTrim.ReplaceAllString(p, "")
-	p = strings.Join(strings.Fields(p), " ")
-	return len(p) <= 24 && goAheads[p]
-}
+func goAhead(prompt string) bool { return router.GoAhead(prompt) }
 
 var moreThinkingRE = regexp.MustCompile(`(?i)\b(think (harder|more|deeply|carefully|it through)|ultrathink|take your time|be thorough|dig deeper|r[ée]fl[ée]chis (plus|bien|davantage|en profondeur)|prends (ton|le) temps|creuse (plus|bien|davantage))\b`)
 

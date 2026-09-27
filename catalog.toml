@@ -21,12 +21,16 @@ main_min_context = 1_000_000
 # an effort change keeps the prompt cache. Claude Code uses the same beta.
 per_turn_effort_beta = "per-turn-control-2026-07-01"
 # Working below the right tier costs this many times the cost gap (rework,
-# wrong answers); working above it costs the gap once. Calibrate from the ledger.
-underprovision_penalty = 3.0
+# wrong answers); working above it costs the gap once. 1.5 from `automodel
+# eval` (docs/research/2026-09-routing-quality.md): same exact accuracy as
+# Jev's top level and the lowest realized cost loss; 3.0 pushed medium work
+# to high and high to xhigh (held-out exact 85% vs 93%).
+underprovision_penalty = 1.5
 # Warm turns: a prompt continuing the work in progress (Jev yes-probability
-# at or above this) keeps the mode and is never downgraded. Set from
-# `automodel eval` (yes-cases vs no-cases distribution).
-continues_threshold = 0.7
+# at or above this) keeps the mode, and is not downgraded by a switch that
+# costs something. Set from `automodel eval` on the train split: yes-cases
+# >= 0.78, no-cases spread up to 0.94; 0.8 gives 3/39 false no, 16/81 false yes.
+continues_threshold = 0.8
 
 # ---------------------------------------------------------------- models
 

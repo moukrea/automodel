@@ -117,7 +117,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	params := policy.Params{Penalty: c.Meta.UnderprovisionPenalty, Scale: req.Scale}
 	if params.Penalty <= 0 {
-		params.Penalty = 3
+		params.Penalty = 1.5
 	}
 	keep := func(reason string) (*state.Decision, Outcome) {
 		d := *req.Current
@@ -281,9 +281,16 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	}
 	curMode := req.Current.Mode
 	cont := rd.continues != nil && *rd.continues >= c.Meta.ContinuesThreshold()
+	// The gates below guard switches that cost something (a cache rebuild).
+	// A free switch (per-turn effort) follows Jev's answer: holding the
+	// current tier there made sessions sticky (a low session stayed low on
+	// hard work, an xhigh one stayed xhigh on follow-ups), measured in
+	// docs/research/2026-09-routing-quality.md.
+	free := req.SwitchCost == nil || req.SwitchCost(tier) <= 0
 	switch {
 	case tier.ID == cur.ID && mode == curMode:
 		v.Keep = "same tier"
+	case free:
 	case tier.ID != cur.ID && rd.conf < f.WarmMinConfidence:
 		v.Tier = cur
 		if mode == curMode {
@@ -405,6 +412,23 @@ func (e *Env) LogKept(sessionID string, cur *state.Decision, reason string) {
 	if err := e.Ledger.Append(rec); err != nil {
 		log.Printf("ledger: %v", err)
 	}
+}
+
+// Carry re-applies the decision in force at a moment that would otherwise
+// be decided (compaction, cold cache) when the prompt is only a go-ahead:
+// "continue" carries on the pending work, which the current tier was
+// chosen for, while Jev reads the bare word as a trivial request. It is
+// logged like a decision, kept, with the go-ahead as reason.
+func (e *Env) Carry(sessionID string, cur *state.Decision, trigger string) *state.Decision {
+	d := *cur
+	d.Trigger, d.Cause, d.DecidedAt = trigger, "go-ahead", e.Now()
+	rec := ledger.Decision{TS: d.DecidedAt, Kind: "decision", SessionID: sessionID, Scope: cur.Scope, Trigger: trigger,
+		From: cur.Tier, Kept: true, KeepReason: "go-ahead: continues the work in progress", Skipped: true,
+		Chosen: cur.Tier, Model: cur.APIID, Effort: cur.Effort, Mode: cur.Mode}
+	if err := e.Ledger.Append(rec); err != nil {
+		log.Printf("ledger: %v", err)
+	}
+	return &d
 }
 
 // DefaultDecision is the tier applied when nothing was decided.
