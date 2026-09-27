@@ -40,7 +40,10 @@ type Config struct {
 	RepoPolicyFile               string   `toml:"repo_policy_file"`
 	// Privacy is what the routing state sent to Jev may contain: "full"
 	// (default) or "metadata" (sizes and task-kind hints, no text).
-	Privacy            string   `toml:"privacy"`
+	Privacy string `toml:"privacy"`
+	// RecordStates keeps the routing state of each decision locally
+	// (<state_dir>/states), for `automodel flag`.
+	RecordStates       bool     `toml:"record_states"`
 	StatuslineFlash    Duration `toml:"statusline_flash"`
 	StatuslineCommand  string   `toml:"statusline_command"`
 	RouteWorkflowSteps bool     `toml:"route_workflow_steps"`
@@ -107,6 +110,7 @@ func Default() *Config {
 		RepoPolicyFile:               ".automodel.toml",
 		StatuslineFlash:              Duration{30 * time.Second},
 		RouteWorkflowSteps:           true,
+		RecordStates:                 true,
 		Update:                       Update{Auto: true, Interval: Duration{24 * time.Hour}},
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,

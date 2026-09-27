@@ -230,7 +230,7 @@ func lock(path string) (func(), error) {
 // than maxAge, and returns the number of sessions removed.
 func (s Store) Prune(maxAge time.Duration) int {
 	n := 0
-	for _, sub := range []string{"sessions", "prompts", "statusline"} {
+	for _, sub := range []string{"sessions", "prompts", "statusline", "states"} {
 		dir := filepath.Join(s.Dir, sub)
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {

@@ -22,7 +22,8 @@ type Shadow struct {
 
 type Decision struct {
 	TS          time.Time          `json:"ts"`
-	Kind        string             `json:"kind"` // "decision"
+	Kind        string             `json:"kind"`         // "decision"
+	ID          string             `json:"id,omitempty"` // keys the routing state kept in States
 	SessionID   string             `json:"session_id"`
 	Scope       string             `json:"scope"`
 	Trigger     string             `json:"trigger"`

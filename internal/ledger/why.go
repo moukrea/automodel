@@ -212,3 +212,18 @@ func FollowFrom(path, session string, seen int, o WhyOptions, w io.Writer, stop 
 		}
 	}
 }
+
+// Nth returns the n-th latest decision (1 = the latest) of a session (ID
+// or prefix; "" = the most recent) in a scope ("" = any).
+func Nth(all []Decision, session, scope string, n int) (Decision, bool) {
+	sid, ds := SessionDecisions(all, session, 0)
+	for i := len(ds) - 1; i >= 0 && sid != ""; i-- {
+		if scope != "" && ds[i].Scope != scope {
+			continue
+		}
+		if n--; n <= 0 {
+			return ds[i], true
+		}
+	}
+	return Decision{}, false
+}

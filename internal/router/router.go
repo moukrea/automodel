@@ -29,6 +29,7 @@ type Env struct {
 	Catalog *catalog.Catalog
 	State   state.Store
 	Ledger  ledger.Ledger
+	States  ledger.States // routing states sent to Jev (record_states)
 	Jev     *jev.Client
 	Now     func() time.Time
 }
@@ -48,6 +49,7 @@ func New(cfg *config.Config) (*Env, error) {
 		Catalog: cat,
 		State:   state.Store{Dir: cfg.StateDir},
 		Ledger:  ledger.Ledger{Path: cfg.Ledger},
+		States:  statesFor(cfg),
 		Jev:     &jev.Client{URL: cfg.JevURL, APIKey: cfg.APIKey()},
 		Now:     time.Now,
 	}, nil
@@ -108,7 +110,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		cur = c.Tier(req.Scope, req.Current.Tier)
 	}
 	rec := ledger.Decision{
-		TS: start, Kind: "decision", SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
+		TS: start, Kind: "decision", ID: ledger.NewID(), SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
 		AgentType: req.AgentType, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
 		Signals: req.Signals,
 	}
@@ -139,6 +141,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		}
 	}
 
+	e.keepState(rec, req.State)
 	timeout := e.Cfg.JevTimeout.Duration
 	if req.Warm && f.WarmTimeout.Duration > 0 {
 		timeout = f.WarmTimeout.Duration

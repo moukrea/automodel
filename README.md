@@ -211,7 +211,16 @@ automodel catalog check [--json]                       # validation (non-zero ex
 automodel why [--session id] [-n 5] [--scope main] [--follow]  # what Jev answered for the last decisions, and why
 automodel report [--since 7d] [--json] [--baseline xhigh]
 automodel eval [--catalog path] [--format score|choice]    # Jev on labeled cases: accuracy, confidence, calibration
+automodel flag [--session id] [--n 1] --want xhigh [--note "..."]  # that pick was wrong
 ```
+
+`flag` turns a decision (default: the session's latest main decision) into
+a labeled case in `~/.local/state/automodel/flagged.jsonl`, with the routing
+state that was sent to Jev, the tier you wanted and Jev's probabilities;
+`automodel eval --cases ~/.local/state/automodel/flagged.jsonl` replays
+them. The states are kept locally per decision (`state_dir/states`, bounded
+to 2 MB per session, metadata only under `privacy = "metadata"`);
+`record_states = false` turns this off.
 
 `why` shows each decision like the demo's popup: every level with its
 probability, the pick, the previous tier, and the reasons (continuation,
