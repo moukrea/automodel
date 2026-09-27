@@ -15,7 +15,7 @@ subscription.
 curl -fsSL https://raw.githubusercontent.com/moukrea/automodel/main/install.sh | sh
 ```
 
-Linux or macOS. The script installs the binary in
+Linux or macOS (Windows: [below](#windows)). The script installs the binary in
 `~/.local/bin`, starts the local proxy, wires Claude Code (your
 `settings.json` is backed up first) and asks for your OpenRouter key. Then
 open `/model` in Claude Code and pick **Jev (auto)**. `automodel doctor`
@@ -32,6 +32,24 @@ proxy already runs).
   in the config turns it off.
 - Uninstall: `automodel uninstall` (config and state are kept).
 - From source: `go build -o ~/.local/bin/automodel ./cmd/automodel && automodel install`.
+
+### Windows
+
+In PowerShell (no admin rights needed):
+
+```powershell
+irm https://raw.githubusercontent.com/moukrea/automodel/main/install.ps1 | iex
+```
+
+The binary goes to `%LOCALAPPDATA%\automodel\bin` (added to your user
+PATH). The proxy runs as a background process and starts at each logon
+through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (a console
+window flashes briefly at logon). Claude Code reads
+`%USERPROFILE%\.claude\settings.json` and runs the hook and statusline
+commands with Git Bash, or PowerShell without Git for Windows: automodel
+writes them for both. Config and state live under `%USERPROFILE%\.config`
+and `%USERPROFILE%\.local\state`, as on Linux. Self-updates work the same;
+the replaced binary is kept as `automodel.exe.old` until the proxy restarts.
 
 ## How it works
 
