@@ -15,3 +15,30 @@ jobs:
       - run: go test ./...
       - run: go run ./cmd/automodel catalog check --catalog catalog.toml
       - run: sh -n install.sh
+  # install.sh end to end in clean containers, with the binary built from this
+  # commit. Neither image has a systemd user session: the proxy runs detached.
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:stable-slim", "fedora:latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: scripts/install-test.sh "${{ matrix.image }}"
+        env:
+          CONTAINER_ENGINE: docker
+  # macOS: tests, then install.sh end to end with the launchd agent.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go test ./...
+      - run: scripts/install-test.sh --host
