@@ -2,6 +2,7 @@ package router
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -45,7 +46,7 @@ func textFeatures(s string) map[string]any {
 	}
 	f := map[string]any{"words": len(strings.Fields(s)), "chars": len(s)}
 	if len(hints) > 0 {
-		sortStrings(hints)
+		sort.Strings(hints)
 		f["kind_hints"] = hints
 	}
 	if codeRE.MatchString(s) {
@@ -55,14 +56,6 @@ func textFeatures(s string) map[string]any {
 		f["asks_question"] = true
 	}
 	return f
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
 }
 
 // MetadataOnly returns the routing state without any text written by the

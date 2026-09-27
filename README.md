@@ -180,7 +180,7 @@ min_tier = "high"               # floor / ceiling for the main session
 max_tier = "xhigh"
 min_subagent_tier = "opus-low"  # same for subagents
 disable_modes = ["ultracode"]
-privacy = "metadata"            # see below
+privacy = "metadata"            # a repo can make privacy stricter, never looser
 ```
 
 ## What leaves your machine
@@ -248,6 +248,9 @@ hook logs: `hooks.log` next to it.
   of the prompt cache; over real routed sessions the cache still served
   98% of the input tokens.
 - A pin (`/effort`, `[effort:X]`) applies to the session's current model.
+  Claude Code tells the proxy about `/effort` only with the next request,
+  so the first prompt after it is still routed; the pin applies from that
+  prompt's first request.
 
 ## Tests
 

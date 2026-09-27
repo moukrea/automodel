@@ -53,6 +53,30 @@ func ServiceMode(goos string, run Runner) string {
 
 func (o Options) mode() string { return ServiceMode(o.goos(), o.runner()) }
 
+// InstalledMode is how the proxy was installed, from what install left:
+// the systemd unit, the launchd agent, or the detached proxy's pidfile. The
+// environment can differ later (an SSH login without a user bus, a desktop
+// session with one), so restarts and checks follow the install, and fall
+// back to what the environment offers when nothing is found.
+func InstalledMode(goos, unitPath string, cfg *config.Config, run Runner) string {
+	exists := func(p string) bool { _, err := os.Stat(p); return p != "" && err == nil }
+	switch {
+	case goos == "darwin" && exists(LaunchdPlist()):
+		return Launchd
+	case goos == "linux" && exists(unitPath):
+		return Systemd
+	case exists(PidFile(cfg)):
+		return Detached
+	}
+	return ServiceMode(goos, run)
+}
+
+// DefaultUnitPath is where install writes the systemd user unit.
+func DefaultUnitPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "systemd", "user", unitName)
+}
+
 // PidFile records the pid of the detached proxy.
 func PidFile(cfg *config.Config) string { return filepath.Join(cfg.StateDir, "proxy.pid") }
 
@@ -189,7 +213,7 @@ func Start(o Options, cfg *config.Config) error {
 // ServiceStatus reports how the proxy runs and whether that is healthy.
 func ServiceStatus(o Options, cfg *config.Config) (mode, detail string, ok bool) {
 	run := o.runner()
-	switch mode = o.mode(); mode {
+	switch mode = InstalledMode(o.goos(), o.UnitPath, cfg, run); mode {
 	case Systemd:
 		if _, err := os.Stat(o.UnitPath); err != nil {
 			return mode, "unit " + o.UnitPath + " not installed", false

@@ -36,7 +36,7 @@ func defaultRestart(ctx context.Context, cfg *config.Config) error {
 	run := func(name string, args ...string) ([]byte, error) {
 		return exec.CommandContext(ctx, name, args...).CombinedOutput()
 	}
-	switch install.ServiceMode(runtime.GOOS, run) {
+	switch install.InstalledMode(runtime.GOOS, install.DefaultUnitPath(), cfg, run) {
 	case install.Systemd:
 		_, err := run("systemctl", "--user", "start", "automodel.service")
 		return err

@@ -91,10 +91,8 @@ func costPerTask(c *catalog.Catalog, model, effort string) float64 {
 		return v
 	}
 	for _, scope := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
-		for _, t := range c.TiersByRank(scope) {
-			if t.Model == model && t.Effort == effort {
-				return c.TierCost(t)
-			}
+		if t := c.TierFor(scope, model, effort); t != nil {
+			return c.TierCost(t)
 		}
 	}
 	return 0

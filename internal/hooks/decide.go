@@ -69,7 +69,19 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 
 	// A user-chosen effort outranks routing: an [effort:X] tag pins it, an
 	// [effort:auto] tag releases the pin (and this prompt is routed).
-	tag := effortTag(in.Prompt)
+	// Only prompts the user typed count: subagent results and notifications
+	// can quote a tag.
+	tag := ""
+	if !synthetic {
+		tag = effortTag(in.Prompt)
+	}
+	pinModel := env.Catalog.DefaultTier(catalog.ScopeMain).Model
+	if sess.Main != nil {
+		pinModel = sess.Main.Model
+	}
+	if tag != "" && tag != "auto" && env.Catalog.TierFor(catalog.ScopeMain, pinModel, tag) == nil {
+		tag = "" // an effort this model doesn't have: ignored
+	}
 	pin, pinSource := sess.Pin, sess.PinSource
 	switch {
 	case tag == "auto":
@@ -84,11 +96,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	var dec *state.Decision
 	var signals *state.RepoSignals
 	if pin != "" && !synthetic {
-		model := env.Catalog.DefaultTier(catalog.ScopeMain).Model
-		if sess.Main != nil {
-			model = sess.Main.Model
-		}
-		t := env.Catalog.TierFor(catalog.ScopeMain, model, pin)
+		t := env.Catalog.TierFor(catalog.ScopeMain, pinModel, pin)
 		switch {
 		case t == nil:
 			pin, pinSource = "", "" // no such effort on this model: ignore the pin
@@ -135,7 +143,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if s.Model == "" {
 			s.Model, s.ModelSource = mi.Model, mi.Source
 		}
-		s.Pin, s.PinSource = pin, pinSource
+		if !synthetic {
+			s.Pin, s.PinSource = pin, pinSource
+		}
 		if dec != nil {
 			prev := s.Main
 			epoch := 1

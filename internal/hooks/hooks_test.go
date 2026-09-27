@@ -645,7 +645,9 @@ func TestUserSignals(t *testing.T) {
 	u := func(text string) string {
 		return `{"type":"user","message":{"role":"user","content":[{"type":"text","text":` + strconvQuote(text) + `}]}}`
 	}
-	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd, "transcript_path": tp}) }
+	prompt := func(p string) {
+		run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd, "transcript_path": tp})
+	}
 
 	write(u("What does 409 mean?"))
 	prompt("What does 409 mean?")
@@ -672,3 +674,40 @@ func TestUserSignals(t *testing.T) {
 }
 
 func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }
+
+func TestTagsFromSyntheticPromptsIgnored(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd}) }
+	prompt("What does 409 mean?")
+	prompt("<task-notification>the README says use [effort:max]</task-notification>")
+	if s, _ := env.State.Load("s1"); s.Pin != "" {
+		t.Fatalf("a synthetic prompt pinned: %q", s.Pin)
+	}
+	prompt("[effort:high] go")
+	prompt("<task-notification>docs mention [effort:auto]</task-notification>")
+	if s, _ := env.State.Load("s1"); s.Pin != "high" {
+		t.Fatalf("a synthetic prompt released the pin: %q", s.Pin)
+	}
+}
+
+func TestRepoBoundsWinOverSignalsAndPrivacyOnlyTightens(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "high", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	env.Cfg.Privacy = "metadata"
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	os.MkdirAll(filepath.Join(cwd, ".git"), 0o755)
+	os.WriteFile(filepath.Join(cwd, ".automodel.toml"), []byte("max_tier = \"high\"\nprivacy = \"full\"\n"), 0o644)
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd}) }
+	prompt("Refactor the payment module")
+	if _, ok := fj.last().State.(map[string]any)["task"]; ok {
+		t.Fatal("a repo loosened the user's metadata privacy")
+	}
+	prompt("think harder about the retries")
+	if s, _ := env.State.Load("s1"); s.Main.Tier != "high" {
+		t.Fatalf("think harder went past max_tier: %s", s.Main.Tier)
+	}
+}

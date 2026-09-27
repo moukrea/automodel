@@ -96,7 +96,8 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	c := e.Catalog
 	f := e.Cfg.Features
 	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
-	if privacy := firstNonEmpty(rp.Privacy, e.Cfg.Privacy); privacy == PrivacyMetadata {
+	// A repository can only make privacy stricter, never looser.
+	if rp.Privacy == PrivacyMetadata || e.Cfg.Privacy == PrivacyMetadata {
 		req.State = MetadataOnly(req.State)
 	}
 	qs, ids := jev.Questions(c, req.Scope, req.Warm)
@@ -268,12 +269,12 @@ type Verdict struct {
 func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPolicy, params policy.Params) Verdict {
 	c, f := e.Catalog, e.Cfg.Features
 	tier, pk := e.pick(req, rd, cur, params)
-	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context)
 	floor := false
 	if min := c.Tier(req.Scope, req.MinTier); min != nil && tier.Rank < min.Rank {
-		tier, floor = min, true
+		tier, floor = min, true // the user asked for more thinking...
 	}
-	mode := e.mode(req, rd, tier)
+	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context) // ...within the repo's bounds
+	mode := e.mode(req, rd, tier, rp)
 	v := Verdict{Tier: tier, Mode: mode, Pick: pk}
 	if cur == nil || floor {
 		return v // the user asked for it: no warm gate
@@ -351,7 +352,7 @@ func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Par
 // mode decides the modes layered on the tier (one at most is used). On a
 // warm turn a mode only flips with a clear answer, and a prompt that
 // continues the work in progress keeps the current mode.
-func (e *Env) mode(req Request, rd Reading, t *catalog.Tier) string {
+func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolicy) string {
 	cur := ""
 	if req.Warm && req.Current != nil {
 		cur = req.Current.Mode
@@ -359,7 +360,6 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier) string {
 	if req.Warm && rd.continues != nil && *rd.continues >= e.Catalog.Meta.ContinuesThreshold() {
 		return cur
 	}
-	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
 	for _, m := range e.Catalog.ModesFor(req.Scope) {
 		p, ok := rd.modeP[m.ID]
 		if !ok || !rp.ModeAllowed(m.ID) {
@@ -443,15 +443,6 @@ func FitRepo(r *state.RepoSignals, budget int) map[string]any {
 		out["claude_md_head"] = tokens.Truncate(r.ClaudeMDHead, budget)
 	}
 	return out
-}
-
-func firstNonEmpty(s ...string) string {
-	for _, v := range s {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func mustJSON(v any) string {

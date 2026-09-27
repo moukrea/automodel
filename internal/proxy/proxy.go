@@ -56,10 +56,12 @@ type Proxy struct {
 	inflight atomic.Int64
 	lastReq  atomic.Int64 // unix nanoseconds
 
-	mu       sync.Mutex
-	bg       sync.WaitGroup             // background state writes (Wait in tests)
-	touched  map[string]time.Time       // session -> last state write
-	bindings map[string]*state.Decision // agent ID -> decision (nil: none)
+	mu      sync.Mutex
+	bg      sync.WaitGroup       // background state writes (Wait in tests)
+	touched map[string]time.Time // session -> last state write
+	// clientEffort is the last effort Claude Code sent per session (pins).
+	clientEffort map[string]string
+	bindings     map[string]*state.Decision // agent ID -> decision (nil: none)
 }
 
 func New(cfg *config.Config, cat *catalog.Store) (*Proxy, error) {

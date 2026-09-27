@@ -49,11 +49,17 @@ func SessionDecisions(all []Decision, session string, n int) (string, []Decision
 	if session == "" && len(all) > 0 {
 		session = all[len(all)-1].SessionID
 	}
+	// A prefix matching several sessions picks the most recent one.
 	var sid string
+	for i := len(all) - 1; i >= 0 && session != ""; i-- {
+		if strings.HasPrefix(all[i].SessionID, session) {
+			sid = all[i].SessionID
+			break
+		}
+	}
 	var out []Decision
 	for _, d := range all {
-		if session != "" && strings.HasPrefix(d.SessionID, session) {
-			sid = d.SessionID
+		if sid != "" && d.SessionID == sid {
 			out = append(out, d)
 		}
 	}
