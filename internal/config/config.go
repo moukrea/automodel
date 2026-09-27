@@ -38,9 +38,12 @@ type Config struct {
 	JevShadowModel               string   `toml:"jev_shadow_model"`
 	StaleDays                    int      `toml:"stale_days"`
 	RepoPolicyFile               string   `toml:"repo_policy_file"`
-	StatuslineFlash              Duration `toml:"statusline_flash"`
-	StatuslineCommand            string   `toml:"statusline_command"`
-	RouteWorkflowSteps           bool     `toml:"route_workflow_steps"`
+	// Privacy is what the routing state sent to Jev may contain: "full"
+	// (default) or "metadata" (sizes and task-kind hints, no text).
+	Privacy            string   `toml:"privacy"`
+	StatuslineFlash    Duration `toml:"statusline_flash"`
+	StatuslineCommand  string   `toml:"statusline_command"`
+	RouteWorkflowSteps bool     `toml:"route_workflow_steps"`
 	// Features are the v2 behaviours; all off gives the v1 router (decisions
 	// only when the cache is already lost, confidence-escalation policy).
 	Features Features `toml:"features"`
@@ -71,6 +74,10 @@ type Features struct {
 	// effort against the cost of switching (cache rebuild), and only switches
 	// on a warm turn when the decision is confident enough.
 	CostAware bool `toml:"cost_aware"`
+	// FastPath keeps the current tier without asking Jev on warm turns whose
+	// prompt is a bare go-ahead ("yes", "continue", "vas-y"): it continues
+	// the work in progress.
+	FastPath bool `toml:"fast_path"`
 
 	// WarmMinConfidence is the confidence a warm switch needs.
 	WarmMinConfidence float64 `toml:"warm_min_confidence"`
@@ -91,7 +98,7 @@ func Default() *Config {
 		StateDir:                     state,
 		CacheTTL:                     Duration{time.Hour},
 		JevURL:                       "https://openrouter.ai/api/alpha/decisions",
-		JevTimeout:                   Duration{2 * time.Second},
+		JevTimeout:                   Duration{4 * time.Second},
 		StateBudgetTokens:            24000,
 		ThetaAct:                     0.6,
 		ThetaLow:                     0.35,
@@ -102,7 +109,7 @@ func Default() *Config {
 		RouteWorkflowSteps:           true,
 		Update:                       Update{Auto: true, Interval: Duration{24 * time.Hour}},
 		Features: Features{
-			WarmDecisions: true, PerTurnEffort: true, CostAware: true,
+			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
 			WarmMinConfidence: 0.7, WarmTimeout: Duration{3 * time.Second}, SwitchHorizonPrompts: 3,
 		},
 	}

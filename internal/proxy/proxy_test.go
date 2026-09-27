@@ -147,6 +147,23 @@ func TestPassthroughUntouched(t *testing.T) {
 	}
 }
 
+func TestHealth(t *testing.T) {
+	p, up, ps := setup(t)
+	p.Version = "v1.2.3"
+	resp, err := http.Get(ps.URL + HealthPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var h struct{ Version string }
+	if err := json.NewDecoder(resp.Body).Decode(&h); err != nil || h.Version != "v1.2.3" {
+		t.Errorf("health: %+v %v", h, err)
+	}
+	if len(up.bodies) != 0 || !p.Idle(0) {
+		t.Error("health request forwarded or counted as activity")
+	}
+}
+
 func TestSubagentEffortBinding(t *testing.T) {
 	p, up, ps := setup(t)
 	p.State.Update("sess-2", func(s *state.Session) bool {

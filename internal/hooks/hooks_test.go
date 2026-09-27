@@ -202,7 +202,7 @@ func TestDecideLifecycle(t *testing.T) {
 	// warm "continue": Jev is asked (with the continuation question), the
 	// tier is kept, no second notice.
 	fj.answers = []fa{{tier: "xhigh", conf: 0.9, ultra: 0.5, cont: 0.9}}
-	if out := prompt("continue"); out != nil {
+	if out := prompt("continue with the remaining modules"); out != nil {
 		t.Errorf("unexpected output %+v", out)
 	}
 	if fj.calls() != 2 || fj.last().Questions[jev.QContinues].Type != "noul" || fj.last().State.(map[string]any)["phase"] != "warm" {
@@ -356,6 +356,22 @@ func TestDecideFallbackAndNonJev(t *testing.T) {
 	if sess.Main == nil || sess.Main.Tier != "high" || sess.Main.Trigger != "fallback" || sess.Main.Cause != "initial" {
 		t.Errorf("fallback: %+v", sess.Main)
 	}
+	if sess.JevIssue != "unreachable" {
+		t.Errorf("jev issue = %q", sess.JevIssue)
+	}
+	// Jev answers again: the issue clears.
+	fj.fail = false
+	fj.answers = []fa{{tier: "low", conf: 0.95, cont: 0.1}}
+	run(t, env, "decide", map[string]any{"session_id": "s2", "prompt": "thanks, what does 409 mean?", "cwd": t.TempDir()})
+	if sess, _ = env.State.Load("s2"); sess.JevIssue != "" {
+		t.Errorf("jev issue not cleared: %q", sess.JevIssue)
+	}
+	for err, want := range map[error]string{jev.ErrNoKey: "no OpenRouter key", context.DeadlineExceeded: "timeout",
+		errors.New("jev: status 401: nope"): "OpenRouter key rejected", errors.New("jev: 402: Insufficient credits"): "OpenRouter credits"} {
+		if got := router.JevIssue(err); got != want {
+			t.Errorf("JevIssue(%v) = %q, want %q", err, got, want)
+		}
+	}
 
 	// A session known to be on another model is left alone.
 	env.State.Update("s3", func(s *state.Session) bool { s.Model = "opus"; return true })
@@ -503,7 +519,7 @@ func TestProxyDownIsExplained(t *testing.T) {
 	env := setup(t, &fakeJev{})
 	env.Cfg.Listen = "127.0.0.1:1" // nothing listens there
 	restarted := 0
-	restart = func(context.Context) error { restarted++; return errors.New("no systemd") }
+	restart = func(context.Context, *config.Config) error { restarted++; return errors.New("no systemd") }
 	t.Cleanup(func() { restart = defaultRestart })
 	out := run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "hi"})
 	if out == nil || out.Decision != "block" || !strings.Contains(out.Reason, "127.0.0.1:1") || restarted != 1 {
@@ -530,12 +546,168 @@ func TestProxyRestartedByHook(t *testing.T) {
 		}
 		return errors.New("refused")
 	}
-	restart = func(context.Context) error { up = true; return nil }
+	restart = func(context.Context, *config.Config) error { up = true; return nil }
 	t.Cleanup(func() { restart, dial = defaultRestart, origDial })
 	if out := run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "hi"}); out != nil && out.Decision == "block" {
 		t.Fatalf("blocked after a successful restart: %+v", out)
 	}
 	if !up {
 		t.Fatal("no restart attempted")
+	}
+}
+
+func TestEffortTagPins(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	sid := "s1"
+	markJev(t, env, sid)
+	cwd := t.TempDir()
+	prompt := func(p string) {
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+	}
+	prompt("What does 409 mean?")
+	calls := fj.calls()
+	prompt("[effort:xhigh] Now find the race in checkout")
+	sess, _ := env.State.Load(sid)
+	if sess.Pin != "xhigh" || sess.PinSource != "prompt" || sess.Main.Tier != "xhigh" || sess.Main.Trigger != "pinned" || fj.calls() != calls {
+		t.Fatalf("tag not pinned without asking Jev: pin %q, main %+v, calls %d→%d", sess.Pin, sess.Main, calls, fj.calls())
+	}
+	if sess.PendingEffort == nil && sess.EffortBase != "" {
+		t.Error("a pinned effort change must go through per-turn effort")
+	}
+	prompt("and fix it") // pinned: no routing
+	if fj.calls() != calls {
+		t.Fatal("Jev asked while pinned")
+	}
+	if sess, _ = env.State.Load(sid); sess.Main.Tier != "xhigh" {
+		t.Fatalf("pin lost: %+v", sess.Main)
+	}
+	prompt("[effort:auto] write the commit message") // released: this prompt is routed
+	sess, _ = env.State.Load(sid)
+	if sess.Pin != "" || fj.calls() != calls+1 {
+		t.Fatalf("auto didn't release the pin: pin %q, calls %d", sess.Pin, fj.calls())
+	}
+	if effortTag("no tag here") != "" || effortTag("[Effort: MAX] please") != "max" || effortTag("[effort:ultra]") != "" {
+		t.Error("effortTag parsing")
+	}
+}
+
+func TestGoAheadFastPath(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd}) }
+	prompt("Find the race in checkout, don't fix yet")
+	calls := fj.calls()
+	for _, p := range []string{"yes", "Vas-y !", "continue.", "OK go", "  LGTM  "} {
+		prompt(p)
+	}
+	if fj.calls() != calls {
+		t.Fatalf("Jev asked for a go-ahead (%d calls)", fj.calls()-calls)
+	}
+	if s, _ := env.State.Load("s1"); s.Main.Tier != "xhigh" {
+		t.Fatalf("go-ahead changed the tier: %+v", s.Main)
+	}
+	prompt("yes, and also add rate limiting to the login endpoint")
+	if fj.calls() != calls+1 {
+		t.Fatal("a real prompt starting with yes wasn't routed")
+	}
+	if goAhead("continue the refactor of the payment module") {
+		t.Error("goAhead matched a real instruction")
+	}
+}
+
+func TestRepoPolicyPrivacyAndModes(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, ultra: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	os.MkdirAll(filepath.Join(cwd, ".git"), 0o755)
+	os.WriteFile(filepath.Join(cwd, ".automodel.toml"), []byte("privacy = \"metadata\"\ndisable_modes = [\"ultracode\"]\n"), 0o644)
+	run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "Audit the whole codebase for injection bugs", "cwd": cwd})
+	st := fj.last().State.(map[string]any)
+	if _, ok := st["task"]; ok || st["task_features"] == nil {
+		t.Fatalf("metadata mode sent the prompt: %v", st)
+	}
+	if s, _ := env.State.Load("s1"); s.Main.Mode != "" || s.Main.Tier != "xhigh" {
+		t.Fatalf("disabled mode used: %+v", s.Main)
+	}
+}
+
+func TestUserSignals(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	write := func(lines ...string) { os.WriteFile(tp, []byte(strings.Join(lines, "\n")+"\n"), 0o600) }
+	u := func(text string) string {
+		return `{"type":"user","message":{"role":"user","content":[{"type":"text","text":` + strconvQuote(text) + `}]}}`
+	}
+	prompt := func(p string) {
+		run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd, "transcript_path": tp})
+	}
+
+	write(u("What does 409 mean?"))
+	prompt("What does 409 mean?")
+	// The user stopped the next turn, then asks again: Jev is told.
+	write(u("What does 409 mean?"), u("Explain the checkout flow"), u("[Request interrupted by user]"), u("Explain the checkout flow, in detail"))
+	prompt("Explain the checkout flow, in detail")
+	st := fj.last().State.(map[string]any)
+	if sig, _ := st["user_signals"].(map[string]any); sig["previous_turn_interrupted"] != true {
+		t.Fatalf("interruption not signalled: %v", st["user_signals"])
+	}
+	for _, p := range st["recent_prompts"].([]any) {
+		if strings.Contains(p.(string), "interrupted") {
+			t.Fatal("the interruption marker was sent as a prompt")
+		}
+	}
+	// "Think harder": at least one tier up, even if Jev says low.
+	sess, _ := env.State.Load("s1")
+	before := sess.Main.Tier
+	prompt("Hmm, think harder about the retry path")
+	sess, _ = env.State.Load("s1")
+	if sess.Main.Tier == before || sess.Main.Tier == "low" {
+		t.Fatalf("think harder didn't raise the tier: %s → %s", before, sess.Main.Tier)
+	}
+}
+
+func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }
+
+func TestTagsFromSyntheticPromptsIgnored(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd}) }
+	prompt("What does 409 mean?")
+	prompt("<task-notification>the README says use [effort:max]</task-notification>")
+	if s, _ := env.State.Load("s1"); s.Pin != "" {
+		t.Fatalf("a synthetic prompt pinned: %q", s.Pin)
+	}
+	prompt("[effort:high] go")
+	prompt("<task-notification>docs mention [effort:auto]</task-notification>")
+	if s, _ := env.State.Load("s1"); s.Pin != "high" {
+		t.Fatalf("a synthetic prompt released the pin: %q", s.Pin)
+	}
+}
+
+func TestRepoBoundsWinOverSignalsAndPrivacyOnlyTightens(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "high", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	env.Cfg.Privacy = "metadata"
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	os.MkdirAll(filepath.Join(cwd, ".git"), 0o755)
+	os.WriteFile(filepath.Join(cwd, ".automodel.toml"), []byte("max_tier = \"high\"\nprivacy = \"full\"\n"), 0o644)
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd}) }
+	prompt("Refactor the payment module")
+	if _, ok := fj.last().State.(map[string]any)["task"]; ok {
+		t.Fatal("a repo loosened the user's metadata privacy")
+	}
+	prompt("think harder about the retries")
+	if s, _ := env.State.Load("s1"); s.Main.Tier != "high" {
+		t.Fatalf("think harder went past max_tier: %s", s.Main.Tier)
 	}
 }

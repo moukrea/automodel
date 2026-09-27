@@ -4,6 +4,8 @@
 # Installs the latest release in ~/.local/bin (AUTOMODEL_BIN_DIR), wires it
 # into Claude Code (`automodel install`) and asks for the OpenRouter key
 # (or takes $OPENROUTER_API_KEY). Pin a version with AUTOMODEL_VERSION=v0.1.0.
+# Tests: AUTOMODEL_BASE_URL (e.g. file:///dist) replaces the release download
+# URL; the archive and checksums.txt must be there, AUTOMODEL_VERSION is required.
 set -eu
 
 REPO="moukrea/automodel"
@@ -25,6 +27,7 @@ aarch64 | arm64) arch=arm64 ;;
 esac
 
 tag="${AUTOMODEL_VERSION:-}"
+[ -z "${AUTOMODEL_BASE_URL:-}" ] || [ -n "$tag" ] || fail "AUTOMODEL_BASE_URL needs AUTOMODEL_VERSION"
 if [ -z "$tag" ]; then
 	tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" |
 		sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
@@ -32,7 +35,7 @@ fi
 [ -n "$tag" ] || fail "could not find the latest release"
 ver=${tag#v}
 file="automodel_${ver}_${os}_${arch}.tar.gz"
-base="https://github.com/$REPO/releases/download/$tag"
+base="${AUTOMODEL_BASE_URL:-https://github.com/$REPO/releases/download/$tag}"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -68,4 +71,4 @@ fi
 grep -q '^openrouter_api_key = "..*"' "$cfg" 2>/dev/null || [ -n "${OPENROUTER_API_KEY:-}" ] ||
 	say "No OpenRouter key yet: until you run \`automodel key set\`, every prompt uses the default tier."
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Add $BIN_DIR to your PATH." ;; esac
-say 'Done. In Claude Code, open /model and pick "Jev (auto)".'
+say 'Done. In Claude Code, open /model and pick "Jev (auto)". `automodel doctor` checks the setup.'

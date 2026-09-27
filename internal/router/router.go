@@ -6,6 +6,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -70,6 +71,11 @@ type Request struct {
 	// Warm turns (the cache is intact): Current is the decision in force,
 	// SwitchCost the dollar cost of moving to a tier (cache rebuild), Scale
 	// the dollars per catalog cost unit of the work ahead.
+	// Signals the user gave (interrupted turn, asked for more thinking);
+	// MinTier is a floor they imply.
+	Signals map[string]any
+	MinTier string
+
 	Warm       bool
 	Current    *state.Decision
 	SwitchCost func(*catalog.Tier) float64
@@ -89,6 +95,11 @@ type Outcome struct {
 func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome) {
 	c := e.Catalog
 	f := e.Cfg.Features
+	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
+	// A repository can only make privacy stricter, never looser.
+	if rp.Privacy == PrivacyMetadata || e.Cfg.Privacy == PrivacyMetadata {
+		req.State = MetadataOnly(req.State)
+	}
 	qs, ids := jev.Questions(c, req.Scope, req.Warm)
 	stateTokens := tokens.Estimate(mustJSON(req.State))
 	start := e.Now()
@@ -99,6 +110,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	rec := ledger.Decision{
 		TS: start, Kind: "decision", SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
 		AgentType: req.AgentType, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
+		Signals: req.Signals,
 	}
 	if cur != nil {
 		rec.From = cur.ID
@@ -119,7 +131,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 
 	// A warm switch has to pay back its cost: when no answer could, Jev
 	// is not asked at all.
-	if cur != nil && f.CostAware && req.SwitchCost != nil {
+	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" {
 		// Modes flip for free but wait for the next free moment then.
 		if g := policy.MaxGain(c, req.Scope, cur, req.SwitchCost, params); g <= 0 {
 			rec.Skipped = true
@@ -160,7 +172,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if resp != nil {
 		rec.JevCostUSD = resp.Usage.Cost
 	}
-	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
+	e.noteJev(req.SessionID, err)
 	dec := &state.Decision{Scope: req.Scope, Trigger: req.Trigger, DecidedAt: start}
 	if err != nil {
 		rec.Error = err.Error()
@@ -206,6 +218,43 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	return dec, Outcome{Changed: true}
 }
 
+// noteJev records on the session why Jev couldn't answer (shown by the
+// status line), or clears it once Jev answers again.
+func (e *Env) noteJev(sessionID string, err error) {
+	issue := JevIssue(err)
+	if sessionID == "" {
+		return
+	}
+	e.State.Update(sessionID, func(s *state.Session) bool {
+		if s.JevIssue == issue {
+			return false
+		}
+		s.JevIssue, s.JevIssueAt = issue, e.Now()
+		return true
+	})
+}
+
+// JevIssue is a short reason for a failed Jev call ("" when it answered).
+func JevIssue(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case errors.Is(err, jev.ErrNoKey):
+		return "no OpenRouter key"
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "Timeout") || strings.Contains(msg, "deadline"):
+		return "timeout"
+	case strings.Contains(msg, " 401") || strings.Contains(msg, "status 401") || strings.Contains(msg, "jev: 401"):
+		return "OpenRouter key rejected"
+	case strings.Contains(msg, "402"):
+		return "OpenRouter credits"
+	case strings.Contains(msg, "429"):
+		return "rate limited"
+	}
+	return "unreachable"
+}
+
 // Verdict is the policy's answer to a reading.
 type Verdict struct {
 	Tier *catalog.Tier
@@ -220,11 +269,15 @@ type Verdict struct {
 func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPolicy, params policy.Params) Verdict {
 	c, f := e.Catalog, e.Cfg.Features
 	tier, pk := e.pick(req, rd, cur, params)
-	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context)
-	mode := e.mode(req, rd, tier)
+	floor := false
+	if min := c.Tier(req.Scope, req.MinTier); min != nil && tier.Rank < min.Rank {
+		tier, floor = min, true // the user asked for more thinking...
+	}
+	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context) // ...within the repo's bounds
+	mode := e.mode(req, rd, tier, rp)
 	v := Verdict{Tier: tier, Mode: mode, Pick: pk}
-	if cur == nil {
-		return v
+	if cur == nil || floor {
+		return v // the user asked for it: no warm gate
 	}
 	curMode := req.Current.Mode
 	cont := rd.continues != nil && *rd.continues >= c.Meta.ContinuesThreshold()
@@ -299,7 +352,7 @@ func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Par
 // mode decides the modes layered on the tier (one at most is used). On a
 // warm turn a mode only flips with a clear answer, and a prompt that
 // continues the work in progress keeps the current mode.
-func (e *Env) mode(req Request, rd Reading, t *catalog.Tier) string {
+func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolicy) string {
 	cur := ""
 	if req.Warm && req.Current != nil {
 		cur = req.Current.Mode
@@ -309,7 +362,7 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier) string {
 	}
 	for _, m := range e.Catalog.ModesFor(req.Scope) {
 		p, ok := rd.modeP[m.ID]
-		if !ok {
+		if !ok || !rp.ModeAllowed(m.ID) {
 			continue
 		}
 		if min := e.Catalog.Tier(req.Scope, m.MinTier); min != nil && t.Rank < min.Rank {
@@ -324,6 +377,34 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier) string {
 		}
 	}
 	return ""
+}
+
+// Pinned is the decision for an effort the user chose. It is logged like
+// any decision, with the source (/effort or prompt) as cause.
+func (e *Env) Pinned(sessionID string, t *catalog.Tier, source string) *state.Decision {
+	now := e.Now()
+	d := &state.Decision{Scope: catalog.ScopeMain, Trigger: "pinned", Cause: source, DecidedAt: now, Confidence: 1}
+	e.fill(d, t, "")
+	rec := ledger.Decision{TS: now, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain, Trigger: "pinned",
+		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1}
+	if err := e.Ledger.Append(rec); err != nil {
+		log.Printf("ledger: %v", err)
+	}
+	return d
+}
+
+// LogKept records a warm turn that kept the current decision without
+// asking Jev.
+func (e *Env) LogKept(sessionID string, cur *state.Decision, reason string) {
+	if cur == nil {
+		return
+	}
+	rec := ledger.Decision{TS: e.Now(), Kind: "decision", SessionID: sessionID, Scope: cur.Scope, Trigger: "warm",
+		Warm: true, From: cur.Tier, Kept: true, KeepReason: reason, Skipped: true,
+		Chosen: cur.Tier, Model: cur.APIID, Effort: cur.Effort, Mode: cur.Mode}
+	if err := e.Ledger.Append(rec); err != nil {
+		log.Printf("ledger: %v", err)
+	}
 }
 
 // DefaultDecision is the tier applied when nothing was decided.

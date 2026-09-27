@@ -41,6 +41,10 @@ type Info struct {
 	UserPrompts    []string // real user prompts, oldest first
 	Model          string   // last model announced to the main thread
 	LastAssistant  string   // text of the last assistant message
+	// Interrupted is set when the user stopped a turn (Esc), and
+	// InterruptedAt is how many prompts came before that interruption.
+	Interrupted   bool
+	InterruptedAt int
 }
 
 // Read scans the tail of the transcript.
@@ -88,6 +92,7 @@ func Read(path string) (Info, error) {
 				info.CompactSummary = ""
 				info.UserPrompts = nil
 				info.LastAssistant = ""
+				info.Interrupted, info.InterruptedAt = false, 0
 			}
 		case "assistant":
 			if t := assistantText(e.Message); t != "" {
@@ -98,6 +103,8 @@ func Read(path string) (Info, error) {
 			switch {
 			case e.IsCompactSummary:
 				info.CompactSummary = text
+			case strings.HasPrefix(text, "[Request interrupted by user"):
+				info.Interrupted, info.InterruptedAt = true, len(info.UserPrompts)
 			case e.IsMeta || text == "" || IsSynthetic(text):
 			default:
 				info.UserPrompts = append(info.UserPrompts, text)

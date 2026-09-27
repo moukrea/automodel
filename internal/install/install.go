@@ -1,5 +1,6 @@
 // Package install wires automodel into Claude Code (settings.json), writes
-// its config and runs the proxy as a systemd user service — and undoes it.
+// its config and runs the proxy as a service (systemd user unit, launchd
+// agent, or a detached process without either) — and undoes it.
 package install
 
 import (
@@ -8,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -27,6 +27,22 @@ type Options struct {
 	SettingsPath string // ~/.claude/settings.json
 	UnitPath     string // ~/.config/systemd/user/automodel.service
 	Log          func(format string, a ...any)
+	Run          Runner // default: exec
+	GOOS         string // default: runtime.GOOS
+}
+
+func (o Options) runner() Runner {
+	if o.Run != nil {
+		return o.Run
+	}
+	return execRunner
+}
+
+func (o Options) goos() string {
+	if o.GOOS != "" {
+		return o.GOOS
+	}
+	return runtime.GOOS
 }
 
 const unitName = "automodel.service"
@@ -160,6 +176,66 @@ func merge(s *Object, o Options, cfg *config.Config) {
 	}
 }
 
+// SettingsReport compares settings.json with what Apply merges.
+type SettingsReport struct {
+	Env        map[string]string // the env entries as set
+	BadEnv     []string          // automodel env vars missing or different
+	Hooks      []string          // hooks missing or running another binary or config
+	Statusline bool              // the automodel statusline is set
+}
+
+// InspectSettings reads settings.json; a missing file is an error.
+func InspectSettings(o Options, cfg *config.Config) (*SettingsReport, error) {
+	s, raw, err := readSettings(o.SettingsPath)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, fmt.Errorf("%s not found", o.SettingsPath)
+	}
+	r := &SettingsReport{Env: map[string]string{}}
+	env := s.Obj("env")
+	for _, k := range env.keys {
+		v, _ := env.Get(k)
+		r.Env[k] = fmt.Sprint(v)
+	}
+	for _, kv := range envVars(cfg) {
+		if v, ok := r.Env[kv[0]]; !ok || v != kv[1] {
+			r.BadEnv = append(r.BadEnv, kv[0])
+		}
+	}
+	hooks := s.Obj("hooks")
+	for _, h := range hookEvents {
+		if !hasHook(hooks, h.event, o.hookCmd(h.name)) {
+			r.Hooks = append(r.Hooks, h.name)
+		}
+	}
+	c, _ := s.Obj("statusLine").Get("command")
+	r.Statusline = c == o.statuslineCmd()
+	return r, nil
+}
+
+func hasHook(hooks *Object, event, cmd string) bool {
+	groups, _ := hooks.Get(event)
+	list, _ := groups.([]any)
+	for _, g := range list {
+		gobj, ok := g.(*Object)
+		if !ok {
+			continue
+		}
+		hs, _ := gobj.Get("hooks")
+		hl, _ := hs.([]any)
+		for _, h := range hl {
+			if ho, ok := h.(*Object); ok {
+				if c, _ := ho.Get("command"); c == cmd {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Remove undoes Apply: settings entries, statusline (restored), service.
 func Remove(o Options) error {
 	settings, raw, err := readSettings(o.SettingsPath)
@@ -203,16 +279,20 @@ func Remove(o Options) error {
 		}
 		o.Log("settings restored (backup %s)", backup)
 	}
-	if runtime.GOOS == "darwin" {
-		exec.Command("launchctl", "unload", "-w", LaunchdPlist()).Run()
+	run := o.runner()
+	if _, err := os.Stat(LaunchdPlist()); err == nil && o.goos() == "darwin" {
+		run("launchctl", "unload", "-w", LaunchdPlist())
 		os.Remove(LaunchdPlist())
 		o.Log("launchd agent removed")
 	}
-	if runtime.GOOS == "linux" {
-		exec.Command("systemctl", "--user", "disable", "--now", unitName).Run()
+	if _, err := os.Stat(o.UnitPath); err == nil {
+		run("systemctl", "--user", "disable", "--now", unitName)
 		os.Remove(o.UnitPath)
-		exec.Command("systemctl", "--user", "daemon-reload").Run()
+		run("systemctl", "--user", "daemon-reload")
 		o.Log("service stopped and removed")
+	}
+	if StopDetached(cfg) {
+		o.Log("background proxy stopped")
 	}
 	o.Log("config and state kept: %s, %s", o.ConfigPath, cfg.StateDir)
 	return nil
@@ -283,25 +363,33 @@ func writeConfig(o Options, prevStatusline string) error {
 	return nil
 }
 
+// startService (re)starts the proxy under launchd, systemd, or else as a
+// detached process, and returns once it listens.
 func startService(o Options, cfg *config.Config) error {
-	if runtime.GOOS == "darwin" {
+	switch o.mode() {
+	case Launchd:
 		return startLaunchd(o, cfg)
+	case Systemd:
+		StopDetached(cfg) // left by an install without systemd
+		return startSystemd(o, cfg)
 	}
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("automatic service setup supports Linux (systemd) and macOS (launchd); run `%s --config %s serve` yourself", o.Exe, o.ConfigPath)
-	}
+	return startDetached(o, cfg)
+}
+
+func startSystemd(o Options, cfg *config.Config) error {
 	unit := fmt.Sprintf(`[Unit]
 Description=automodel proxy for Claude Code (jev model routing)
 After=network-online.target
 
 [Service]
 ExecStart=%s --config %s serve
+Environment=%s=%s
 Restart=always
 RestartSec=1
 
 [Install]
 WantedBy=default.target
-`, o.Exe, o.ConfigPath)
+`, o.Exe, o.ConfigPath, ServiceEnv, Systemd)
 	if err := os.MkdirAll(filepath.Dir(o.UnitPath), 0o755); err != nil {
 		return err
 	}
@@ -309,7 +397,7 @@ WantedBy=default.target
 		return err
 	}
 	for _, args := range [][]string{{"daemon-reload"}, {"enable", unitName}, {"restart", unitName}} {
-		if out, err := exec.Command("systemctl", append([]string{"--user"}, args...)...).CombinedOutput(); err != nil {
+		if out, err := o.runner()("systemctl", append([]string{"--user"}, args...)...); err != nil {
 			return fmt.Errorf("systemctl --user %s: %v: %s", strings.Join(args, " "), err, out)
 		}
 	}
@@ -382,10 +470,12 @@ func startLaunchd(o Options, cfg *config.Config) error {
   <array><string>%s</string><string>--config</string><string>%s</string><string>serve</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>EnvironmentVariables</key>
+  <dict><key>%s</key><string>%s</string></dict>
   <key>StandardErrorPath</key><string>%s</string>
 </dict>
 </plist>
-`, launchdLabel, o.Exe, o.ConfigPath, filepath.Join(cfg.StateDir, "proxy.log"))
+`, launchdLabel, o.Exe, o.ConfigPath, ServiceEnv, Launchd, LogFile(cfg))
 	path := LaunchdPlist()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -396,8 +486,9 @@ func startLaunchd(o Options, cfg *config.Config) error {
 	if err := os.WriteFile(path, []byte(plist), 0o644); err != nil {
 		return err
 	}
-	exec.Command("launchctl", "unload", path).Run()
-	if out, err := exec.Command("launchctl", "load", "-w", path).CombinedOutput(); err != nil {
+	run := o.runner()
+	run("launchctl", "unload", path)
+	if out, err := run("launchctl", "load", "-w", path); err != nil {
 		return fmt.Errorf("launchctl load: %v: %s", err, out)
 	}
 	return waitListening(o, cfg, "launchd agent "+launchdLabel)
@@ -405,8 +496,7 @@ func startLaunchd(o Options, cfg *config.Config) error {
 
 func waitListening(o Options, cfg *config.Config, what string) error {
 	for i := 0; i < 50; i++ {
-		if c, err := net.DialTimeout("tcp", cfg.Listen, 200*time.Millisecond); err == nil {
-			c.Close()
+		if listening(cfg.Listen) {
 			o.Log("%s running on %s", what, cfg.Listen)
 			return nil
 		}

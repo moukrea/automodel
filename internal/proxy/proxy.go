@@ -8,11 +8,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +35,10 @@ const (
 	maxBody       = 64 << 20
 	stateThrottle = 20 * time.Second
 	maxBindings   = 50000
+
+	// HealthPath answers the proxy's own version (automodel doctor); it is
+	// never forwarded.
+	HealthPath = "/automodel/health"
 )
 
 type Proxy struct {
@@ -40,6 +47,8 @@ type Proxy struct {
 	State   state.Store
 	Ledger  ledger.Ledger
 	Debug   bool
+	Version string // reported on HealthPath
+	dumpN   atomic.Int64
 
 	upstream *url.URL
 	rp       *httputil.ReverseProxy
@@ -47,10 +56,12 @@ type Proxy struct {
 	inflight atomic.Int64
 	lastReq  atomic.Int64 // unix nanoseconds
 
-	mu       sync.Mutex
-	bg       sync.WaitGroup             // background state writes (Wait in tests)
-	touched  map[string]time.Time       // session -> last state write
-	bindings map[string]*state.Decision // agent ID -> decision (nil: none)
+	mu      sync.Mutex
+	bg      sync.WaitGroup       // background state writes (Wait in tests)
+	touched map[string]time.Time // session -> last state write
+	// clientEffort is the last effort Claude Code sent per session (pins).
+	clientEffort map[string]string
+	bindings     map[string]*state.Decision // agent ID -> decision (nil: none)
 }
 
 func New(cfg *config.Config, cat *catalog.Store) (*Proxy, error) {
@@ -116,6 +127,11 @@ func (p *Proxy) Idle(d time.Duration) bool {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == HealthPath {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"version": p.Version, "pid": os.Getpid()})
+		return
+	}
 	p.inflight.Add(1)
 	p.lastReq.Store(time.Now().UnixNano())
 	defer p.inflight.Add(-1)
@@ -132,6 +148,21 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rt := &route{path: r.URL.Path, agentID: r.Header.Get(HeaderAgent)}
 	if nb, ok := p.rewrite(r, body, rt); ok {
 		body = nb
+	}
+	if dir := os.Getenv("AUTOMODEL_DUMP_DIR"); dir != "" && !strings.HasSuffix(r.URL.Path, "/count_tokens") {
+		// Debugging cache misses: every request as sent upstream, to diff.
+		hdr := map[string]string{}
+		for k, v := range r.Header {
+			if lk := strings.ToLower(k); lk == "authorization" || lk == "x-api-key" || strings.Contains(lk, "cookie") {
+				hdr[k] = "[redacted]"
+			} else {
+				hdr[k] = strings.Join(v, ", ")
+			}
+		}
+		h, _ := json.Marshal(map[string]any{"path": r.URL.Path, "routed": rt.routed, "headers": hdr})
+		n := p.dumpN.Add(1)
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("%03d-%s.json", n, short(rt.sessionID))), body, 0o600)
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("%03d-%s.head", n, short(rt.sessionID))), h, 0o600)
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
@@ -166,6 +197,13 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 	custom := strings.TrimSuffix(model, "[1m]") == p.Cfg.CustomModelID
 	switch {
 	case custom:
+		if rt.scope == catalog.ScopeMain && !countTokens {
+			ce := clientEffort(fields)
+			if p.Debug {
+				log.Printf("client effort %s: %q (top-level %s)", short(rt.sessionID), ce, string(fields["output_config"]))
+			}
+			p.observeClientEffort(cat, rt.sessionID, ce)
+		}
 		dec = p.decisionFor(cat, rt, fields)
 		rt.routed = true
 		if rt.scope == catalog.ScopeMain && !countTokens {

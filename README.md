@@ -15,14 +15,32 @@ subscription.
 curl -fsSL https://raw.githubusercontent.com/moukrea/automodel/main/install.sh | sh
 ```
 
-Linux (systemd) or macOS (launchd). The script installs the binary in
+Linux or macOS. The script installs the binary in
 `~/.local/bin`, starts the local proxy, wires Claude Code (your
 `settings.json` is backed up first) and asks for your OpenRouter key. Then
-open `/model` in Claude Code and pick **Jev (auto)**.
+open `/model` in Claude Code and pick **Jev (auto)**. `automodel doctor`
+checks the whole setup, one line per check with the fix for each problem.
+
+The proxy runs as a systemd user service, or a launchd agent on macOS.
+Without a systemd user session (containers, WSL1, minimal distros) it runs as
+a background process that is not restarted after a reboot: `install` prints
+the line to add to `~/.profile` (`automodel start` does nothing when the
+proxy already runs).
+
+Packages, once published (they install only the binary; then run
+`automodel install` as your user). For apt and dnf, add the repository first
+as its README says:
+
+```sh
+brew install moukrea/tap/automodel      # macOS, Linux
+sudo apt install automodel              # Debian, Ubuntu: https://github.com/moukrea/apt-repo
+sudo dnf install automodel              # Fedora, RHEL: https://github.com/moukrea/rpm-repo
+```
 
 - Updates: the service installs new releases by itself (checked daily,
   applied when idle). `automodel update` does it now; `[update] auto = false`
-  in the config turns it off.
+  in the config turns it off. Package installs update through their package
+  manager instead, and the proxy restarts on the new binary by itself.
 - Uninstall: `automodel uninstall` (config and state are kept).
 - From source: `go build -o ~/.local/bin/automodel ./cmd/automodel && automodel install`.
 
@@ -49,8 +67,9 @@ statusLine ─▶ automodel statusline:  jev → opus-5.5·xhigh +ultracode 0.82
   it runs detached behind a cache, so a slow script never delays the
   segment: Claude Code cancels a statusline run whenever the next update
   arrives);
-- installs and starts the service (systemd user unit `automodel.service`, or
-  a launchd agent on macOS), then checks
+- installs and starts the service (systemd user unit `automodel.service`, a
+  launchd agent on macOS, or else a background process with a pidfile and
+  `proxy.log` in the state dir), then checks
   the proxy is listening **before** touching settings. **If the proxy is down,
   Claude Code no longer works** while `ANTHROPIC_BASE_URL` points at it;
 - backs up `~/.claude/settings.json` (`settings.json.automodel-backup-*`) and
@@ -65,7 +84,13 @@ openrouter_api_key = "sk-or-..."
 ```
 
 `$OPENROUTER_API_KEY` overrides it if set. Without a key, every decision falls
-back to the default tier (`⚠ fallback` in the statusline).
+back to the default tier, and the statusline says why
+(`⚠ fallback ⚠ jev: no OpenRouter key`; also shown for a rejected key,
+missing credits, rate limits and timeouts).
+
+If the proxy stops, the `SessionStart` and `UserPromptSubmit` hooks restart it
+once; if it still doesn't answer, the prompt is blocked with a message saying
+how to fix it, instead of a connection error on every request.
 
 Only sessions on `jev` are routed: the hooks, the statusline segment and the
 proxy leave sessions on a named model (`opus`, `opus[1m]`, …) untouched. The
@@ -136,6 +161,47 @@ each `agent()` call site that sets no `model`/`effort` gets its own tier,
 injected as `{model, effort, ...(opts)}`, so the script's explicit options
 still win.
 
+## Your choice wins
+
+- **`/effort`** in Claude Code pins that effort for the session: routing
+  pauses (statusline `(pinned)`) until you set `/effort` back to its default.
+- **`[effort:xhigh]`** (or `low`, `medium`, `high`, `max`) anywhere in a
+  prompt pins it the same way; **`[effort:auto]`** hands control back to Jev.
+- **"think harder"**, "ultrathink", "take your time", "réfléchis bien"…:
+  at least one tier above the current one for that prompt.
+- A bare **go-ahead** ("yes", "continue", "vas-y", "lgtm") keeps the current
+  tier without asking Jev (`features.fast_path`).
+- A turn you **interrupted** (Esc) is passed to Jev as a signal.
+
+Per repository, `.automodel.toml` at the repo root:
+
+```toml
+min_tier = "high"               # floor / ceiling for the main session
+max_tier = "xhigh"
+min_subagent_tier = "opus-low"  # same for subagents
+disable_modes = ["ultracode"]
+privacy = "metadata"            # a repo can make privacy stricter, never looser
+```
+
+## What leaves your machine
+
+- **Claude traffic** goes to api.anthropic.com through the local proxy,
+  unchanged except for the model, the effort, `max_tokens` and effort-only
+  system messages.
+- **Each decision** sends a small routing state to Jev on OpenRouter
+  (~$0.00004 per call): the prompt (truncated), your last few prompts, the
+  start of the last reply, the compaction summary after a `/compact`, the
+  session size, and repo signals (languages, file count, diff stat, the
+  start of `CLAUDE.md`).
+- With **`privacy = "metadata"`** (in the config, or per repo) no text is
+  sent: only sizes and task-kind hints (bug, concurrency, security, review…),
+  the phase, the tier in force and the repo languages. Decisions get less
+  precise.
+- Otherwise only the update check (GitHub releases API, daily unless
+  `[update] auto = false`), and `automodel doctor`'s key check against
+  OpenRouter. No telemetry: the ledger (`~/.local/state/automodel/`) stays
+  local.
+
 ## Catalog
 
 `catalog.toml` holds models, prices, measurements, tiers and Jev criteria
@@ -153,15 +219,38 @@ automodel catalog check [--json]                       # validation (non-zero ex
 ## Measurement
 
 ```sh
-automodel report [--since 7d] [--json]
+automodel why [--session id] [-n 5] [--follow]  # what Jev answered for the last decisions, and why
+automodel report [--since 7d] [--json] [--baseline xhigh]
 automodel eval [--catalog path] [--format score|choice]    # Jev on labeled cases: accuracy, confidence, calibration
 ```
+
+`why` shows each decision like the demo's popup: every level with its
+probability, the pick, the previous tier, and the reasons (continuation,
+switch cost and expected gain, pin, go-ahead, your signals, Jev failures).
+`report` ends with a conservative estimate of the savings against running
+everything at `--baseline`: only the output (response and thinking) is
+scaled by the catalog's cost ratios; input and cache reads count as they
+were.
 
 Tier mix, modes, warm turns (evaluated, switched, kept and why, skipped),
 fallback rate, confidence, cache hit rate for routed vs unrouted
 sessions, Jev cost, tokens per tier, and shadow-mode agreement (when
 `jev_shadow_model` is set). Raw data: `~/.local/state/automodel/ledger.jsonl`;
 hook logs: `hooks.log` next to it.
+
+## Known limits
+
+- Claude Code's spinner shows **its own** effort setting ("thinking with
+  xhigh effort"), not the routed one. The statusline is the source of truth.
+- With any custom `ANTHROPIC_BASE_URL` (a proxy), Claude Code turns off its
+  server-side message threads, which it only uses when talking to
+  api.anthropic.com directly. The first prompts of a session reuse a bit less
+  of the prompt cache; over real routed sessions the cache still served
+  98% of the input tokens.
+- A pin (`/effort`, `[effort:X]`) applies to the session's current model.
+  Claude Code tells the proxy about `/effort` only with the next request,
+  so the first prompt after it is still routed; the pin applies from that
+  prompt's first request.
 
 ## Tests
 

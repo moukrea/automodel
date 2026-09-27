@@ -93,13 +93,18 @@ func Render(env *router.Env, sess *state.Session, now time.Time) string {
 	if d.Mode != "" {
 		b.WriteString(" +" + d.Mode)
 	}
-	switch d.Trigger {
-	case "default":
+	switch {
+	case sess.Pin != "":
+		b.WriteString(" (pinned)")
+	case d.Trigger == "default":
 		b.WriteString(" (default)")
-	case "fallback":
+	case d.Trigger == "fallback":
 		b.WriteString(" ⚠ fallback")
 	default:
 		fmt.Fprintf(&b, " %.2f", d.Confidence)
+	}
+	if sess.JevIssue != "" {
+		b.WriteString(" ⚠ jev: " + sess.JevIssue)
 	}
 	cause := d.Trigger
 	if cause == "fallback" {

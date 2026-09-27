@@ -90,6 +90,20 @@ type Session struct {
 	SpendUSD float64 `json:"spend_usd,omitempty"`
 	Prompts  int     `json:"prompts,omitempty"`
 
+	// Pin is an effort the user chose (Claude Code's /effort, or an
+	// [effort:X] tag in a prompt): routing stops until it is released
+	// (/effort back to ClientEffort0, or [effort:auto]). ClientEffort0 is
+	// the effort Claude Code sent first, i.e. its default.
+	Pin              string `json:"pin,omitempty"`
+	PinSource        string `json:"pin_source,omitempty"` // "/effort" | "prompt"
+	ClientEffort0    string `json:"client_effort0,omitempty"`
+	ClientEffortLast string `json:"client_effort_last,omitempty"` // last one seen: pins follow changes
+
+	// JevIssue is why the last decision couldn't ask Jev (no key, timeout,
+	// HTTP error), cleared by the next successful answer.
+	JevIssue   string    `json:"jev_issue,omitempty"`
+	JevIssueAt time.Time `json:"jev_issue_at,omitzero"`
+
 	PendingAgents []PendingAgent       `json:"pending_agents,omitempty"`
 	Agents        map[string]*Decision `json:"agents,omitempty"`
 

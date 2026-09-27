@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/moukrea/automodel/internal/policy"
+	"regexp"
 	"strings"
 	"time"
 
@@ -66,9 +67,51 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		trigger = ""
 	}
 
+	// A user-chosen effort outranks routing: an [effort:X] tag pins it, an
+	// [effort:auto] tag releases the pin (and this prompt is routed).
+	// Only prompts the user typed count: subagent results and notifications
+	// can quote a tag.
+	tag := ""
+	if !synthetic {
+		tag = effortTag(in.Prompt)
+	}
+	pinModel := env.Catalog.DefaultTier(catalog.ScopeMain).Model
+	if sess.Main != nil {
+		pinModel = sess.Main.Model
+	}
+	if tag != "" && tag != "auto" && env.Catalog.TierFor(catalog.ScopeMain, pinModel, tag) == nil {
+		tag = "" // an effort this model doesn't have: ignored
+	}
+	pin, pinSource := sess.Pin, sess.PinSource
+	switch {
+	case tag == "auto":
+		pin, pinSource = "", ""
+		if trigger == "" && sess.Main != nil && sess.Pin != "" && env.Cfg.Features.WarmDecisions {
+			trigger = "warm"
+		}
+	case tag != "":
+		pin, pinSource = tag, "prompt"
+	}
+
 	var dec *state.Decision
 	var signals *state.RepoSignals
-	if trigger != "" {
+	if pin != "" && !synthetic {
+		t := env.Catalog.TierFor(catalog.ScopeMain, pinModel, pin)
+		switch {
+		case t == nil:
+			pin, pinSource = "", "" // no such effort on this model: ignore the pin
+		case tag != "" || trigger == "initial" || trigger == "compact" || trigger == "cold" ||
+			sess.Main == nil || sess.Main.Tier != t.ID:
+			dec = env.Pinned(in.SessionID, t, pinSource)
+			trigger = "pinned-" + trigger
+		}
+	}
+	if trigger == "warm" && pin == "" && env.Cfg.Features.FastPath && goAhead(in.Prompt) {
+		// A bare go-ahead continues the work in progress: nothing to ask.
+		env.LogKept(in.SessionID, sess.Main, "go-ahead: continues the work in progress")
+		trigger = ""
+	}
+	if trigger != "" && pin == "" { // no routing while pinned
 		if tr == nil && trigger != "initial" {
 			tr = readTranscript(in.TranscriptPath)
 		}
@@ -100,6 +143,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if s.Model == "" {
 			s.Model, s.ModelSource = mi.Model, mi.Source
 		}
+		if !synthetic {
+			s.Pin, s.PinSource = pin, pinSource
+		}
 		if dec != nil {
 			prev := s.Main
 			epoch := 1
@@ -110,10 +156,10 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			s.Main = dec
 			s.CompactPending, s.CompactTrigger, s.ColdHint = false, "", false
 			switch {
-			case trigger == "initial" || trigger == "compact":
+			case trigger == "initial" || trigger == "compact" || trigger == "pinned-initial" || trigger == "pinned-compact":
 				// A new conversation for the API: fresh top-level effort.
 				s.ResetEffortEpoch()
-				if trigger == "compact" {
+				if strings.HasSuffix(trigger, "compact") {
 					s.ContextTokens = 0 // stale until the next response
 				}
 			case prev == nil || prev.Model != dec.Model:
@@ -193,7 +239,7 @@ func workScale(env *router.Env, s *state.Session) float64 {
 	return k * h
 }
 
-func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript.Info, signals *state.RepoSignals, trigger string) router.Request {
+func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript.Info, repoSignals *state.RepoSignals, trigger string) router.Request {
 	budget := env.Budget(catalog.ScopeMain)
 	phase := map[string]string{"initial": "initial", "compact": "post_compact", "cold": "resumed", "warm": "warm"}[trigger]
 	reserve := 1500
@@ -202,6 +248,10 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	}
 	left := budget - reserve
 	st := map[string]any{"phase": phase}
+	signals := map[string]any{}
+	if asksMoreThinking(in.Prompt) {
+		signals["asks_more_thinking"] = true
+	}
 	task := tokens.Truncate(in.Prompt, left/3)
 	st["task"] = task
 	left -= tokens.Estimate(task)
@@ -219,6 +269,10 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		prev := tr.UserPrompts
 		if n := len(prev); n > 0 && strings.TrimSpace(prev[n-1]) == strings.TrimSpace(in.Prompt) {
 			prev = prev[:n-1]
+		}
+		// The last turn was stopped by the user: likely the wrong effort.
+		if tr.Interrupted && tr.InterruptedAt >= len(prev) {
+			signals["previous_turn_interrupted"] = true
 		}
 		if len(prev) > recentPrompts {
 			prev = prev[len(prev)-recentPrompts:]
@@ -259,11 +313,67 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	if len(session) > 0 {
 		st["session"] = session
 	}
-	if r := router.FitRepo(signals, left-50); r != nil {
+	if r := router.FitRepo(repoSignals, left-50); r != nil {
 		st["repo"] = r
 	}
-	return router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
+	req := router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
 		State: st, RepoDir: in.Cwd, Context: ctxTokens}
+	if len(signals) > 0 {
+		st["user_signals"] = signals
+		req.Signals = signals
+	}
+	// Asking for more thinking is a floor: one tier above the current one.
+	if signals["asks_more_thinking"] == true && sess.Main != nil {
+		if cur := env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier); cur != nil {
+			for _, t := range env.Catalog.TiersByRank(catalog.ScopeMain) {
+				if t.Rank > cur.Rank {
+					req.MinTier = t.ID
+					break
+				}
+			}
+		}
+	}
+	return req
+}
+
+// goAheads are prompts that only tell Claude to carry on.
+var goAheads = map[string]bool{}
+
+func init() {
+	for _, p := range []string{"y", "yes", "yep", "yeah", "yup", "ok", "okay", "k", "sure", "go", "go ahead", "go on",
+		"continue", "carry on", "keep going", "proceed", "do it", "lgtm", "sounds good", "looks good", "perfect", "great",
+		"oui", "ouais", "ok go", "vas y", "vas-y", "go go", "continue stp", "continue please", "please continue", "yes please",
+		"d'accord", "dac", "parfait", "fonce", "allez", "allez-y", "c'est bon", "c'est parti", "on y va", "ok vas-y", "oui vas-y"} {
+		goAheads[p] = true
+	}
+}
+
+var goAheadTrim = regexp.MustCompile(`[\s.!,;:]+$`)
+
+// goAhead reports whether a prompt is only a go-ahead.
+func goAhead(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	p = goAheadTrim.ReplaceAllString(p, "")
+	p = strings.Join(strings.Fields(p), " ")
+	return len(p) <= 24 && goAheads[p]
+}
+
+var moreThinkingRE = regexp.MustCompile(`(?i)\b(think (harder|more|deeply|carefully|it through)|ultrathink|take your time|be thorough|dig deeper|r[ée]fl[ée]chis (plus|bien|davantage|en profondeur)|prends (ton|le) temps|creuse (plus|bien|davantage))\b`)
+
+// asksMoreThinking reports whether a prompt explicitly asks for more
+// thinking.
+func asksMoreThinking(prompt string) bool { return moreThinkingRE.MatchString(prompt) }
+
+var effortTagRE = regexp.MustCompile(`(?i)\[effort:\s*(low|medium|high|xhigh|max|auto)\s*\]`)
+
+// effortTag returns the effort an [effort:X] tag in the prompt asks for
+// ("auto" releases a pin), or "".
+func effortTag(prompt string) string {
+	m := effortTagRE.FindAllStringSubmatch(prompt, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	return strings.ToLower(m[len(m)-1][1])
 }
 
 func mustJSON(v any) string {

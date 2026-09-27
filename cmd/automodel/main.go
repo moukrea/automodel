@@ -21,10 +21,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/moukrea/automodel/internal/catalog"
 	"github.com/moukrea/automodel/internal/config"
+	"github.com/moukrea/automodel/internal/doctor"
 	"github.com/moukrea/automodel/internal/hooks"
 	"github.com/moukrea/automodel/internal/install"
 	"github.com/moukrea/automodel/internal/ledger"
@@ -42,13 +44,16 @@ Usage:
   automodel serve                      run the proxy
   automodel hook <name>                run a hook (%s)
   automodel statusline                 render the statusline segment
-  automodel report [--json] [--since 7d]
+  automodel report [--json] [--since 7d] [--baseline xhigh]
+  automodel why [--session id] [-n 5] [--follow]   explain the latest routing decisions
   automodel catalog check [--json] [--catalog path]
   automodel eval [--catalog path] [--cases file] [--format score|choice] [--json]
                                        measure Jev's routing answers on labeled cases
   automodel install [--dry-run] [--catalog path] [--settings path]
                                        print (or apply) the Claude Code settings, config and service
   automodel uninstall                  remove the settings entries and the service
+  automodel start                      start the proxy if it isn't running (at login, without systemd)
+  automodel doctor                     check the installation (non-zero exit on a failed check)
   automodel update [--check]           install the latest release (the service also does it daily)
   automodel key set                    read the OpenRouter key on stdin into the config (0600)
   automodel prune [--older-than 30d]   drop old session state
@@ -87,6 +92,10 @@ func run(cfgPath, cmd string, args []string) error {
 		if cmd == "hook" || cmd == "statusline" {
 			return nil // never break Claude Code
 		}
+		if cmd == "doctor" {
+			doctor.Print(os.Stdout, []doctor.Result{{Status: doctor.Fail, Name: "config", Detail: err.Error(), Fix: "fix or remove the file, then automodel install"}})
+			os.Exit(1)
+		}
 		return err
 	}
 	switch cmd {
@@ -115,6 +124,8 @@ func run(cfgPath, cmd string, args []string) error {
 		return statusline.Run(env, os.Stdin, os.Stdout)
 	case "report":
 		return report(cfg, args)
+	case "why":
+		return why(cfg, args)
 	case "catalog":
 		return catalogCmd(cfg, args)
 	case "eval":
@@ -131,6 +142,14 @@ func run(cfgPath, cmd string, args []string) error {
 			return err
 		}
 		return install.Remove(o)
+	case "start":
+		o, err := installOptions(cfg, nil)
+		if err != nil {
+			return err
+		}
+		return install.Start(o, cfg)
+	case "doctor":
+		return doctorCmd(cfg)
 	case "prune":
 		fs := flag.NewFlagSet("prune", flag.ExitOnError)
 		older := fs.String("older-than", "30d", "age")
@@ -163,10 +182,15 @@ func serve(cfg *config.Config, args []string) error {
 		return err
 	}
 	p.Debug = *debug
+	p.Version = version
 	log.Printf("automodel %s listening on %s → %s (model %q, catalog %s)", version, cfg.Listen, cfg.Upstream, cfg.CustomModelID, cfg.Catalog)
 	afterUpdate(cfg)
-	if cfg.Update.Auto && version != "dev" {
-		go autoUpdate(cfg, p)
+	exe := install.Self()
+	switch {
+	case upgradeCmd(exe) != "":
+		go watchBinary(exe, p)
+	case cfg.Update.Auto && version != "dev":
+		go autoUpdate(cfg, p, exe)
 	}
 	srv := &http.Server{Addr: cfg.Listen, Handler: p, ReadHeaderTimeout: 30 * time.Second}
 	return srv.ListenAndServe()
@@ -212,6 +236,7 @@ func report(cfg *config.Config, args []string) error {
 	asJSON := fs.Bool("json", false, "JSON output")
 	since := fs.String("since", "", "only entries newer than this age (e.g. 7d, 12h)")
 	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
+	baseline := fs.String("baseline", "xhigh", "effort the savings estimate compares with (Claude Code's own setting)")
 	fs.Parse(args)
 	var from time.Time
 	if *since != "" {
@@ -225,13 +250,56 @@ func report(cfg *config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
+		if sv, err := ledger.EstimateSavingsFile(*ledgerPath, from, c, c.DefaultTier(catalog.ScopeMain).Model, *baseline); err == nil && sv.Requests > 0 {
+			rep.Savings = sv
+		}
+	}
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
 	}
 	rep.Markdown(os.Stdout)
+	if rep.Savings != nil {
+		rep.Savings.Markdown(os.Stdout)
+	}
 	return nil
+}
+
+func why(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("why", flag.ExitOnError)
+	session := fs.String("session", "", "session ID or prefix (default: the most recent)")
+	n := fs.Int("n", 5, "decisions to show")
+	follow := fs.Bool("follow", false, "keep printing new decisions")
+	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
+	fs.Parse(args)
+	o := ledger.WhyOptions{Session: *session, N: *n}
+	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
+		o.Rank = func(scope, tier string) int {
+			if t := c.Tier(scope, tier); t != nil {
+				return t.Rank
+			}
+			return 1 << 20
+		}
+	}
+	all, err := ledger.Decisions(*ledgerPath)
+	if err != nil {
+		return err
+	}
+	sid, ds := ledger.SessionDecisions(all, *session, *n)
+	if len(ds) == 0 {
+		return errors.New("no decision recorded yet (is the session on Jev?)")
+	}
+	fmt.Printf("session %s · last %d decisions\n\n", sid[:min(8, len(sid))], len(ds))
+	ledger.WriteWhy(os.Stdout, ds, o)
+	if !*follow {
+		return nil
+	}
+	fmt.Println()
+	_, done := ledger.SessionDecisions(all, sid, 0)
+	stop := make(chan struct{})
+	return ledger.FollowFrom(*ledgerPath, sid, len(done), o, os.Stdout, stop)
 }
 
 func catalogCmd(cfg *config.Config, args []string) error {
@@ -280,11 +348,10 @@ func installOptions(cfg *config.Config, args []string) (install.Options, error) 
 	fs.Bool("apply", true, "apply (the default; kept for compatibility)")
 	dryRun := fs.Bool("dry-run", false, "print what would be merged instead of applying")
 	fs.Parse(args)
-	exe, err := os.Executable()
-	if err != nil {
-		return install.Options{}, err
+	exe := install.Self()
+	if exe == "" {
+		return install.Options{}, errors.New("cannot find the automodel binary's path")
 	}
-	exe, _ = filepath.EvalSymlinks(exe)
 	abs, _ := filepath.Abs(*cat)
 	cfgPath := cfg.Path()
 	if p, err := filepath.Abs(cfgPath); err == nil {
@@ -335,6 +402,30 @@ func printInstall(o install.Options, cfg *config.Config) error {
 	}
 	fmt.Printf("# Entries merged into %s (config: %s)\n%s\n", o.SettingsPath, o.ConfigPath, b)
 	fmt.Printf("# Service: %s runs `%s --config %s serve`\n", o.UnitPath, o.Exe, o.ConfigPath)
+	return nil
+}
+
+func doctorCmd(cfg *config.Config) error {
+	o, err := installOptions(cfg, nil)
+	if err != nil {
+		return err
+	}
+	up := upgradeCmd(o.Exe)
+	if up == "" {
+		up = "automodel update"
+	}
+	rs := doctor.Run(doctor.Env{Version: version, UpdateCmd: up, Cfg: cfg, Install: o,
+		Latest: func(ctx context.Context) (string, error) {
+			rel, err := update.Latest(ctx)
+			if err != nil {
+				return "", err
+			}
+			return rel.Tag, nil
+		}})
+	if n := doctor.Print(os.Stdout, rs); n > 0 {
+		fmt.Printf("%d check(s) failed\n", n)
+		os.Exit(1)
+	}
 	return nil
 }
 
@@ -389,9 +480,8 @@ func afterUpdate(cfg *config.Config) {
 }
 
 // autoUpdate checks for a new release every cfg.Update.Interval, installs
-// it, and exits once the proxy is idle so the service manager restarts it on
-// the new binary.
-func autoUpdate(cfg *config.Config, p *proxy.Proxy) {
+// it, and restarts the proxy on it once idle.
+func autoUpdate(cfg *config.Config, p *proxy.Proxy, exe string) {
 	every := cfg.Update.Interval.Duration
 	if every < time.Hour {
 		every = time.Hour
@@ -401,15 +491,10 @@ func autoUpdate(cfg *config.Config, p *proxy.Proxy) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		rel, err := update.Latest(ctx)
 		if err == nil && update.Newer(version, rel.Tag) {
-			exe, _ := os.Executable()
-			exe, _ = filepath.EvalSymlinks(exe)
 			if err = update.Apply(ctx, rel, exe); err == nil {
 				cancel()
 				log.Printf("installed %s; restarting when idle", rel.Tag)
-				for !p.Idle(10 * time.Second) {
-					time.Sleep(2 * time.Second)
-				}
-				os.Exit(0)
+				restart(p, exe)
 			}
 		}
 		cancel()
@@ -419,10 +504,62 @@ func autoUpdate(cfg *config.Config, p *proxy.Proxy) {
 	}
 }
 
+// watchBinary restarts the proxy once a package manager replaced exe.
+func watchBinary(exe string, p *proxy.Proxy) {
+	was, err := os.Stat(exe)
+	if err != nil {
+		return
+	}
+	for range time.Tick(time.Minute) {
+		if now, err := os.Stat(exe); err == nil && (!os.SameFile(was, now) || !now.ModTime().Equal(was.ModTime())) {
+			log.Printf("%s was upgraded; restarting when idle", exe)
+			restart(p, exe)
+		}
+	}
+}
+
+// restart runs exe in place of the proxy once it is idle. Under systemd or
+// launchd an exit is enough (they restart it); otherwise (a detached proxy,
+// or `serve` run by hand) the process re-executes itself, keeping its pid so
+// the pidfile stays right.
+func restart(p *proxy.Proxy, exe string) {
+	for !p.Idle(10 * time.Second) {
+		time.Sleep(2 * time.Second)
+	}
+	switch os.Getenv(install.ServiceEnv) {
+	case install.Systemd, install.Launchd:
+		os.Exit(0)
+	}
+	err := syscall.Exec(exe, append([]string{exe}, os.Args[1:]...), os.Environ())
+	log.Printf("restart on %s: %v", exe, err)
+	os.Exit(1)
+}
+
+// upgradeCmd is how a package manager upgrades exe, or "" when automodel
+// updates itself.
+func upgradeCmd(exe string) string {
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	switch {
+	case strings.Contains(exe, "/Cellar/"):
+		return "brew upgrade automodel"
+	case strings.HasPrefix(exe, "/usr/bin/"):
+		if _, err := os.Stat("/var/lib/dpkg/info/automodel.list"); err == nil {
+			return "sudo apt upgrade automodel"
+		}
+		return "sudo dnf upgrade automodel"
+	}
+	return ""
+}
+
 func updateCmd(cfg *config.Config, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	check := fs.Bool("check", false, "only report the latest version")
 	fs.Parse(args)
+	if up := upgradeCmd(install.Self()); up != "" && !*check {
+		return fmt.Errorf("installed by a package manager: run `%s`", up)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	rel, err := update.Latest(ctx)
@@ -437,11 +574,7 @@ func updateCmd(cfg *config.Config, args []string) error {
 		fmt.Printf("automodel %s → %s available\n", version, rel.Tag)
 		return nil
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	exe, _ = filepath.EvalSymlinks(exe)
+	exe := install.Self()
 	if err := update.Apply(ctx, rel, exe); err != nil {
 		return err
 	}
