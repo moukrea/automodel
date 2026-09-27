@@ -84,7 +84,13 @@ openrouter_api_key = "sk-or-..."
 ```
 
 `$OPENROUTER_API_KEY` overrides it if set. Without a key, every decision falls
-back to the default tier (`⚠ fallback` in the statusline).
+back to the default tier, and the statusline says why
+(`⚠ fallback ⚠ jev: no OpenRouter key`; also shown for a rejected key,
+missing credits, rate limits and timeouts).
+
+If the proxy stops, the `SessionStart` and `UserPromptSubmit` hooks restart it
+once; if it still doesn't answer, the prompt is blocked with a message saying
+how to fix it, instead of a connection error on every request.
 
 Only sessions on `jev` are routed: the hooks, the statusline segment and the
 proxy leave sessions on a named model (`opus`, `opus[1m]`, …) untouched. The
@@ -155,6 +161,47 @@ each `agent()` call site that sets no `model`/`effort` gets its own tier,
 injected as `{model, effort, ...(opts)}`, so the script's explicit options
 still win.
 
+## Your choice wins
+
+- **`/effort`** in Claude Code pins that effort for the session: routing
+  pauses (statusline `(pinned)`) until you set `/effort` back to its default.
+- **`[effort:xhigh]`** (or `low`, `medium`, `high`, `max`) anywhere in a
+  prompt pins it the same way; **`[effort:auto]`** hands control back to Jev.
+- **"think harder"**, "ultrathink", "take your time", "réfléchis bien"…:
+  at least one tier above the current one for that prompt.
+- A bare **go-ahead** ("yes", "continue", "vas-y", "lgtm") keeps the current
+  tier without asking Jev (`features.fast_path`).
+- A turn you **interrupted** (Esc) is passed to Jev as a signal.
+
+Per repository, `.automodel.toml` at the repo root:
+
+```toml
+min_tier = "high"               # floor / ceiling for the main session
+max_tier = "xhigh"
+min_subagent_tier = "opus-low"  # same for subagents
+disable_modes = ["ultracode"]
+privacy = "metadata"            # see below
+```
+
+## What leaves your machine
+
+- **Claude traffic** goes to api.anthropic.com through the local proxy,
+  unchanged except for the model, the effort, `max_tokens` and effort-only
+  system messages.
+- **Each decision** sends a small routing state to Jev on OpenRouter
+  (~$0.00004 per call): the prompt (truncated), your last few prompts, the
+  start of the last reply, the compaction summary after a `/compact`, the
+  session size, and repo signals (languages, file count, diff stat, the
+  start of `CLAUDE.md`).
+- With **`privacy = "metadata"`** (in the config, or per repo) no text is
+  sent: only sizes and task-kind hints (bug, concurrency, security, review…),
+  the phase, the tier in force and the repo languages. Decisions get less
+  precise.
+- Otherwise only the update check (GitHub releases API, daily unless
+  `[update] auto = false`), and `automodel doctor`'s key check against
+  OpenRouter. No telemetry: the ledger (`~/.local/state/automodel/`) stays
+  local.
+
 ## Catalog
 
 `catalog.toml` holds models, prices, measurements, tiers and Jev criteria
@@ -172,15 +219,35 @@ automodel catalog check [--json]                       # validation (non-zero ex
 ## Measurement
 
 ```sh
-automodel report [--since 7d] [--json]
+automodel why [--session id] [-n 5] [--follow]  # what Jev answered for the last decisions, and why
+automodel report [--since 7d] [--json] [--baseline xhigh]
 automodel eval [--catalog path] [--format score|choice]    # Jev on labeled cases: accuracy, confidence, calibration
 ```
+
+`why` shows each decision like the demo's popup: every level with its
+probability, the pick, the previous tier, and the reasons (continuation,
+switch cost and expected gain, pin, go-ahead, your signals, Jev failures).
+`report` ends with a conservative estimate of the savings against running
+everything at `--baseline`: only the output (response and thinking) is
+scaled by the catalog's cost ratios; input and cache reads count as they
+were.
 
 Tier mix, modes, warm turns (evaluated, switched, kept and why, skipped),
 fallback rate, confidence, cache hit rate for routed vs unrouted
 sessions, Jev cost, tokens per tier, and shadow-mode agreement (when
 `jev_shadow_model` is set). Raw data: `~/.local/state/automodel/ledger.jsonl`;
 hook logs: `hooks.log` next to it.
+
+## Known limits
+
+- Claude Code's spinner shows **its own** effort setting ("thinking with
+  xhigh effort"), not the routed one. The statusline is the source of truth.
+- With any custom `ANTHROPIC_BASE_URL` (a proxy), Claude Code turns off its
+  server-side message threads, which it only uses when talking to
+  api.anthropic.com directly. The first prompts of a session reuse a bit less
+  of the prompt cache; over real routed sessions the cache still served
+  98% of the input tokens.
+- A pin (`/effort`, `[effort:X]`) applies to the session's current model.
 
 ## Tests
 
