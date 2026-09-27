@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/moukrea/automodel/internal/catalog"
@@ -49,6 +50,7 @@ Usage:
   automodel install [--dry-run] [--catalog path] [--settings path]
                                        print (or apply) the Claude Code settings, config and service
   automodel uninstall                  remove the settings entries and the service
+  automodel start                      start the proxy if it isn't running (at login, without systemd)
   automodel update [--check]           install the latest release (the service also does it daily)
   automodel key set                    read the OpenRouter key on stdin into the config (0600)
   automodel prune [--older-than 30d]   drop old session state
@@ -131,6 +133,12 @@ func run(cfgPath, cmd string, args []string) error {
 			return err
 		}
 		return install.Remove(o)
+	case "start":
+		o, err := installOptions(cfg, nil)
+		if err != nil {
+			return err
+		}
+		return install.Start(o, cfg)
 	case "prune":
 		fs := flag.NewFlagSet("prune", flag.ExitOnError)
 		older := fs.String("older-than", "30d", "age")
@@ -165,8 +173,12 @@ func serve(cfg *config.Config, args []string) error {
 	p.Debug = *debug
 	log.Printf("automodel %s listening on %s → %s (model %q, catalog %s)", version, cfg.Listen, cfg.Upstream, cfg.CustomModelID, cfg.Catalog)
 	afterUpdate(cfg)
-	if cfg.Update.Auto && version != "dev" {
-		go autoUpdate(cfg, p)
+	exe := install.Self()
+	switch {
+	case upgradeCmd(exe) != "":
+		go watchBinary(exe, p)
+	case cfg.Update.Auto && version != "dev":
+		go autoUpdate(cfg, p, exe)
 	}
 	srv := &http.Server{Addr: cfg.Listen, Handler: p, ReadHeaderTimeout: 30 * time.Second}
 	return srv.ListenAndServe()
@@ -280,11 +292,10 @@ func installOptions(cfg *config.Config, args []string) (install.Options, error) 
 	fs.Bool("apply", true, "apply (the default; kept for compatibility)")
 	dryRun := fs.Bool("dry-run", false, "print what would be merged instead of applying")
 	fs.Parse(args)
-	exe, err := os.Executable()
-	if err != nil {
-		return install.Options{}, err
+	exe := install.Self()
+	if exe == "" {
+		return install.Options{}, errors.New("cannot find the automodel binary's path")
 	}
-	exe, _ = filepath.EvalSymlinks(exe)
 	abs, _ := filepath.Abs(*cat)
 	cfgPath := cfg.Path()
 	if p, err := filepath.Abs(cfgPath); err == nil {
@@ -389,9 +400,8 @@ func afterUpdate(cfg *config.Config) {
 }
 
 // autoUpdate checks for a new release every cfg.Update.Interval, installs
-// it, and exits once the proxy is idle so the service manager restarts it on
-// the new binary.
-func autoUpdate(cfg *config.Config, p *proxy.Proxy) {
+// it, and restarts the proxy on it once idle.
+func autoUpdate(cfg *config.Config, p *proxy.Proxy, exe string) {
 	every := cfg.Update.Interval.Duration
 	if every < time.Hour {
 		every = time.Hour
@@ -401,15 +411,10 @@ func autoUpdate(cfg *config.Config, p *proxy.Proxy) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		rel, err := update.Latest(ctx)
 		if err == nil && update.Newer(version, rel.Tag) {
-			exe, _ := os.Executable()
-			exe, _ = filepath.EvalSymlinks(exe)
 			if err = update.Apply(ctx, rel, exe); err == nil {
 				cancel()
 				log.Printf("installed %s; restarting when idle", rel.Tag)
-				for !p.Idle(10 * time.Second) {
-					time.Sleep(2 * time.Second)
-				}
-				os.Exit(0)
+				restart(p, exe)
 			}
 		}
 		cancel()
@@ -419,10 +424,62 @@ func autoUpdate(cfg *config.Config, p *proxy.Proxy) {
 	}
 }
 
+// watchBinary restarts the proxy once a package manager replaced exe.
+func watchBinary(exe string, p *proxy.Proxy) {
+	was, err := os.Stat(exe)
+	if err != nil {
+		return
+	}
+	for range time.Tick(time.Minute) {
+		if now, err := os.Stat(exe); err == nil && (!os.SameFile(was, now) || !now.ModTime().Equal(was.ModTime())) {
+			log.Printf("%s was upgraded; restarting when idle", exe)
+			restart(p, exe)
+		}
+	}
+}
+
+// restart runs exe in place of the proxy once it is idle. Under systemd or
+// launchd an exit is enough (they restart it); otherwise (a detached proxy,
+// or `serve` run by hand) the process re-executes itself, keeping its pid so
+// the pidfile stays right.
+func restart(p *proxy.Proxy, exe string) {
+	for !p.Idle(10 * time.Second) {
+		time.Sleep(2 * time.Second)
+	}
+	switch os.Getenv(install.ServiceEnv) {
+	case install.Systemd, install.Launchd:
+		os.Exit(0)
+	}
+	err := syscall.Exec(exe, append([]string{exe}, os.Args[1:]...), os.Environ())
+	log.Printf("restart on %s: %v", exe, err)
+	os.Exit(1)
+}
+
+// upgradeCmd is how a package manager upgrades exe, or "" when automodel
+// updates itself.
+func upgradeCmd(exe string) string {
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	switch {
+	case strings.Contains(exe, "/Cellar/"):
+		return "brew upgrade automodel"
+	case strings.HasPrefix(exe, "/usr/bin/"):
+		if _, err := os.Stat("/var/lib/dpkg/info/automodel.list"); err == nil {
+			return "sudo apt upgrade automodel"
+		}
+		return "sudo dnf upgrade automodel"
+	}
+	return ""
+}
+
 func updateCmd(cfg *config.Config, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	check := fs.Bool("check", false, "only report the latest version")
 	fs.Parse(args)
+	if up := upgradeCmd(install.Self()); up != "" && !*check {
+		return fmt.Errorf("installed by a package manager: run `%s`", up)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	rel, err := update.Latest(ctx)
@@ -437,11 +494,7 @@ func updateCmd(cfg *config.Config, args []string) error {
 		fmt.Printf("automodel %s → %s available\n", version, rel.Tag)
 		return nil
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	exe, _ = filepath.EvalSymlinks(exe)
+	exe := install.Self()
 	if err := update.Apply(ctx, rel, exe); err != nil {
 		return err
 	}
