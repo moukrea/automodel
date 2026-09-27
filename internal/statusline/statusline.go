@@ -101,6 +101,9 @@ func Render(env *router.Env, sess *state.Session, now time.Time) string {
 	default:
 		fmt.Fprintf(&b, " %.2f", d.Confidence)
 	}
+	if env.OverBudget(sess) {
+		b.WriteString(" ⚠ budget")
+	}
 	if sess.JevIssue != "" {
 		b.WriteString(" ⚠ jev: " + sess.JevIssue)
 	}

@@ -29,6 +29,7 @@ type Env struct {
 	Catalog *catalog.Catalog
 	State   state.Store
 	Ledger  ledger.Ledger
+	States  ledger.States // routing states sent to Jev (record_states)
 	Jev     *jev.Client
 	Now     func() time.Time
 }
@@ -48,6 +49,7 @@ func New(cfg *config.Config) (*Env, error) {
 		Catalog: cat,
 		State:   state.Store{Dir: cfg.StateDir},
 		Ledger:  ledger.Ledger{Path: cfg.Ledger},
+		States:  statesFor(cfg),
 		Jev:     &jev.Client{URL: cfg.JevURL, APIKey: cfg.APIKey()},
 		Now:     time.Now,
 	}, nil
@@ -66,6 +68,7 @@ type Request struct {
 	AgentType string
 	State     map[string]any
 	RepoDir   string
+	RepoRoot  string // recorded in the ledger (report suggestions)
 	Context   int
 
 	// Warm turns (the cache is intact): Current is the decision in force,
@@ -108,9 +111,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		cur = c.Tier(req.Scope, req.Current.Tier)
 	}
 	rec := ledger.Decision{
-		TS: start, Kind: "decision", SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
+		TS: start, Kind: "decision", ID: ledger.NewID(), SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
 		AgentType: req.AgentType, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
-		Signals: req.Signals,
+		Signals: req.Signals, Repo: req.RepoRoot,
 	}
 	if cur != nil {
 		rec.From = cur.ID
@@ -131,7 +134,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 
 	// A warm switch has to pay back its cost: when no answer could, Jev
 	// is not asked at all.
-	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" {
+	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" && !e.AboveCap(req.SessionID, req.Scope, cur) {
 		// Modes flip for free but wait for the next free moment then.
 		if g := policy.MaxGain(c, req.Scope, cur, req.SwitchCost, params); g <= 0 {
 			rec.Skipped = true
@@ -139,6 +142,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		}
 	}
 
+	e.keepState(rec, req.State)
 	timeout := e.Cfg.JevTimeout.Duration
 	if req.Warm && f.WarmTimeout.Duration > 0 {
 		timeout = f.WarmTimeout.Duration
@@ -180,7 +184,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 			log.Printf("jev %s/%s: %v (kept %s)", req.Scope, req.Trigger, err, cur.ID)
 			return keep("jev error")
 		}
-		tier := policy.Constrain(c, req.Scope, c.DefaultTier(req.Scope), rp, req.Context)
+		tier := e.capTier(req, policy.Constrain(c, req.Scope, c.DefaultTier(req.Scope), rp, req.Context))
 		dec.Trigger, dec.Cause = "fallback", req.Trigger
 		rec.Trigger, rec.Cause = "fallback", req.Trigger
 		log.Printf("jev %s/%s: %v (default tier %s)", req.Scope, req.Trigger, err, tier.ID)
@@ -197,6 +201,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	dec.JevChoice, dec.Confidence, dec.Probs = rd.top, rd.conf, rd.probs
 
 	v := e.Judge(req, rd, cur, rp, params)
+	v, rec.BudgetCap = e.capBudget(req, v, cur)
 	if v.Pick != nil {
 		rec.Loss, rec.GainUSD, rec.SwitchUSD = v.Pick.Loss, v.Pick.Gain, v.Pick.SwitchCost
 	}
@@ -381,12 +386,31 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolic
 
 // Pinned is the decision for an effort the user chose. It is logged like
 // any decision, with the source (/effort or prompt) as cause.
-func (e *Env) Pinned(sessionID string, t *catalog.Tier, source string) *state.Decision {
+func (e *Env) Pinned(sessionID, repoRoot string, t *catalog.Tier, source string) *state.Decision {
 	now := e.Now()
 	d := &state.Decision{Scope: catalog.ScopeMain, Trigger: "pinned", Cause: source, DecidedAt: now, Confidence: 1}
 	e.fill(d, t, "")
 	rec := ledger.Decision{TS: now, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain, Trigger: "pinned",
-		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1}
+		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1, Repo: repoRoot}
+	if err := e.Ledger.Append(rec); err != nil {
+		log.Printf("ledger: %v", err)
+	}
+	return d
+}
+
+// PinnedModel is the decision for a model the user pinned ([model:X]),
+// at effort. A model and effort that a main tier runs are pinned as that
+// tier; any other pair keeps state.PinnedTier.
+func (e *Env) PinnedModel(sessionID, repoRoot, model, effort, source string) *state.Decision {
+	if t := e.Catalog.TierFor(catalog.ScopeMain, model, effort); t != nil {
+		return e.Pinned(sessionID, repoRoot, t, source)
+	}
+	now := e.Now()
+	m := e.Catalog.Model(model)
+	d := &state.Decision{Scope: catalog.ScopeMain, Tier: state.PinnedTier, Model: model, APIID: m.APIID, Effort: effort,
+		Trigger: "pinned", Cause: source, DecidedAt: now, Confidence: 1}
+	rec := ledger.Decision{TS: now, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain, Trigger: "pinned",
+		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1, Repo: repoRoot}
 	if err := e.Ledger.Append(rec); err != nil {
 		log.Printf("ledger: %v", err)
 	}

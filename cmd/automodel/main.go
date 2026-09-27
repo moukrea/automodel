@@ -30,6 +30,7 @@ import (
 	"github.com/moukrea/automodel/internal/hooks"
 	"github.com/moukrea/automodel/internal/install"
 	"github.com/moukrea/automodel/internal/ledger"
+	"github.com/moukrea/automodel/internal/policy"
 	"github.com/moukrea/automodel/internal/proxy"
 	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/state"
@@ -52,6 +53,7 @@ Usage:
   automodel statusline                 render the statusline segment
   automodel report [--json] [--since 7d] [--baseline xhigh]
   automodel why [--session id] [-n 5] [--scope main] [--follow]   explain the latest routing decisions
+  automodel flag [--session id] [--n 1] --want tier [--note "..."]   label a wrong decision (local eval case)
   automodel catalog check [--json] [--catalog path]
   automodel eval [--catalog path] [--cases file] [--format score|choice] [--json]
                                        measure Jev's routing answers on labeled cases
@@ -132,6 +134,8 @@ func run(cfgPath, cmd string, args []string) error {
 		return report(cfg, args)
 	case "why":
 		return why(cfg, args)
+	case "flag":
+		return flagCmd(cfg, args)
 	case "catalog":
 		return catalogCmd(cfg, args)
 	case "eval":
@@ -279,6 +283,14 @@ func report(cfg *config.Config, args []string) error {
 		if sv, err := ledger.EstimateSavingsFile(*ledgerPath, from, c, c.DefaultTier(catalog.ScopeMain).Model, *baseline); err == nil && sv.Requests > 0 {
 			rep.Savings = sv
 		}
+		rep.Suggestions = suggestions(cfg, c, *ledgerPath, from)
+	}
+	if b := cfg.Budget; b.USDPerDay > 0 || b.USDPerSession > 0 || rep.Budget != nil {
+		if rep.Budget == nil {
+			rep.Budget = &ledger.BudgetStats{}
+		}
+		rep.Budget.TodayUSD = state.Store{Dir: cfg.StateDir}.SpentToday(time.Now())
+		rep.Budget.USDPerDay, rep.Budget.USDPerSession = b.USDPerDay, b.USDPerSession
 	}
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -292,6 +304,38 @@ func report(cfg *config.Config, args []string) error {
 	return nil
 }
 
+// suggestions reads the user's habits in the ledger and flagged.jsonl.
+func suggestions(cfg *config.Config, c *catalog.Catalog, ledgerPath string, from time.Time) []ledger.Suggestion {
+	all, _ := ledger.Decisions(ledgerPath)
+	ds := all[:0]
+	for _, d := range all {
+		if !d.TS.Before(from) {
+			ds = append(ds, d)
+		}
+	}
+	o := ledger.SuggestOptions{Rank: rankFn(c), Floor: "high",
+		RepoFloor: func(repo string) string { return policy.LoadRepoPolicy(repo, cfg.RepoPolicyFile).MinTier }}
+	if c.Tier(catalog.ScopeMain, o.Floor) == nil {
+		o.Floor = c.DefaultTier(catalog.ScopeMain).ID
+	}
+	if cs, err := eval.Load(filepath.Join(cfg.StateDir, "flagged.jsonl")); err == nil {
+		for _, fc := range cs {
+			o.Flagged = append(o.Flagged, [2]string{fc.Scope, fc.Want})
+		}
+	}
+	return ledger.Suggest(ds, o)
+}
+
+// rankFn orders a scope's tiers (unknown tiers last).
+func rankFn(c *catalog.Catalog) func(scope, tier string) int {
+	return func(scope, tier string) int {
+		if t := c.Tier(scope, tier); t != nil {
+			return t.Rank
+		}
+		return 1 << 20
+	}
+}
+
 func why(cfg *config.Config, args []string) error {
 	fs := flag.NewFlagSet("why", flag.ExitOnError)
 	session := fs.String("session", "", "session ID or prefix (default: the most recent)")
@@ -302,12 +346,7 @@ func why(cfg *config.Config, args []string) error {
 	fs.Parse(args)
 	o := ledger.WhyOptions{Session: *session, N: *n}
 	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
-		o.Rank = func(scope, tier string) int {
-			if t := c.Tier(scope, tier); t != nil {
-				return t.Rank
-			}
-			return 1 << 20
-		}
+		o.Rank = rankFn(c)
 	}
 	all, err := ledger.Decisions(*ledgerPath)
 	if err != nil {
@@ -326,7 +365,8 @@ func why(cfg *config.Config, args []string) error {
 	if len(ds) == 0 {
 		return errors.New("no decision recorded yet (is the session on Jev?)")
 	}
-	fmt.Printf("session %s · last %d decisions\n\n", sid[:min(8, len(sid))], len(ds))
+	fmt.Printf("session %s · last %d decisions\n", sid[:min(8, len(sid))], len(ds))
+	fmt.Print(budgetLine(cfg, sid), "\n")
 	ledger.WriteWhy(os.Stdout, ds, o)
 	if !*follow {
 		return nil
@@ -335,6 +375,66 @@ func why(cfg *config.Config, args []string) error {
 	_, done := ledger.SessionDecisions(all, sid, 0)
 	stop := make(chan struct{})
 	return ledger.FollowFrom(*ledgerPath, sid, len(done), o, os.Stdout, stop)
+}
+
+// flagCmd appends a decision the user says was wrong to flagged.jsonl, as
+// an eval case (`automodel eval --cases` reads it). The file stays local.
+func flagCmd(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("flag", flag.ExitOnError)
+	session := fs.String("session", "", "session ID or prefix (default: the most recent)")
+	n := fs.Int("n", 1, "which decision: 1 = the latest")
+	scope := fs.String("scope", catalog.ScopeMain, "scope: main or subagent")
+	want := fs.String("want", "", "the tier it should have picked")
+	note := fs.String("note", "", "why")
+	out := fs.String("out", filepath.Join(cfg.StateDir, "flagged.jsonl"), "cases file")
+	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
+	fs.Parse(args)
+	// `/flag xhigh too hard for low`: the tier, then the note.
+	if rest := strings.Fields(strings.Join(fs.Args(), " ")); len(rest) > 0 {
+		if *want == "" {
+			*want, rest = rest[0], rest[1:]
+		}
+		if *note == "" {
+			*note = strings.Join(rest, " ")
+		}
+	}
+	if *want == "" {
+		return errors.New("usage: automodel flag [--session id] [--n 1] --want tier [--note \"...\"]")
+	}
+	all, err := ledger.Decisions(*ledgerPath)
+	if err != nil {
+		return err
+	}
+	d, ok := ledger.Nth(all, *session, *scope, *n)
+	if !ok {
+		return errors.New("no such decision (see automodel why)")
+	}
+	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil && c.Tier(d.Scope, *want) == nil {
+		return fmt.Errorf("%q is not a %s tier", *want, d.Scope)
+	}
+	st, err := ledger.States{Dir: cfg.StateDir}.Get(d.SessionID, d.ID)
+	if err != nil {
+		return fmt.Errorf("%s decision at %s: %w (pinned or kept without asking Jev, or record_states = false)", d.Scope, d.TS.Local().Format("15:04:05"), err)
+	}
+	if err := eval.AppendCase(*out, eval.FromDecision(d, st, *want, *note)); err != nil {
+		return err
+	}
+	fmt.Printf("flagged %s %s → want %s (%s): %s\n", d.Scope, d.Chosen, *want, d.TS.Local().Format("15:04:05"), *out)
+	return nil
+}
+
+// budgetLine says when a spending cap is reached ("" otherwise).
+func budgetLine(cfg *config.Config, sid string) string {
+	b, st := cfg.Budget, state.Store{Dir: cfg.StateDir}
+	today := st.SpentToday(time.Now())
+	s, _ := st.Load(sid)
+	switch {
+	case b.USDPerDay > 0 && today >= b.USDPerDay:
+		return fmt.Sprintf("⚠ budget: $%.2f today (cap $%.2f): tiers capped at %s until tomorrow\n", today, b.USDPerDay, b.MaxTierWhenOver)
+	case b.USDPerSession > 0 && s != nil && s.TotalUSD >= b.USDPerSession:
+		return fmt.Sprintf("⚠ budget: $%.2f this session (cap $%.2f): tiers capped at %s\n", s.TotalUSD, b.USDPerSession, b.MaxTierWhenOver)
+	}
+	return ""
 }
 
 func catalogCmd(cfg *config.Config, args []string) error {

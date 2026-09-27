@@ -133,7 +133,7 @@ func Apply(o Options) error {
 		return err
 	}
 	o.Log("settings updated: %s", o.SettingsPath)
-	return nil
+	return installCommands(o)
 }
 
 // Preview returns the settings.json entries Apply merges, as JSON.
@@ -279,6 +279,7 @@ func Remove(o Options) error {
 		}
 		o.Log("settings restored (backup %s)", backup)
 	}
+	removeCommands(o)
 	run := o.runner()
 	if _, err := os.Stat(LaunchdPlist()); err == nil && o.goos() == "darwin" {
 		run("launchctl", "unload", "-w", LaunchdPlist())
@@ -566,6 +567,9 @@ func Refresh(o Options, cfg *config.Config) error {
 	if !ownedBy(settings, o) {
 		o.Log("settings %s point at another automodel install (or none): left untouched", o.SettingsPath)
 		return nil
+	}
+	if err := installCommands(o); err != nil {
+		o.Log("slash commands: %v", err)
 	}
 	before, _ := json.Marshal(settings)
 	merge(settings, o, cfg)

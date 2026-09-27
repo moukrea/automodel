@@ -34,6 +34,10 @@ type Decision struct {
 	Epoch      int                `json:"epoch"`
 }
 
+// PinnedTier is the tier of a decision pinned to a model outside the
+// catalog's tiers ([model:X]): the proxy applies its model and effort as is.
+const PinnedTier = "pinned"
+
 // PendingAgent is registered by the agent hook and bound by the proxy to the
 // X-Claude-Code-Agent-Id of the subagent whose first message contains Prompt.
 type PendingAgent struct {
@@ -90,12 +94,15 @@ type Session struct {
 	// epoch reset; their ratio calibrates switch-cost decisions.
 	SpendUSD float64 `json:"spend_usd,omitempty"`
 	Prompts  int     `json:"prompts,omitempty"`
+	// TotalUSD is the whole session's spend, all scopes (budget cap).
+	TotalUSD float64 `json:"total_usd,omitempty"`
 
 	// Pin is an effort the user chose (Claude Code's /effort, or an
 	// [effort:X] tag in a prompt): routing stops until it is released
 	// (/effort back to ClientEffort0, or [effort:auto]). ClientEffort0 is
 	// the effort Claude Code sent first, i.e. its default.
 	Pin              string `json:"pin,omitempty"`
+	PinModel         string `json:"pin_model,omitempty"`  // [model:X]: catalog model the session is pinned to
 	PinSource        string `json:"pin_source,omitempty"` // "/effort" | "prompt"
 	ClientEffort0    string `json:"client_effort0,omitempty"`
 	ClientEffortLast string `json:"client_effort_last,omitempty"` // last one seen: pins follow changes
@@ -232,7 +239,7 @@ func lock(path string) (func(), error) {
 // than maxAge, and returns the number of sessions removed.
 func (s Store) Prune(maxAge time.Duration) int {
 	n := 0
-	for _, sub := range []string{"sessions", "prompts", "statusline"} {
+	for _, sub := range []string{"sessions", "prompts", "statusline", "states"} {
 		dir := filepath.Join(s.Dir, sub)
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {

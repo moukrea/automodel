@@ -171,16 +171,28 @@ func (t *tap) record() {
 	if err != nil {
 		log.Printf("ledger: %v", err)
 	}
-	if rt.routed && rt.scope == catalog.ScopeMain && rt.sessionID != "" && t.seen {
-		ctx := t.u.InputTokens + t.u.CacheReadInputTokens + t.u.CacheCreationInputTokens + t.u.OutputTokens
-		if _, err := t.p.State.Update(rt.sessionID, func(s *state.Session) bool {
+	if !t.seen {
+		return
+	}
+	cost := t.costUSD()
+	if err := t.p.State.AddSpend(time.Now(), cost); err != nil {
+		log.Printf("spend: %v", err)
+	}
+	main := rt.routed && rt.scope == catalog.ScopeMain
+	if rt.sessionID == "" || !rt.routed || (!main && cost <= 0) {
+		return
+	}
+	ctx := t.u.InputTokens + t.u.CacheReadInputTokens + t.u.CacheCreationInputTokens + t.u.OutputTokens
+	if _, err := t.p.State.Update(rt.sessionID, func(s *state.Session) bool {
+		s.TotalUSD += cost
+		if main {
 			s.ContextTokens, s.LastAPIAt = ctx, time.Now()
 			s.PeakContextTokens = max(s.PeakContextTokens, ctx)
-			s.SpendUSD += t.costUSD()
-			return true
-		}); err != nil {
-			log.Printf("state %s: %v", short(rt.sessionID), err)
+			s.SpendUSD += cost
 		}
+		return true
+	}); err != nil {
+		log.Printf("state %s: %v", short(rt.sessionID), err)
 	}
 }
 

@@ -15,6 +15,7 @@ func TestBuildReport(t *testing.T) {
 		`{"ts":"` + now + `","kind":"usage","session_id":"a","scope":"main","routed":true,"tier":"high","model":"m","input_tokens":10,"cache_read_input_tokens":90,"output_tokens":5}`,
 		`{"ts":"` + now + `","kind":"usage","session_id":"c","scope":"main","routed":false,"model":"m","input_tokens":50,"cache_read_input_tokens":50}`,
 		`{"ts":"2020-01-01T00:00:00Z","kind":"decision","scope":"main","chosen":"max"}`,
+		`{"ts":"` + now + `","kind":"decision","session_id":"a","scope":"subagent","trigger":"agent","confidence":0.9,"jev_choice":"opus-medium","chosen":"opus-medium","budget_cap":"opus-high"}`,
 		`not json`,
 	}
 	rep, err := BuildReport(strings.NewReader(strings.Join(lines, "\n")), time.Now().Add(-time.Hour))
@@ -36,7 +37,7 @@ func TestBuildReport(t *testing.T) {
 	}
 	var b strings.Builder
 	rep.Markdown(&b)
-	if !strings.Contains(b.String(), "fallback rate 50.0%") {
+	if !strings.Contains(b.String(), "fallback rate 50.0%") || !strings.Contains(b.String(), "1 decisions lowered to the cap") {
 		t.Errorf("markdown:\n%s", b.String())
 	}
 }

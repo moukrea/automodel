@@ -82,6 +82,10 @@ statusLine ─▶ automodel statusline:  jev → opus-5.5·xhigh +ultracode 0.82
 - backs up `~/.claude/settings.json` (`settings.json.automodel-backup-*`) and
   merges the `env` vars, the hooks, the statusline and
   `permissions.allow: ["Workflow"]`.
+- adds two user slash commands, `~/.claude/commands/why.md` and `flag.md`:
+  `/why` shows the current session's latest decisions, `/flag xhigh too hard
+  for low` flags the last one (a file of that name you wrote yourself is
+  kept).
 
 The key lives in the config file (read on every hook call, no restart
 needed); `automodel key set` reads it on stdin:
@@ -111,8 +115,8 @@ and main tiers must offer at least
 `meta.main_min_context` (1M).
 
 `automodel install --dry-run` only prints what would be merged.
-`automodel uninstall` removes the settings entries, restores your statusline
-and removes the service (config and state are kept).
+`automodel uninstall` removes the settings entries and the slash commands,
+restores your statusline and removes the service (config and state are kept).
 
 ## When it decides (main session)
 
@@ -174,6 +178,11 @@ still win.
   pauses (statusline `(pinned)`) until you set `/effort` back to its default.
 - **`[effort:xhigh]`** (or `low`, `medium`, `high`, `max`) anywhere in a
   prompt pins it the same way; **`[effort:auto]`** hands control back to Jev.
+- **`[model:sonnet]`** (any catalog model by alias, with a 1M window) pins
+  the model too, at the effort of `[effort:X]` or the current one;
+  `[model:auto]` releases it. Switching model rewrites the prompt cache.
+  (`/model opus` in Claude Code leaves automodel out of the session
+  entirely.)
 - **"think harder"**, "ultrathink", "take your time", "réfléchis bien"…:
   at least one tier above the current one for that prompt.
 - A bare **go-ahead** ("yes", "continue", "vas-y", "lgtm") keeps the current
@@ -189,6 +198,23 @@ min_subagent_tier = "opus-low"  # same for subagents
 disable_modes = ["ultracode"]
 privacy = "metadata"            # a repo can make privacy stricter, never looser
 ```
+
+## Spending cap
+
+```toml
+[budget]
+usd_per_day = 20               # 0 = off (the default)
+usd_per_session = 0            # optional, per session
+max_tier_when_over = "medium"  # the highest tier once a cap is reached
+max_subagent_tier_when_over = "opus-medium"
+```
+
+The proxy prices every response with the catalog and keeps the day's total
+(`state_dir/spend.json`, local day) and each session's. Once a cap is
+reached, routing picks nothing above `max_tier_when_over` until the next
+day (or session); the status line shows `⚠ budget`, and `why` and `report`
+show the cap and the decisions it lowered. Your pins are not capped: it's
+your call.
 
 ## What leaves your machine
 
@@ -229,13 +255,27 @@ automodel catalog check [--json]                       # validation (non-zero ex
 automodel why [--session id] [-n 5] [--scope main] [--follow]  # what Jev answered for the last decisions, and why
 automodel report [--since 7d] [--json] [--baseline xhigh]
 automodel eval [--catalog path] [--format score|choice]    # Jev on labeled cases: accuracy, confidence, calibration
+automodel flag [--session id] [--n 1] --want xhigh [--note "..."]  # that pick was wrong
 ```
+
+`flag` turns a decision (default: the session's latest main decision) into
+a labeled case in `~/.local/state/automodel/flagged.jsonl`, with the routing
+state that was sent to Jev, the tier you wanted and Jev's probabilities;
+`automodel eval --cases ~/.local/state/automodel/flagged.jsonl` replays
+them. The states are kept locally per decision (`state_dir/states`, bounded
+to 2 MB per session, metadata only under `privacy = "metadata"`);
+`record_states = false` turns this off.
 
 `why` shows each decision like the demo's popup: every level with its
 probability, the pick, the previous tier, and the reasons (continuation,
 switch cost and expected gain, pin, go-ahead, your signals, Jev failures).
-`report` ends with a conservative estimate of the savings against running
-everything at `--baseline`: only the output (response and thinking) is
+`report` lists **suggestions** drawn from your habits, each with its
+evidence, only after 5 events or more: a repo where you often pin an effort
+above Jev's pick (or ask to think harder, or interrupt turns picked below
+`high`) gets a `min_tier` for its `.automodel.toml`; several flagged cases
+wanting the same tier suggest reviewing its catalog criteria. It ends
+with a conservative estimate of the savings against running everything
+at `--baseline`: only the output (response and thinking) is
 scaled by the catalog's cost ratios; input and cache reads count as they
 were.
 
