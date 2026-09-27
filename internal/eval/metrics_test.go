@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -76,6 +77,34 @@ func TestScopeMetrics(t *testing.T) {
 	PrintScope(&b, s)
 	if !strings.Contains(b.String(), "| medium | 2 | 40% | 20% | 0% | 0% | 0% |") {
 		t.Errorf("table:\n%s", b.String())
+	}
+}
+
+func TestGate(t *testing.T) {
+	c := testCatalog(t)
+	var rs []Result
+	// 40 medium labels: 20 routed to high (the collapse), 20 right; 40 high, right.
+	for i := 0; i < 40; i++ {
+		got := "medium"
+		if i%2 == 0 {
+			got = "high"
+		}
+		rs = append(rs, res(fmt.Sprint("m", i), "medium", got, got, 0.9, 0), res(fmt.Sprint("h", i), "high", "high", "high", 0.9, 0))
+	}
+	fails := ScopeMetrics(c, catalog.ScopeMain, rs).Check(DefaultGate)
+	joined := strings.Join(fails, "; ")
+	for _, want := range []string{"decision exact 75%", "medium recall 50%", "high gets 75% of decisions for 50% of labels"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in %q", want, joined)
+		}
+	}
+	var ok []Result
+	for _, r := range rs {
+		r.Got, r.Decision = r.Want, r.Want
+		ok = append(ok, r)
+	}
+	if fails := ScopeMetrics(c, catalog.ScopeMain, ok).Check(DefaultGate); len(fails) > 0 {
+		t.Errorf("a perfect run fails the gate: %v", fails)
 	}
 }
 

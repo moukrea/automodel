@@ -185,6 +185,44 @@ func (s *ScopeStats) MaxShareGap() (string, float64) {
 	return id, hi
 }
 
+// Gate is the regression gate a catalog must pass on the held-out cases
+// (the refresh skill runs `automodel eval --split test --check`).
+type Gate struct {
+	MinExact    float64 // router decision exact accuracy
+	MinRecall   float64 // decision recall of every tier with at least MinLabels answers
+	MinLabels   int
+	MaxShareGap float64 // |decision share − label share| of any tier
+	MaxMAE      float64 // router decision mean absolute rank error
+}
+
+// DefaultGate is set from the 2026-09 routing-quality work: the fixed
+// router scores 91% exact, recall ≥ 82% on low..xhigh, share gaps ≤ 4 points
+// and MAE 0.09 on the held-out split; the collapsed one scored 79%, medium
+// recall 62%, a 9-point share gap and MAE 0.24; the fixed code with the
+// old penalty (3.0) 85%, MAE 0.15, xhigh at 27% of decisions for 20% of labels.
+var DefaultGate = Gate{MinExact: 0.88, MinRecall: 0.80, MinLabels: 20, MaxShareGap: 0.06, MaxMAE: 0.12}
+
+// Check lists the gate's failures (none: the scope passes).
+func (s *ScopeStats) Check(g Gate) []string {
+	var out []string
+	if s.DecisionExact < g.MinExact {
+		out = append(out, fmt.Sprintf("%s: decision exact %.0f%% < %.0f%%", s.Scope, 100*s.DecisionExact, 100*g.MinExact))
+	}
+	if s.MAEDecision > g.MaxMAE {
+		out = append(out, fmt.Sprintf("%s: decision rank error %.2f > %.2f", s.Scope, s.MAEDecision, g.MaxMAE))
+	}
+	for _, t := range s.Tiers {
+		c := s.Class[t]
+		if c.Labels >= g.MinLabels && c.RecallDecision < g.MinRecall {
+			out = append(out, fmt.Sprintf("%s: %s recall %.0f%% < %.0f%%", s.Scope, t, 100*c.RecallDecision, 100*g.MinRecall))
+		}
+		if gap := c.DecisionShare - c.LabelShare; math.Abs(gap) > g.MaxShareGap {
+			out = append(out, fmt.Sprintf("%s: %s gets %.0f%% of decisions for %.0f%% of labels", s.Scope, t, 100*c.DecisionShare, 100*c.LabelShare))
+		}
+	}
+	return out
+}
+
 func inc(m map[string]map[string]int, a, b string) {
 	if m[a] == nil {
 		m[a] = map[string]int{}

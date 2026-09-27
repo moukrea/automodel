@@ -46,11 +46,19 @@ efforts = ["low", "medium", "high", "xhigh", "max"]
 default_effort = "medium"
 per_turn_effort = true
 price = { input = 4.0, output = 20.0, cache_read = 0.20, cache_write_5m = 5.0, cache_write_1h = 8.0 }
+# Fast mode stays off (docs/research/2026-09-routing-quality.md): 2x the price
+# per token ($8/$40, cache multipliers on top) for up to 2.5x output tokens per
+# second, not time to first token; a speed change misses the prompt cache;
+# research preview (access provisioned per org, usage credits on plans). On a
+# low turn ($0.55, ~80 s per task) it would double the cost to save at most
+# ~48 s of generation, plus one uncached rewrite of the context at fast prices.
 fast = { allowed = false, input = 8.0, output = 40.0, speedup = 2.5 }
 verified_at = "2026-09-26"
 sources = [
   "https://platform.claude.com/docs/en/about-claude/models/overview",
   "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://platform.claude.com/docs/en/build-with-claude/fast-mode",
+  "https://code.claude.com/docs/en/fast-mode",
 ]
 
 [models.claude-haiku-4-5]
