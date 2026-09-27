@@ -1,7 +1,6 @@
 package doctor
 
 import (
-	"runtime"
 	"bytes"
 	"context"
 	"fmt"
@@ -9,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
