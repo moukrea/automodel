@@ -3,6 +3,7 @@ package doctor
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -140,15 +141,24 @@ func TestLedgerNotWritable(t *testing.T) {
 // agentline renders the automodel segment itself: a healthy setup.
 func TestAgentlineStatusline(t *testing.T) {
 	e, _ := setup(t)
-	s, _ := os.ReadFile(e.Install.SettingsPath)
-	os.WriteFile(e.Install.SettingsPath, bytes.Replace(s, []byte(`"/x/automodel --config `+e.Install.ConfigPath+` statusline"`),
-		[]byte(`"bash /home/u/.claude/agentline/statusline.sh"`), 1), 0o600)
+	raw, _ := os.ReadFile(e.Install.SettingsPath)
+	// Set the statusLine command through JSON: install quotes and slashes
+	// paths per OS, so the installed command can't be matched as text.
+	setStatusline := func(cmd string) {
+		var s map[string]any
+		if err := json.Unmarshal(raw, &s); err != nil {
+			t.Fatal(err)
+		}
+		s["statusLine"] = map[string]any{"type": "command", "command": cmd}
+		b, _ := json.Marshal(s)
+		os.WriteFile(e.Install.SettingsPath, b, 0o600)
+	}
+	setStatusline("bash /home/u/.claude/agentline/statusline.sh")
 	r := find(t, Run(e), "statusline")
 	if r.Status != OK || r.Detail != "agentline shows the automodel segment" {
 		t.Errorf("statusline: %s %s", r.Status, r.Detail)
 	}
-	os.WriteFile(e.Install.SettingsPath, bytes.Replace(s, []byte(`"/x/automodel --config `+e.Install.ConfigPath+` statusline"`),
-		[]byte(`"~/bin/mine"`), 1), 0o600)
+	setStatusline("~/bin/mine")
 	if r := find(t, Run(e), "statusline"); r.Status != Fail {
 		t.Errorf("foreign statusline: %s %s", r.Status, r.Detail)
 	}

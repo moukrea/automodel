@@ -2,6 +2,14 @@ package statusline
 
 import "testing"
 
+// The chained command runs in Git Bash when there is one, else PowerShell.
+var chainedEnvEcho = func() string {
+	if gitBash() != "" {
+		return "echo chained=$AUTOMODEL_CHAINED"
+	}
+	return "Write-Output \"chained=$env:AUTOMODEL_CHAINED\""
+}()
+
 // Without Git Bash the chained statusline runs in PowerShell, with the
 // statusline JSON on its stdin.
 func TestChainPowerShell(t *testing.T) {

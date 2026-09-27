@@ -19,7 +19,8 @@ func startChain(command, in, tmp, out, running string) {
 	var cmd *exec.Cmd
 	if bash := gitBash(); bash != "" && !noGitBash {
 		slash := filepath.ToSlash
-		script := fmt.Sprintf("(%s) < %q > %q 2>/dev/null; mv -f %q %q; rm -f %q",
+		// Set in the script too: Git Bash's launcher rebuilds the environment.
+		script := fmt.Sprintf("export "+ChainedEnv+"=1; (%s) < %q > %q 2>/dev/null; mv -f %q %q; rm -f %q",
 			command, slash(in), slash(tmp), slash(tmp), slash(out), slash(running))
 		cmd = exec.Command(bash, "-c", script)
 	} else {
@@ -28,7 +29,7 @@ func startChain(command, in, tmp, out, running string) {
 			return
 		}
 		defer f.Close()
-		script := fmt.Sprintf("$ErrorActionPreference = 'SilentlyContinue'; "+
+		script := fmt.Sprintf("$ErrorActionPreference = 'SilentlyContinue'; $env:"+ChainedEnv+" = '1'; "+
 			"$o = (& { %s } 2>$null | Out-String); "+
 			"[IO.File]::WriteAllText(%s, $o); "+
 			"Move-Item -Force -LiteralPath %s -Destination %s; Remove-Item -Force -LiteralPath %s",
@@ -39,7 +40,7 @@ func startChain(command, in, tmp, out, running string) {
 	// No console window, and out of the caller's job when it allows it:
 	// Claude Code may kill the statusline's job once it has printed.
 	flags := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
-	cmd.Env = append(os.Environ(), ChainedEnv+"=1")
+	cmd.Env = chainedEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags | windows.CREATE_BREAKAWAY_FROM_JOB}
 	if cmd.Start() != nil {
 		retry := exec.Command(cmd.Path, cmd.Args[1:]...)

@@ -209,8 +209,8 @@ func TestJSONNeverChains(t *testing.T) {
 
 // The chained command knows it runs under automodel's statusline.
 func TestChainedEnv(t *testing.T) {
-	t.Setenv(ChainedEnv, "")
-	if got := chain(t.TempDir(), "echo chained=$AUTOMODEL_CHAINED", "s", []byte(`{}`)); got != "chained=1" {
+	t.Setenv(ChainedEnv, "0") // replaced, not duplicated
+	if got := chain(t.TempDir(), chainedEnvEcho, "s", []byte(`{}`)); got != "chained=1" {
 		t.Fatalf("chained env: %q", got)
 	}
 }
