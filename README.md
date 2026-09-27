@@ -150,9 +150,10 @@ the text status line, never runs `statusline_command`, and prints one line:
 {"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}
 ```
 
-`{"v":1,"routed":false}` for a session automodel doesn't route. `state` is
-`routed|default|fallback|pinned|error` (`error`: the catalog can't load,
-`issue` says `catalog`); `confidence` is 0 unless `routed`; `pin` is the
+`{"v":1,"routed":false}` for a session automodel doesn't route (with every
+field and `state` `error` when the catalog can't load: read `routed` first).
+`state` is `routed|default|fallback|pinned|error` (`error`: the catalog can't
+load, `issue` says `catalog`); `confidence` is 0 unless `routed`; `pin` is the
 pinned effort; `issue` why Jev couldn't be asked; `flash`
 `switched|compact|cold|""`; `budget` `over` past the spending cap, else
 `""`; `text` the text segment. Find the command in

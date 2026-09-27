@@ -107,7 +107,8 @@ func observe(env *router.Env, in Input) *state.Session {
 }
 
 // View is the routing state of a session, as `statusline --json` prints it
-// (schema v1). A session that isn't routed is {"v":1,"routed":false}.
+// (schema v1). A session that isn't routed is {"v":1,"routed":false}, or
+// every field with state "error" when the catalog can't load (CatalogErrorJSON).
 type View struct {
 	V          int     `json:"v"`
 	Routed     bool    `json:"routed"`
