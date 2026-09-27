@@ -229,8 +229,13 @@ to 2 MB per session, metadata only under `privacy = "metadata"`);
 `why` shows each decision like the demo's popup: every level with its
 probability, the pick, the previous tier, and the reasons (continuation,
 switch cost and expected gain, pin, go-ahead, your signals, Jev failures).
-`report` ends with a conservative estimate of the savings against running
-everything at `--baseline`: only the output (response and thinking) is
+`report` lists **suggestions** drawn from your habits, each with its
+evidence, only after 5 events or more: a repo where you often pin an effort
+above Jev's pick (or ask to think harder, or interrupt turns picked below
+`high`) gets a `min_tier` for its `.automodel.toml`; several flagged cases
+wanting the same tier suggest reviewing its catalog criteria. It ends
+with a conservative estimate of the savings against running everything
+at `--baseline`: only the output (response and thinking) is
 scaled by the catalog's cost ratios; input and cache reads count as they
 were.
 

@@ -68,6 +68,7 @@ type Request struct {
 	AgentType string
 	State     map[string]any
 	RepoDir   string
+	RepoRoot  string // recorded in the ledger (report suggestions)
 	Context   int
 
 	// Warm turns (the cache is intact): Current is the decision in force,
@@ -112,7 +113,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	rec := ledger.Decision{
 		TS: start, Kind: "decision", ID: ledger.NewID(), SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
 		AgentType: req.AgentType, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
-		Signals: req.Signals,
+		Signals: req.Signals, Repo: req.RepoRoot,
 	}
 	if cur != nil {
 		rec.From = cur.ID
@@ -384,12 +385,12 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolic
 
 // Pinned is the decision for an effort the user chose. It is logged like
 // any decision, with the source (/effort or prompt) as cause.
-func (e *Env) Pinned(sessionID string, t *catalog.Tier, source string) *state.Decision {
+func (e *Env) Pinned(sessionID, repoRoot string, t *catalog.Tier, source string) *state.Decision {
 	now := e.Now()
 	d := &state.Decision{Scope: catalog.ScopeMain, Trigger: "pinned", Cause: source, DecidedAt: now, Confidence: 1}
 	e.fill(d, t, "")
 	rec := ledger.Decision{TS: now, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain, Trigger: "pinned",
-		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1}
+		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1, Repo: repoRoot}
 	if err := e.Ledger.Append(rec); err != nil {
 		log.Printf("ledger: %v", err)
 	}

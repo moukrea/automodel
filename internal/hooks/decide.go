@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/moukrea/automodel/internal/policy"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -102,7 +104,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			pin, pinSource = "", "" // no such effort on this model: ignore the pin
 		case tag != "" || trigger == "initial" || trigger == "compact" || trigger == "cold" ||
 			sess.Main == nil || sess.Main.Tier != t.ID:
-			dec = env.Pinned(in.SessionID, t, pinSource)
+			dec = env.Pinned(in.SessionID, repoRoot(sess, in.Cwd), t, pinSource)
 			trigger = "pinned-" + trigger
 		}
 	}
@@ -317,7 +319,10 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		st["repo"] = r
 	}
 	req := router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
-		State: st, RepoDir: in.Cwd, Context: ctxTokens}
+		State: st, RepoDir: in.Cwd, Context: ctxTokens, RepoRoot: repoRoot(sess, in.Cwd)}
+	if repoSignals != nil && repoSignals.Root != "" {
+		req.RepoRoot = repoSignals.Root
+	}
 	if len(signals) > 0 {
 		st["user_signals"] = signals
 		req.Signals = signals
@@ -334,6 +339,23 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		}
 	}
 	return req
+}
+
+// repoRoot is the session's repository root: the one recorded, else the
+// nearest parent of cwd with a .git, else cwd.
+func repoRoot(sess *state.Session, cwd string) string {
+	if sess.Repo != nil && sess.Repo.Root != "" {
+		return sess.Repo.Root
+	}
+	for d := cwd; d != ""; d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	return cwd
 }
 
 // goAheads are prompts that only tell Claude to carry on.

@@ -87,6 +87,7 @@ type Report struct {
 	UnroutedCacheHit float64                 `json:"unrouted_cache_hit_rate"`
 	Shadow           *ShadowStats            `json:"shadow,omitempty"`
 	Savings          *Savings                `json:"savings,omitempty"`
+	Suggestions      []Suggestion            `json:"suggestions,omitempty"`
 }
 
 // BuildReport aggregates ledger lines newer than since.
@@ -312,6 +313,7 @@ func (rep *Report) Markdown(w io.Writer) {
 			fmt.Fprintf(w, "Disagreements (applied→shadow): %s\n", kv(sh.Disagreement))
 		}
 	}
+	writeSuggestions(w, rep.Suggestions)
 }
 
 func kv(m map[string]int) string {

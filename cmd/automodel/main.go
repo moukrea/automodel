@@ -30,6 +30,7 @@ import (
 	"github.com/moukrea/automodel/internal/hooks"
 	"github.com/moukrea/automodel/internal/install"
 	"github.com/moukrea/automodel/internal/ledger"
+	"github.com/moukrea/automodel/internal/policy"
 	"github.com/moukrea/automodel/internal/proxy"
 	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/state"
@@ -257,6 +258,7 @@ func report(cfg *config.Config, args []string) error {
 		if sv, err := ledger.EstimateSavingsFile(*ledgerPath, from, c, c.DefaultTier(catalog.ScopeMain).Model, *baseline); err == nil && sv.Requests > 0 {
 			rep.Savings = sv
 		}
+		rep.Suggestions = suggestions(cfg, c, *ledgerPath, from)
 	}
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -270,6 +272,38 @@ func report(cfg *config.Config, args []string) error {
 	return nil
 }
 
+// suggestions reads the user's habits in the ledger and flagged.jsonl.
+func suggestions(cfg *config.Config, c *catalog.Catalog, ledgerPath string, from time.Time) []ledger.Suggestion {
+	all, _ := ledger.Decisions(ledgerPath)
+	ds := all[:0]
+	for _, d := range all {
+		if !d.TS.Before(from) {
+			ds = append(ds, d)
+		}
+	}
+	o := ledger.SuggestOptions{Rank: rankFn(c), Floor: "high",
+		RepoFloor: func(repo string) string { return policy.LoadRepoPolicy(repo, cfg.RepoPolicyFile).MinTier }}
+	if c.Tier(catalog.ScopeMain, o.Floor) == nil {
+		o.Floor = c.DefaultTier(catalog.ScopeMain).ID
+	}
+	if cs, err := eval.Load(filepath.Join(cfg.StateDir, "flagged.jsonl")); err == nil {
+		for _, fc := range cs {
+			o.Flagged = append(o.Flagged, [2]string{fc.Scope, fc.Want})
+		}
+	}
+	return ledger.Suggest(ds, o)
+}
+
+// rankFn orders a scope's tiers (unknown tiers last).
+func rankFn(c *catalog.Catalog) func(scope, tier string) int {
+	return func(scope, tier string) int {
+		if t := c.Tier(scope, tier); t != nil {
+			return t.Rank
+		}
+		return 1 << 20
+	}
+}
+
 func why(cfg *config.Config, args []string) error {
 	fs := flag.NewFlagSet("why", flag.ExitOnError)
 	session := fs.String("session", "", "session ID or prefix (default: the most recent)")
@@ -280,12 +314,7 @@ func why(cfg *config.Config, args []string) error {
 	fs.Parse(args)
 	o := ledger.WhyOptions{Session: *session, N: *n}
 	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
-		o.Rank = func(scope, tier string) int {
-			if t := c.Tier(scope, tier); t != nil {
-				return t.Rank
-			}
-			return 1 << 20
-		}
+		o.Rank = rankFn(c)
 	}
 	all, err := ledger.Decisions(*ledgerPath)
 	if err != nil {

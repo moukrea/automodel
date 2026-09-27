@@ -26,7 +26,7 @@ func TestFlaggedDecisionIsAnEvalCase(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, ok := ledger.Nth(all, "", "main", 1)
-	if !ok || d.ID == "" {
+	if !ok || d.ID == "" || d.Repo != cwd {
 		t.Fatalf("decision = %+v", d)
 	}
 	st, err := env.States.Get("s1", d.ID)
