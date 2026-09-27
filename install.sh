@@ -51,7 +51,7 @@ mkdir -p "$BIN_DIR"
 install -m 0755 "$tmp/automodel" "$BIN_DIR/automodel"
 say "Installed $BIN_DIR/automodel"
 
-"$BIN_DIR/automodel" install
+AUTOMODEL_INSTALLER=1 "$BIN_DIR/automodel" install
 
 cfg="${AUTOMODEL_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/automodel/config.toml}"
 if [ -n "${OPENROUTER_API_KEY:-}" ]; then
@@ -65,5 +65,7 @@ elif ! grep -q '^openrouter_api_key = "..*"' "$cfg" 2>/dev/null && (: </dev/tty)
 	if [ -n "$key" ]; then printf '%s\n' "$key" | "$BIN_DIR/automodel" key set; fi
 fi
 
+grep -q '^openrouter_api_key = "..*"' "$cfg" 2>/dev/null || [ -n "${OPENROUTER_API_KEY:-}" ] ||
+	say "No OpenRouter key yet: until you run \`automodel key set\`, every prompt uses the default tier."
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "Add $BIN_DIR to your PATH." ;; esac
 say 'Done. In Claude Code, open /model and pick "Jev (auto)".'

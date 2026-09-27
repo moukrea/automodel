@@ -318,6 +318,9 @@ func installCmd(cfg *config.Config, args []string) error {
 		return err
 	}
 	recordInstalled(cfg)
+	if os.Getenv("AUTOMODEL_INSTALLER") != "" {
+		return nil // install.sh asks for the key and prints the next steps
+	}
 	fmt.Println("done: pick \"Jev (auto)\" in /model in a new Claude Code session.")
 	if cfg2, err := config.Load(o.ConfigPath); err == nil && cfg2.APIKey() == "" {
 		fmt.Printf("missing: openrouter_api_key in %s (until then decisions use the default tier)\n", o.ConfigPath)
