@@ -190,3 +190,29 @@ func TestOwnStatuslineUnderAgentlinePath(t *testing.T) {
 		t.Fatalf("uninstall left the automodel statusline: %s", b)
 	}
 }
+
+// install --dry-run shows what install does: an agentline statusLine kept.
+func TestPreviewKeepsAgentline(t *testing.T) {
+	cfg := config.Default()
+	o := Options{Exe: "/u/bin/automodel", ConfigPath: "/u/.config/automodel/config.toml", SettingsPath: filepath.Join(t.TempDir(), "settings.json")}
+	for cmd, want := range map[string]string{agentlineCmd: agentlineCmd, "~/bin/mine": o.statuslineCmd(), "": o.statuslineCmd()} {
+		os.Remove(o.SettingsPath)
+		if cmd != "" {
+			os.WriteFile(o.SettingsPath, []byte(strings.Replace(sample, "bash agentline.sh", cmd, 1)), 0o600)
+		}
+		b, err := Preview(o, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := ParseObject(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c := statuslineCommand(s); c != want {
+			t.Errorf("%q: preview statusLine %q, want %q", cmd, c, want)
+		}
+		if !strings.Contains(string(b), "hook decide") {
+			t.Errorf("%q: preview without hooks", cmd)
+		}
+	}
+}

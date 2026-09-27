@@ -162,9 +162,15 @@ func Apply(o Options) error {
 	return installCommands(o)
 }
 
-// Preview returns the settings.json entries Apply merges, as JSON.
+// Preview returns the settings.json entries Apply merges, as JSON. A
+// delegating status line already in settings.json is shown kept, as Apply
+// leaves it.
 func Preview(o Options, cfg *config.Config) ([]byte, error) {
 	s := NewObject()
+	if cur, _, err := readSettings(o.SettingsPath); err == nil && delegating(statuslineCommand(cur)) {
+		sl, _ := cur.Get("statusLine")
+		s.Set("statusLine", sl)
+	}
 	merge(s, o, cfg)
 	return json.MarshalIndent(s, "", "  ")
 }
