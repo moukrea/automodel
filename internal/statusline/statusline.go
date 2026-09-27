@@ -103,6 +103,9 @@ func Render(env *router.Env, sess *state.Session, now time.Time) string {
 	default:
 		fmt.Fprintf(&b, " %.2f", d.Confidence)
 	}
+	if sess.JevIssue != "" {
+		b.WriteString(" ⚠ jev: " + sess.JevIssue)
+	}
 	cause := d.Trigger
 	if cause == "fallback" {
 		cause = d.Cause

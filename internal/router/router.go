@@ -6,6 +6,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -160,6 +161,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if resp != nil {
 		rec.JevCostUSD = resp.Usage.Cost
 	}
+	e.noteJev(req.SessionID, err)
 	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
 	dec := &state.Decision{Scope: req.Scope, Trigger: req.Trigger, DecidedAt: start}
 	if err != nil {
@@ -204,6 +206,43 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		log.Printf("ledger: %v", err)
 	}
 	return dec, Outcome{Changed: true}
+}
+
+// noteJev records on the session why Jev couldn't answer (shown by the
+// status line), or clears it once Jev answers again.
+func (e *Env) noteJev(sessionID string, err error) {
+	issue := JevIssue(err)
+	if sessionID == "" {
+		return
+	}
+	e.State.Update(sessionID, func(s *state.Session) bool {
+		if s.JevIssue == issue {
+			return false
+		}
+		s.JevIssue, s.JevIssueAt = issue, e.Now()
+		return true
+	})
+}
+
+// JevIssue is a short reason for a failed Jev call ("" when it answered).
+func JevIssue(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	switch {
+	case errors.Is(err, jev.ErrNoKey):
+		return "no OpenRouter key"
+	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "Timeout") || strings.Contains(msg, "deadline"):
+		return "timeout"
+	case strings.Contains(msg, " 401") || strings.Contains(msg, "status 401") || strings.Contains(msg, "jev: 401"):
+		return "OpenRouter key rejected"
+	case strings.Contains(msg, "402"):
+		return "OpenRouter credits"
+	case strings.Contains(msg, "429"):
+		return "rate limited"
+	}
+	return "unreachable"
 }
 
 // Verdict is the policy's answer to a reading.

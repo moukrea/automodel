@@ -64,4 +64,8 @@ func TestRenderPinned(t *testing.T) {
 	if got := Render(env, sess, time.Now()); !strings.Contains(got, "·high (pinned)") {
 		t.Fatalf("render = %q", got)
 	}
+	sess.Pin, sess.JevIssue = "", "no OpenRouter key"
+	if got := Render(env, sess, time.Now()); !strings.Contains(got, "⚠ jev: no OpenRouter key") {
+		t.Fatalf("render = %q", got)
+	}
 }

@@ -356,6 +356,22 @@ func TestDecideFallbackAndNonJev(t *testing.T) {
 	if sess.Main == nil || sess.Main.Tier != "high" || sess.Main.Trigger != "fallback" || sess.Main.Cause != "initial" {
 		t.Errorf("fallback: %+v", sess.Main)
 	}
+	if sess.JevIssue != "unreachable" {
+		t.Errorf("jev issue = %q", sess.JevIssue)
+	}
+	// Jev answers again: the issue clears.
+	fj.fail = false
+	fj.answers = []fa{{tier: "low", conf: 0.95, cont: 0.1}}
+	run(t, env, "decide", map[string]any{"session_id": "s2", "prompt": "thanks, what does 409 mean?", "cwd": t.TempDir()})
+	if sess, _ = env.State.Load("s2"); sess.JevIssue != "" {
+		t.Errorf("jev issue not cleared: %q", sess.JevIssue)
+	}
+	for err, want := range map[error]string{jev.ErrNoKey: "no OpenRouter key", context.DeadlineExceeded: "timeout",
+		errors.New("jev: status 401: nope"): "OpenRouter key rejected", errors.New("jev: 402: Insufficient credits"): "OpenRouter credits"} {
+		if got := router.JevIssue(err); got != want {
+			t.Errorf("JevIssue(%v) = %q, want %q", err, got, want)
+		}
+	}
 
 	// A session known to be on another model is left alone.
 	env.State.Update("s3", func(s *state.Session) bool { s.Model = "opus"; return true })
