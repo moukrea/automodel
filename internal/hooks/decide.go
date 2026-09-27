@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/moukrea/automodel/internal/policy"
+	"regexp"
 	"strings"
 	"time"
 
@@ -66,9 +67,38 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		trigger = ""
 	}
 
+	// A user-chosen effort outranks routing: an [effort:X] tag pins it, an
+	// [effort:auto] tag releases the pin (and this prompt is routed).
+	tag := effortTag(in.Prompt)
+	pin, pinSource := sess.Pin, sess.PinSource
+	switch {
+	case tag == "auto":
+		pin, pinSource = "", ""
+		if trigger == "" && sess.Main != nil && sess.Pin != "" && env.Cfg.Features.WarmDecisions {
+			trigger = "warm"
+		}
+	case tag != "":
+		pin, pinSource = tag, "prompt"
+	}
+
 	var dec *state.Decision
 	var signals *state.RepoSignals
-	if trigger != "" {
+	if pin != "" && !synthetic {
+		model := env.Catalog.DefaultTier(catalog.ScopeMain).Model
+		if sess.Main != nil {
+			model = sess.Main.Model
+		}
+		t := env.Catalog.TierFor(catalog.ScopeMain, model, pin)
+		switch {
+		case t == nil:
+			pin, pinSource = "", "" // no such effort on this model: ignore the pin
+		case tag != "" || trigger == "initial" || trigger == "compact" || trigger == "cold" ||
+			sess.Main == nil || sess.Main.Tier != t.ID:
+			dec = env.Pinned(in.SessionID, t, pinSource)
+			trigger = "pinned-" + trigger
+		}
+	}
+	if trigger != "" && pin == "" { // no routing while pinned
 		if tr == nil && trigger != "initial" {
 			tr = readTranscript(in.TranscriptPath)
 		}
@@ -100,6 +130,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if s.Model == "" {
 			s.Model, s.ModelSource = mi.Model, mi.Source
 		}
+		s.Pin, s.PinSource = pin, pinSource
 		if dec != nil {
 			prev := s.Main
 			epoch := 1
@@ -110,10 +141,10 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			s.Main = dec
 			s.CompactPending, s.CompactTrigger, s.ColdHint = false, "", false
 			switch {
-			case trigger == "initial" || trigger == "compact":
+			case trigger == "initial" || trigger == "compact" || trigger == "pinned-initial" || trigger == "pinned-compact":
 				// A new conversation for the API: fresh top-level effort.
 				s.ResetEffortEpoch()
-				if trigger == "compact" {
+				if strings.HasSuffix(trigger, "compact") {
 					s.ContextTokens = 0 // stale until the next response
 				}
 			case prev == nil || prev.Model != dec.Model:
@@ -264,6 +295,18 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	}
 	return router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
 		State: st, RepoDir: in.Cwd, Context: ctxTokens}
+}
+
+var effortTagRE = regexp.MustCompile(`(?i)\[effort:\s*(low|medium|high|xhigh|max|auto)\s*\]`)
+
+// effortTag returns the effort an [effort:X] tag in the prompt asks for
+// ("auto" releases a pin), or "".
+func effortTag(prompt string) string {
+	m := effortTagRE.FindAllStringSubmatch(prompt, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	return strings.ToLower(m[len(m)-1][1])
 }
 
 func mustJSON(v any) string {

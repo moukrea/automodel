@@ -294,6 +294,16 @@ func (c *Catalog) Resolve(t *Tier, modeID string) (model, effort string, workflo
 }
 
 // DefaultTier returns the fallback tier of a scope.
+// TierFor returns the scope's tier running model at effort, if any.
+func (c *Catalog) TierFor(scope, model, effort string) *Tier {
+	for _, t := range c.TiersByRank(scope) {
+		if t.Model == model && t.Effort == effort {
+			return t
+		}
+	}
+	return nil
+}
+
 func (c *Catalog) DefaultTier(scope string) *Tier {
 	if scope == ScopeSubagent {
 		return c.Tier(scope, c.Meta.DefaultSubagentTier)

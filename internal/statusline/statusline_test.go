@@ -56,3 +56,12 @@ func TestChainCached(t *testing.T) {
 		t.Errorf("cached run = %q in %v", got, time.Since(start))
 	}
 }
+
+func TestRenderPinned(t *testing.T) {
+	c, _, _ := catalog.Load("../../catalog.toml", time.Now(), 3650)
+	env := &router.Env{Cfg: config.Default(), Catalog: c, Now: time.Now}
+	sess := &state.Session{Pin: "high", Main: &state.Decision{Tier: "high", Model: "claude-opus-5-5", Effort: "high", Trigger: "pinned", Confidence: 1}}
+	if got := Render(env, sess, time.Now()); !strings.Contains(got, "·high (pinned)") {
+		t.Fatalf("render = %q", got)
+	}
+}

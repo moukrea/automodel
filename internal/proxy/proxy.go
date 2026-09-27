@@ -8,11 +8,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,6 +43,7 @@ type Proxy struct {
 	State   state.Store
 	Ledger  ledger.Ledger
 	Debug   bool
+	dumpN   atomic.Int64
 
 	upstream *url.URL
 	rp       *httputil.ReverseProxy
@@ -133,6 +137,21 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if nb, ok := p.rewrite(r, body, rt); ok {
 		body = nb
 	}
+	if dir := os.Getenv("AUTOMODEL_DUMP_DIR"); dir != "" && !strings.HasSuffix(r.URL.Path, "/count_tokens") {
+		// Debugging cache misses: every request as sent upstream, to diff.
+		hdr := map[string]string{}
+		for k, v := range r.Header {
+			if lk := strings.ToLower(k); lk == "authorization" || lk == "x-api-key" || strings.Contains(lk, "cookie") {
+				hdr[k] = "[redacted]"
+			} else {
+				hdr[k] = strings.Join(v, ", ")
+			}
+		}
+		h, _ := json.Marshal(map[string]any{"path": r.URL.Path, "routed": rt.routed, "headers": hdr})
+		n := p.dumpN.Add(1)
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("%03d-%s.json", n, short(rt.sessionID))), body, 0o600)
+		os.WriteFile(filepath.Join(dir, fmt.Sprintf("%03d-%s.head", n, short(rt.sessionID))), h, 0o600)
+	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 	r.Header.Del("Content-Length")
@@ -166,6 +185,13 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 	custom := strings.TrimSuffix(model, "[1m]") == p.Cfg.CustomModelID
 	switch {
 	case custom:
+		if rt.scope == catalog.ScopeMain && !countTokens {
+			ce := clientEffort(fields)
+			if p.Debug {
+				log.Printf("client effort %s: %q (top-level %s)", short(rt.sessionID), ce, string(fields["output_config"]))
+			}
+			p.observeClientEffort(cat, rt.sessionID, ce)
+		}
 		dec = p.decisionFor(cat, rt, fields)
 		rt.routed = true
 		if rt.scope == catalog.ScopeMain && !countTokens {

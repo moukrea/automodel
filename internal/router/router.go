@@ -326,6 +326,20 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier) string {
 	return ""
 }
 
+// Pinned is the decision for an effort the user chose. It is logged like
+// any decision, with the source (/effort or prompt) as cause.
+func (e *Env) Pinned(sessionID string, t *catalog.Tier, source string) *state.Decision {
+	now := e.Now()
+	d := &state.Decision{Scope: catalog.ScopeMain, Trigger: "pinned", Cause: source, DecidedAt: now, Confidence: 1}
+	e.fill(d, t, "")
+	rec := ledger.Decision{TS: now, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain, Trigger: "pinned",
+		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1}
+	if err := e.Ledger.Append(rec); err != nil {
+		log.Printf("ledger: %v", err)
+	}
+	return d
+}
+
 // DefaultDecision is the tier applied when nothing was decided.
 func (e *Env) DefaultDecision(scope, trigger string) *state.Decision {
 	d := &state.Decision{Scope: scope, Trigger: trigger, DecidedAt: e.Now()}

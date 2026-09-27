@@ -539,3 +539,39 @@ func TestProxyRestartedByHook(t *testing.T) {
 		t.Fatal("no restart attempted")
 	}
 }
+
+func TestEffortTagPins(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	sid := "s1"
+	markJev(t, env, sid)
+	cwd := t.TempDir()
+	prompt := func(p string) {
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+	}
+	prompt("What does 409 mean?")
+	calls := fj.calls()
+	prompt("[effort:xhigh] Now find the race in checkout")
+	sess, _ := env.State.Load(sid)
+	if sess.Pin != "xhigh" || sess.PinSource != "prompt" || sess.Main.Tier != "xhigh" || sess.Main.Trigger != "pinned" || fj.calls() != calls {
+		t.Fatalf("tag not pinned without asking Jev: pin %q, main %+v, calls %d→%d", sess.Pin, sess.Main, calls, fj.calls())
+	}
+	if sess.PendingEffort == nil && sess.EffortBase != "" {
+		t.Error("a pinned effort change must go through per-turn effort")
+	}
+	prompt("and fix it") // pinned: no routing
+	if fj.calls() != calls {
+		t.Fatal("Jev asked while pinned")
+	}
+	if sess, _ = env.State.Load(sid); sess.Main.Tier != "xhigh" {
+		t.Fatalf("pin lost: %+v", sess.Main)
+	}
+	prompt("[effort:auto] write the commit message") // released: this prompt is routed
+	sess, _ = env.State.Load(sid)
+	if sess.Pin != "" || fj.calls() != calls+1 {
+		t.Fatalf("auto didn't release the pin: pin %q, calls %d", sess.Pin, fj.calls())
+	}
+	if effortTag("no tag here") != "" || effortTag("[Effort: MAX] please") != "max" || effortTag("[effort:ultra]") != "" {
+		t.Error("effortTag parsing")
+	}
+}
