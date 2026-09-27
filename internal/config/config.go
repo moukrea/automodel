@@ -98,7 +98,7 @@ func Default() *Config {
 		StateDir:                     state,
 		CacheTTL:                     Duration{time.Hour},
 		JevURL:                       "https://openrouter.ai/api/alpha/decisions",
-		JevTimeout:                   Duration{2 * time.Second},
+		JevTimeout:                   Duration{4 * time.Second},
 		StateBudgetTokens:            24000,
 		ThetaAct:                     0.6,
 		ThetaLow:                     0.35,
