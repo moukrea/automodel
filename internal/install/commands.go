@@ -21,7 +21,7 @@ const CommandMarker = "<!-- automodel -->"
 func (o Options) commandsDir() string { return filepath.Join(filepath.Dir(o.SettingsPath), "commands") }
 
 func (o Options) commands() map[string]string {
-	base := fmt.Sprintf("%s --config %s", o.Exe, o.ConfigPath)
+	base := fmt.Sprintf("%s --config %s", cmdArg(o.Exe), cmdArg(o.ConfigPath))
 	cmd := func(desc, hint, sub, args string) string {
 		h := ""
 		if hint != "" {

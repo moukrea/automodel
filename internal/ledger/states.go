@@ -7,10 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/moukrea/automodel/internal/flock"
 	"os"
 	"path/filepath"
 	"regexp"
-	"syscall"
 	"time"
 )
 
@@ -66,10 +66,11 @@ func (s States) Put(r StateRecord) error {
 		return err
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	unlock, err := flock.Lock(f)
+	if err != nil {
 		return err
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer unlock()
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return err
 	}
