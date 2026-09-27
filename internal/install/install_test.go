@@ -3,6 +3,7 @@ package install
 import (
 	"encoding/json"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -121,5 +122,27 @@ func TestRefreshLeavesOtherInstallsAlone(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(path); !strings.Contains(string(got), "CLAUDE_CODE_MAX_CONTEXT_TOKENS") {
 		t.Fatal("the owning install didn't refresh its entries")
+	}
+}
+
+// Paths with spaces are quoted for the shell, and the entries are still
+// recognized as this install's.
+func TestCommandsQuotePaths(t *testing.T) {
+	path := t.TempDir() + "/settings.json"
+	cfg := config.Default()
+	o := Options{Exe: "/home/J Doe/bin/automodel", ConfigPath: "/home/J Doe/.config/automodel/config.toml", SettingsPath: path, Log: func(string, ...any) {}}
+	if got := o.hookCmd("decide"); got != "'/home/J Doe/bin/automodel' --config '/home/J Doe/.config/automodel/config.toml' hook decide" && runtime.GOOS != "windows" {
+		t.Errorf("hook command %q", got)
+	}
+	if !owned(o.hookCmd("decide")) || !owned(o.statuslineCmd()) {
+		t.Error("quoted commands not recognized as automodel's")
+	}
+	s := NewObject()
+	merge(s, o, cfg)
+	if !ownedBy(s, o) {
+		t.Error("quoted settings not recognized as this install's")
+	}
+	if cmdArg("/home/u/.local/bin/automodel") != "/home/u/.local/bin/automodel" && runtime.GOOS != "windows" {
+		t.Error("plain path changed")
 	}
 }

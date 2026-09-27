@@ -49,11 +49,11 @@ const unitName = "automodel.service"
 
 // Marker identifies settings entries we own.
 func (o Options) hookCmd(name string) string {
-	return fmt.Sprintf("%s --config %s hook %s", o.Exe, o.ConfigPath, name)
+	return fmt.Sprintf("%s --config %s hook %s", cmdArg(o.Exe), cmdArg(o.ConfigPath), name)
 }
 
 func (o Options) statuslineCmd() string {
-	return fmt.Sprintf("%s --config %s statusline", o.Exe, o.ConfigPath)
+	return fmt.Sprintf("%s --config %s statusline", cmdArg(o.Exe), cmdArg(o.ConfigPath))
 }
 
 func owned(cmd string) bool {
@@ -545,7 +545,7 @@ func SeedCatalog(path string, shipped []byte, stateDir string) (bool, error) {
 // or one of its hooks calls automodel with this exact config. A refresh
 // never retargets settings that another install (or nobody) owns.
 func ownedBy(s *Object, o Options) bool {
-	mine := "--config " + o.ConfigPath + " "
+	mine := "--config " + cmdArg(o.ConfigPath) + " "
 	if sl, ok := s.Get("statusLine"); ok {
 		if slo, ok := sl.(*Object); ok {
 			if c, _ := slo.Get("command"); c != nil && strings.Contains(fmt.Sprint(c)+" ", mine) {
@@ -554,7 +554,8 @@ func ownedBy(s *Object, o Options) bool {
 		}
 	}
 	b, _ := json.Marshal(s)
-	return bytes.Contains(b, []byte(mine+"hook "))
+	hook, _ := json.Marshal(mine + "hook ") // as it appears inside a JSON string
+	return bytes.Contains(b, bytes.Trim(hook, `"`))
 }
 
 func Refresh(o Options, cfg *config.Config) error {
