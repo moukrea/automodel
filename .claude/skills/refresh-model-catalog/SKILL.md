@@ -46,19 +46,46 @@ the user's explicit approval.
    - new Jev version or Decisions API change.
 
 3. **Measurements**
+   - The primary benchmark (`meta.benchmark`/`benchmark_version`) sets tier
+     costs. Also record agentic-coding benchmarks as cross-checks, each under
+     its own `benchmark_version` (never mixed with the primary): e.g.
+     CursorBench (cost per task at list prices), Artificial Analysis' Coding
+     Agent Index (runs in Claude Code: the closest to real use), Terminal-Bench,
+     SWE-bench Verified/Pro, and the system-card numbers.
+     `frontier.py catalog.proposed.toml --version <name>` shows each.
+   - Record tokens and steps per task where published: a model cheaper per
+     token can cost **more per task** (more tokens, more turns). Say so.
    - Same benchmark version: add/update `[[measurements]]`.
    - New benchmark version: re-collect **all** active and candidate configs,
      then update `meta.benchmark_version`. Versions never compare.
    - A model without measurements may stay active for a niche, with an
      explicit `reason`, to be validated by the ledger.
 
-4. **Frontier** — on `catalog.proposed.toml`:
+4. **Frontier** — on `catalog.proposed.toml`, for the primary version and
+   each cross-check version:
    - run frontier.py; mark dominated models `status = "dominated"` with a
      reason that quotes numbers;
    - judge the quasi-dominated cases it lists (the tool doesn't decide them);
    - make `criteria` restrictive on steps with poor marginal returns;
    - cross-check with ledger data; when real usage contradicts the
-     benchmark, say so explicitly — the ledger wins for this user.
+     benchmark, say so explicitly — the ledger wins for this user;
+   - price this user's real traffic at the candidate's prices:
+     `automodel report --json` (`tokens_by_tier`) × the candidate's input,
+     output, cache read and cache write prices, then apply the candidate's
+     tokens/steps multiplier from the benchmarks. A lower list price that a
+     1.2–1.6× step multiplier cancels is not a saving.
+
+   **Admission rule for a new model or tier** (the owner's rule): a
+   (model, effort) config earns a tier only if, with numbers, it sits on the
+   cost/quality frontier against the current tiers **for the work that tier
+   would get** (agentic coding for main and subagent tiers), on the primary
+   benchmark *and* not contradicted by the agentic-coding cross-checks. If
+   it is worse at every effort, or costs more for the same work, it stays
+   `dominated` with a reason quoting the numbers. "Opus dominates everywhere"
+   is a valid outcome: record the figures and change no tier. For the main
+   scope also check structure: per-turn effort support (otherwise every
+   effort change rewrites the cache), cache-read price, and what a model
+   switch costs at a typical context (the whole context written again).
 
 5. **Tiers**
    - Keep the main session on one model (only effort varies): switching model
@@ -96,7 +123,9 @@ the user's explicit approval.
      enough) argue for a higher penalty; routine prompts kept high argue for
      a lower one. Report the evidence, change it only with approval.
 
-7. **Report to the user**
+7. **Report to the user** — also written to
+   `docs/research/YYYY-MM-<topic>.md` (sources with their dates, frontier
+   tables per version, per-scope verdicts, the diff, open questions):
    - summary of detected changes, with sources;
    - frontier table and marginal returns;
    - `diff -u catalog.toml catalog.proposed.toml`;
@@ -108,12 +137,27 @@ the user's explicit approval.
    and hooks hot-reload the catalog; nothing to restart.
 
 8. **Real-session check** after any change to `per_turn_effort`,
-   `long_context` or the betas: run a routed session (`claude --model jev`)
-   with three short prompts and read the usage lines of `ledger.jsonl`: from
-   the second prompt on, `cache_read_input_tokens` must cover the previous
-   request and `cache_creation_input_tokens` stay small (a few hundred). A
-   request that rewrites ~the whole conversation means the cache broke:
-   revert and report.
+   `long_context` or the betas: run a routed session with a few prompts and
+   read the usage lines of the ledger. A request that rewrites ~the whole
+   conversation means the cache broke: revert and report.
+   - **Isolate it.** Build a dev binary (`go build`, version `dev`: it never
+     self-updates nor touches settings) and run it with its own config
+     (`listen` on another port, `custom_model_id = "jevtest"`, its own
+     `state_dir`, `[update] auto = false`). Start Claude Code with
+     `claude --settings <file> --model jevtest`, the file setting
+     `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_MODEL_OPTION=jevtest` and the
+     hooks/statusline pointing at the dev binary and config. Never run a
+     released binary or `install` against the real `~/.claude/settings.json`.
+     Check the real settings' sha256 before and after.
+   - **Read it right.** Behind any custom `ANTHROPIC_BASE_URL` Claude Code
+     turns off its server-side message threads (it enables them only for
+     api.anthropic.com), so the first prompts of a fresh session rewrite
+     ~13k tokens even when nothing is wrong. Compare with the same prompts
+     routed as passthrough (`--model opus` through the same proxy) and judge
+     on prompts sent after the first minute, or on the ledger's cache hit
+     rate over real sessions (`automodel report`, ~98% is normal).
+     `AUTOMODEL_DUMP_DIR=<dir>` on the proxy writes every upstream request
+     (body and headers, credentials redacted) to diff two requests.
 
 9. **New Jev version** — never edit `meta.jev_model` directly:
    1. set `jev_shadow_model = "<new version>"` in the router config
