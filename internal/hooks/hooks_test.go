@@ -519,7 +519,7 @@ func TestProxyDownIsExplained(t *testing.T) {
 	env := setup(t, &fakeJev{})
 	env.Cfg.Listen = "127.0.0.1:1" // nothing listens there
 	restarted := 0
-	restart = func(context.Context) error { restarted++; return errors.New("no systemd") }
+	restart = func(context.Context, *config.Config) error { restarted++; return errors.New("no systemd") }
 	t.Cleanup(func() { restart = defaultRestart })
 	out := run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "hi"})
 	if out == nil || out.Decision != "block" || !strings.Contains(out.Reason, "127.0.0.1:1") || restarted != 1 {
@@ -546,7 +546,7 @@ func TestProxyRestartedByHook(t *testing.T) {
 		}
 		return errors.New("refused")
 	}
-	restart = func(context.Context) error { up = true; return nil }
+	restart = func(context.Context, *config.Config) error { up = true; return nil }
 	t.Cleanup(func() { restart, dial = defaultRestart, origDial })
 	if out := run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "hi"}); out != nil && out.Decision == "block" {
 		t.Fatalf("blocked after a successful restart: %+v", out)

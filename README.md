@@ -15,14 +15,32 @@ subscription.
 curl -fsSL https://raw.githubusercontent.com/moukrea/automodel/main/install.sh | sh
 ```
 
-Linux (systemd) or macOS (launchd). The script installs the binary in
+Linux or macOS. The script installs the binary in
 `~/.local/bin`, starts the local proxy, wires Claude Code (your
 `settings.json` is backed up first) and asks for your OpenRouter key. Then
-open `/model` in Claude Code and pick **Jev (auto)**.
+open `/model` in Claude Code and pick **Jev (auto)**. `automodel doctor`
+checks the whole setup, one line per check with the fix for each problem.
+
+The proxy runs as a systemd user service, or a launchd agent on macOS.
+Without a systemd user session (containers, WSL1, minimal distros) it runs as
+a background process that is not restarted after a reboot: `install` prints
+the line to add to `~/.profile` (`automodel start` does nothing when the
+proxy already runs).
+
+Packages, once published (they install only the binary; then run
+`automodel install` as your user). For apt and dnf, add the repository first
+as its README says:
+
+```sh
+brew install moukrea/tap/automodel      # macOS, Linux
+sudo apt install automodel              # Debian, Ubuntu: https://github.com/moukrea/apt-repo
+sudo dnf install automodel              # Fedora, RHEL: https://github.com/moukrea/rpm-repo
+```
 
 - Updates: the service installs new releases by itself (checked daily,
   applied when idle). `automodel update` does it now; `[update] auto = false`
-  in the config turns it off.
+  in the config turns it off. Package installs update through their package
+  manager instead, and the proxy restarts on the new binary by itself.
 - Uninstall: `automodel uninstall` (config and state are kept).
 - From source: `go build -o ~/.local/bin/automodel ./cmd/automodel && automodel install`.
 
@@ -49,8 +67,9 @@ statusLine ─▶ automodel statusline:  jev → opus-5.5·xhigh +ultracode 0.82
   it runs detached behind a cache, so a slow script never delays the
   segment: Claude Code cancels a statusline run whenever the next update
   arrives);
-- installs and starts the service (systemd user unit `automodel.service`, or
-  a launchd agent on macOS), then checks
+- installs and starts the service (systemd user unit `automodel.service`, a
+  launchd agent on macOS, or else a background process with a pidfile and
+  `proxy.log` in the state dir), then checks
   the proxy is listening **before** touching settings. **If the proxy is down,
   Claude Code no longer works** while `ANTHROPIC_BASE_URL` points at it;
 - backs up `~/.claude/settings.json` (`settings.json.automodel-backup-*`) and

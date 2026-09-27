@@ -54,3 +54,19 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Homebrew tap, apt and rpm repositories. Each part is skipped with a
+      # notice while its secrets are missing (RELEASE_TOKEN; GPG_PRIVATE_KEY
+      # and GPG_KEY_ID), so the release itself never depends on them.
+      - name: Publish packages
+        if: steps.version.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
+        run: |
+          if [ -n "$RELEASE_TOKEN" ] && [ -n "$GPG_PRIVATE_KEY" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c rpm
+          fi
+          scripts/publish-packages.sh "${TAG#v}" dist
