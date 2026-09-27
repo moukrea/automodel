@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -76,5 +77,49 @@ func TestFirstPartyOnlyForAnthropicUpstream(t *testing.T) {
 	merge(s, o, cfg)
 	if _, ok := s.Obj("env").Get(firstPartyEnv); ok {
 		t.Errorf("%s kept for a third-party upstream", firstPartyEnv)
+	}
+}
+
+func TestRefreshLeavesOtherInstallsAlone(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/settings.json"
+	cfg := config.Default()
+	mine := Options{Exe: "/u/bin/automodel", ConfigPath: "/u/.config/automodel/config.toml", SettingsPath: path, Log: func(string, ...any) {}}
+	s, _ := ParseObject([]byte(sample))
+	merge(s, mine, cfg)
+	b, _ := json.Marshal(s)
+	os.WriteFile(path, b, 0o600)
+
+	// A second instance (another config) must not retarget the settings.
+	other := mine
+	other.ConfigPath = "/tmp/test/config.toml"
+	cfg2 := config.Default()
+	cfg2.Listen = "127.0.0.1:8798"
+	if err := Refresh(other, cfg2); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != string(b) || strings.Contains(string(got), "8798") {
+		t.Fatalf("another install rewrote the settings:\n%s", got)
+	}
+	// Settings nobody installed are left alone too.
+	os.WriteFile(path, []byte(sample), 0o600)
+	if err := Refresh(mine, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != sample {
+		t.Fatal("refresh installed automodel into settings it didn't own")
+	}
+	// The owning install still refreshes its own entries.
+	s, _ = ParseObject([]byte(sample))
+	merge(s, mine, cfg)
+	s.Obj("env").Delete("CLAUDE_CODE_MAX_CONTEXT_TOKENS")
+	b, _ = json.Marshal(s)
+	os.WriteFile(path, b, 0o600)
+	if err := Refresh(mine, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); !strings.Contains(string(got), "CLAUDE_CODE_MAX_CONTEXT_TOKENS") {
+		t.Fatal("the owning install didn't refresh its entries")
 	}
 }

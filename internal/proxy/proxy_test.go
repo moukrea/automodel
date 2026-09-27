@@ -69,6 +69,7 @@ func setup(t *testing.T) (*Proxy, *upstream, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(p.bg.Wait)
 	ps := httptest.NewServer(p)
 	t.Cleanup(ps.Close)
 	return p, up, ps
@@ -371,6 +372,7 @@ func TestPerTurnEffortRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(p.bg.Wait)
 	ps := httptest.NewServer(p)
 	defer ps.Close()
 	p.State.Update("sess-t", func(s *state.Session) bool {

@@ -2,9 +2,12 @@ package hooks
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -128,6 +131,14 @@ func setup(t *testing.T, fj *fakeJev) *router.Env {
 	cfg.StateDir = filepath.Join(home, "state")
 	cfg.Ledger = filepath.Join(home, "state", "ledger.jsonl")
 	cfg.Catalog = "../../catalog.toml"
+	// A live listener stands in for the proxy the hooks check first.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	cfg.Listen = ln.Addr().String()
+	t.Setenv("ANTHROPIC_BASE_URL", "")
 	c, is, err := catalog.Load(cfg.Catalog, time.Now(), 3650)
 	if err != nil || len(is.Errors()) > 0 {
 		t.Fatal(err, is)
@@ -485,5 +496,46 @@ func TestWorkflowHook(t *testing.T) {
 	}
 	if out.HookSpecificOutput.UpdatedInput["args"] == nil {
 		t.Error("other inputs must be preserved")
+	}
+}
+
+func TestProxyDownIsExplained(t *testing.T) {
+	env := setup(t, &fakeJev{})
+	env.Cfg.Listen = "127.0.0.1:1" // nothing listens there
+	restarted := 0
+	restart = func(context.Context) error { restarted++; return errors.New("no systemd") }
+	t.Cleanup(func() { restart = defaultRestart })
+	out := run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "hi"})
+	if out == nil || out.Decision != "block" || !strings.Contains(out.Reason, "127.0.0.1:1") || restarted != 1 {
+		t.Fatalf("decide with the proxy down: %+v (restarts %d)", out, restarted)
+	}
+	out = run(t, env, "session-start", map[string]any{"session_id": "s1"})
+	if out == nil || out.SystemMessage == "" || out.Decision != "" {
+		t.Fatalf("session-start with the proxy down: %+v", out)
+	}
+	// Sessions sent elsewhere are none of our business.
+	t.Setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+	if out := run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "hi"}); out != nil && out.Decision == "block" {
+		t.Fatalf("blocked a session that doesn't use the proxy: %+v", out)
+	}
+}
+
+func TestProxyRestartedByHook(t *testing.T) {
+	env := setup(t, &fakeJev{})
+	up := false
+	origDial := dial
+	dial = func(string, time.Duration) error {
+		if up {
+			return nil
+		}
+		return errors.New("refused")
+	}
+	restart = func(context.Context) error { up = true; return nil }
+	t.Cleanup(func() { restart, dial = defaultRestart, origDial })
+	if out := run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "hi"}); out != nil && out.Decision == "block" {
+		t.Fatalf("blocked after a successful restart: %+v", out)
+	}
+	if !up {
+		t.Fatal("no restart attempted")
 	}
 }

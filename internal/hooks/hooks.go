@@ -40,6 +40,11 @@ type Input struct {
 
 type Output struct {
 	HookSpecificOutput *Specific `json:"hookSpecificOutput,omitempty"`
+	// Decision "block" stops a prompt (UserPromptSubmit), with Reason
+	// shown to the user; SystemMessage is a notice (SessionStart).
+	Decision      string `json:"decision,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	SystemMessage string `json:"systemMessage,omitempty"`
 }
 
 type Specific struct {
@@ -84,6 +89,17 @@ func Run(name string, env *router.Env, stdin io.Reader, stdout io.Writer) error 
 			log.Printf("hook %s: panic: %v", name, r)
 		}
 	}()
+	switch name {
+	case "decide", "session-start":
+		if msg := proxyProblem(context.Background(), env); msg != "" {
+			log.Printf("hook %s: %s", name, msg)
+			out := &Output{SystemMessage: msg}
+			if name == "decide" {
+				out = &Output{Decision: "block", Reason: msg}
+			}
+			return json.NewEncoder(stdout).Encode(out)
+		}
+	}
 	out, err := h(context.Background(), env, &in)
 	if err != nil {
 		log.Printf("hook %s (%s): %v", name, in.SessionID, err)

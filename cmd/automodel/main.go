@@ -365,7 +365,9 @@ func recordInstalled(cfg *config.Config) {
 // while the user hasn't edited it.
 func afterUpdate(cfg *config.Config) {
 	prev, _ := os.ReadFile(installedMark(cfg))
-	if strings.TrimSpace(string(prev)) == version || version == "dev" {
+	// A config that was never installed (a second proxy, a test instance)
+	// must not touch Claude Code's settings: they belong to another install.
+	if len(prev) == 0 || strings.TrimSpace(string(prev)) == version || version == "dev" {
 		return
 	}
 	o, err := installOptions(cfg, nil)

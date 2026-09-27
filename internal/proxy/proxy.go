@@ -48,6 +48,7 @@ type Proxy struct {
 	lastReq  atomic.Int64 // unix nanoseconds
 
 	mu       sync.Mutex
+	bg       sync.WaitGroup             // background state writes (Wait in tests)
 	touched  map[string]time.Time       // session -> last state write
 	bindings map[string]*state.Decision // agent ID -> decision (nil: none)
 }
@@ -427,7 +428,9 @@ func (p *Proxy) touch(sessionID string, fn func(*state.Session)) {
 	}
 	p.touched[sessionID] = time.Now()
 	p.mu.Unlock()
+	p.bg.Add(1)
 	go func() {
+		defer p.bg.Done()
 		if _, err := p.State.Update(sessionID, func(s *state.Session) bool { fn(s); return true }); err != nil {
 			log.Printf("state %s: %v", short(sessionID), err)
 		}

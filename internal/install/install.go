@@ -446,10 +446,30 @@ func SeedCatalog(path string, shipped []byte, stateDir string) (bool, error) {
 // Refresh re-applies the settings entries after a self-update (a new
 // release may add hooks or environment variables). Settings are only
 // rewritten when they change; the service is left alone.
+// ownedBy reports whether settings already run this install: its statusline
+// or one of its hooks calls automodel with this exact config. A refresh
+// never retargets settings that another install (or nobody) owns.
+func ownedBy(s *Object, o Options) bool {
+	mine := "--config " + o.ConfigPath + " "
+	if sl, ok := s.Get("statusLine"); ok {
+		if slo, ok := sl.(*Object); ok {
+			if c, _ := slo.Get("command"); c != nil && strings.Contains(fmt.Sprint(c)+" ", mine) {
+				return true
+			}
+		}
+	}
+	b, _ := json.Marshal(s)
+	return bytes.Contains(b, []byte(mine+"hook "))
+}
+
 func Refresh(o Options, cfg *config.Config) error {
 	settings, raw, err := readSettings(o.SettingsPath)
 	if err != nil || raw == nil {
 		return err
+	}
+	if !ownedBy(settings, o) {
+		o.Log("settings %s point at another automodel install (or none): left untouched", o.SettingsPath)
+		return nil
 	}
 	before, _ := json.Marshal(settings)
 	merge(settings, o, cfg)
