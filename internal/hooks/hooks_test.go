@@ -745,3 +745,18 @@ func TestModelTagPins(t *testing.T) {
 		t.Fatalf("model:auto didn't release: %q %q, calls %d", s.Pin, s.PinModel, fj.calls()-calls)
 	}
 }
+
+func TestOwnCommandsNotRouted(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "What does 409 mean?", "cwd": cwd})
+	calls := fj.calls()
+	for _, p := range []string{"/why", "/flag medium too simple", "session x\n<!-- automodel -->\nShow the output above"} {
+		run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd})
+	}
+	if fj.calls() != calls {
+		t.Fatalf("automodel's own commands were routed (%d calls)", fj.calls()-calls)
+	}
+}

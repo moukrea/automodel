@@ -12,7 +12,11 @@ import (
 // settings.json (~/.claude/commands). Claude Code substitutes
 // ${CLAUDE_SESSION_ID} and runs the !`...` line before the prompt is sent.
 
-const commandMarker = "<!-- automodel -->"
+const commandMarker = CommandMarker
+
+// CommandMarker tags automodel's own slash commands (/why, /flag): the
+// hooks don't route their prompts.
+const CommandMarker = "<!-- automodel -->"
 
 func (o Options) commandsDir() string { return filepath.Join(filepath.Dir(o.SettingsPath), "commands") }
 

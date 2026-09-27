@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/moukrea/automodel/internal/catalog"
+	"github.com/moukrea/automodel/internal/install"
 	"github.com/moukrea/automodel/internal/repo"
 	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/state"
@@ -37,7 +38,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	if err != nil {
 		return nil, err
 	}
-	synthetic := transcript.IsSynthetic(in.Prompt)
+	synthetic := transcript.IsSynthetic(in.Prompt) || ownCommand(in.Prompt)
 
 	var tr *transcript.Info
 	if sess.Model == "" {
@@ -406,6 +407,19 @@ var moreThinkingRE = regexp.MustCompile(`(?i)\b(think (harder|more|deeply|carefu
 // asksMoreThinking reports whether a prompt explicitly asks for more
 // thinking.
 func asksMoreThinking(prompt string) bool { return moreThinkingRE.MatchString(prompt) }
+
+// ownCommand reports automodel's own slash commands (/why, /flag): they
+// only print what automodel knows, so they are neither routed nor logged,
+// and /flag keeps pointing at the user's real last prompt.
+func ownCommand(prompt string) bool {
+	p := strings.TrimSpace(prompt)
+	for _, c := range []string{"/why", "/flag"} {
+		if p == c || strings.HasPrefix(p, c+" ") {
+			return true
+		}
+	}
+	return strings.Contains(prompt, install.CommandMarker)
+}
 
 var modelTagRE = regexp.MustCompile(`(?i)\[model:\s*([a-z0-9._-]+)\s*\]`)
 
