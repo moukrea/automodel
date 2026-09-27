@@ -43,6 +43,7 @@ Usage:
   automodel hook <name>                run a hook (%s)
   automodel statusline                 render the statusline segment
   automodel report [--json] [--since 7d]
+  automodel why [--session id] [-n 5] [--follow]   explain the latest routing decisions
   automodel catalog check [--json] [--catalog path]
   automodel eval [--catalog path] [--cases file] [--format score|choice] [--json]
                                        measure Jev's routing answers on labeled cases
@@ -115,6 +116,8 @@ func run(cfgPath, cmd string, args []string) error {
 		return statusline.Run(env, os.Stdin, os.Stdout)
 	case "report":
 		return report(cfg, args)
+	case "why":
+		return why(cfg, args)
 	case "catalog":
 		return catalogCmd(cfg, args)
 	case "eval":
@@ -232,6 +235,41 @@ func report(cfg *config.Config, args []string) error {
 	}
 	rep.Markdown(os.Stdout)
 	return nil
+}
+
+func why(cfg *config.Config, args []string) error {
+	fs := flag.NewFlagSet("why", flag.ExitOnError)
+	session := fs.String("session", "", "session ID or prefix (default: the most recent)")
+	n := fs.Int("n", 5, "decisions to show")
+	follow := fs.Bool("follow", false, "keep printing new decisions")
+	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
+	fs.Parse(args)
+	o := ledger.WhyOptions{Session: *session, N: *n}
+	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
+		o.Rank = func(scope, tier string) int {
+			if t := c.Tier(scope, tier); t != nil {
+				return t.Rank
+			}
+			return 1 << 20
+		}
+	}
+	all, err := ledger.Decisions(*ledgerPath)
+	if err != nil {
+		return err
+	}
+	sid, ds := ledger.SessionDecisions(all, *session, *n)
+	if len(ds) == 0 {
+		return errors.New("no decision recorded yet (is the session on Jev?)")
+	}
+	fmt.Printf("session %s · last %d decisions\n\n", sid[:min(8, len(sid))], len(ds))
+	ledger.WriteWhy(os.Stdout, ds, o)
+	if !*follow {
+		return nil
+	}
+	fmt.Println()
+	_, done := ledger.SessionDecisions(all, sid, 0)
+	stop := make(chan struct{})
+	return ledger.FollowFrom(*ledgerPath, sid, len(done), o, os.Stdout, stop)
 }
 
 func catalogCmd(cfg *config.Config, args []string) error {
