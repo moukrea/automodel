@@ -45,7 +45,7 @@ Usage:
   automodel hook <name>                run a hook (%s)
   automodel statusline                 render the statusline segment
   automodel report [--json] [--since 7d] [--baseline xhigh]
-  automodel why [--session id] [-n 5] [--follow]   explain the latest routing decisions
+  automodel why [--session id] [-n 5] [--scope main] [--follow]   explain the latest routing decisions
   automodel catalog check [--json] [--catalog path]
   automodel eval [--catalog path] [--cases file] [--format score|choice] [--json]
                                        measure Jev's routing answers on labeled cases
@@ -272,6 +272,7 @@ func why(cfg *config.Config, args []string) error {
 	session := fs.String("session", "", "session ID or prefix (default: the most recent)")
 	n := fs.Int("n", 5, "decisions to show")
 	follow := fs.Bool("follow", false, "keep printing new decisions")
+	scope := fs.String("scope", "", "only this scope: main or subagent")
 	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
 	fs.Parse(args)
 	o := ledger.WhyOptions{Session: *session, N: *n}
@@ -286,6 +287,15 @@ func why(cfg *config.Config, args []string) error {
 	all, err := ledger.Decisions(*ledgerPath)
 	if err != nil {
 		return err
+	}
+	if *scope != "" {
+		kept := all[:0]
+		for _, d := range all {
+			if d.Scope == *scope {
+				kept = append(kept, d)
+			}
+		}
+		all = kept
 	}
 	sid, ds := ledger.SessionDecisions(all, *session, *n)
 	if len(ds) == 0 {

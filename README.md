@@ -208,7 +208,7 @@ automodel catalog check [--json]                       # validation (non-zero ex
 ## Measurement
 
 ```sh
-automodel why [--session id] [-n 5] [--follow]  # what Jev answered for the last decisions, and why
+automodel why [--session id] [-n 5] [--scope main] [--follow]  # what Jev answered for the last decisions, and why
 automodel report [--since 7d] [--json] [--baseline xhigh]
 automodel eval [--catalog path] [--format score|choice]    # Jev on labeled cases: accuracy, confidence, calibration
 ```
