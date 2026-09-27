@@ -4,6 +4,7 @@ package update
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bufio"
 	"bytes"
 	"compress/gzip"
@@ -16,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -99,13 +101,26 @@ func parse(v string) ([3]int, bool) {
 	return out, true
 }
 
-// ArchiveName is the release asset for this platform.
+// ArchiveName is the release asset for this platform: a zip on Windows, a
+// tar.gz elsewhere.
 func ArchiveName(tag string) string {
-	return fmt.Sprintf("automodel_%s_%s_%s.tar.gz", strings.TrimPrefix(tag, "v"), runtime.GOOS, runtime.GOARCH)
+	ext := ".tar.gz"
+	if runtime.GOOS == "windows" {
+		ext = ".zip"
+	}
+	return fmt.Sprintf("automodel_%s_%s_%s%s", strings.TrimPrefix(tag, "v"), runtime.GOOS, runtime.GOARCH, ext)
+}
+
+// binName is the binary's name in the archive.
+func binName() string {
+	if runtime.GOOS == "windows" {
+		return "automodel.exe"
+	}
+	return "automodel"
 }
 
 // Apply downloads the release archive for this platform, checks its SHA-256
-// against checksums.txt, and atomically replaces exe.
+// against checksums.txt, and replaces exe (atomically outside Windows).
 func Apply(ctx context.Context, rel *Release, exe string) error {
 	name := ArchiveName(rel.Tag)
 	var archiveURL, sumsURL string
@@ -142,7 +157,7 @@ func Apply(ctx context.Context, rel *Release, exe string) error {
 	if hex.EncodeToString(sum[:]) != want {
 		return errors.New("checksum mismatch: download refused")
 	}
-	bin, err := extract(archive, "automodel")
+	bin, err := extract(archive, binName())
 	if err != nil {
 		return err
 	}
@@ -150,8 +165,12 @@ func Apply(ctx context.Context, rel *Release, exe string) error {
 	if err := os.WriteFile(tmp, bin, 0o755); err != nil {
 		return err
 	}
-	return os.Rename(tmp, exe)
+	return replace(tmp, exe)
 }
+
+// RemoveOld deletes the binary a Windows update moved aside, once the
+// process that ran it is gone (nothing to do elsewhere).
+func RemoveOld(exe string) { os.Remove(exe + ".old") }
 
 func fetch(ctx context.Context, url string, max int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -170,6 +189,9 @@ func fetch(ctx context.Context, url string, max int64) ([]byte, error) {
 }
 
 func extract(archive []byte, name string) ([]byte, error) {
+	if bytes.HasPrefix(archive, []byte("PK\x03\x04")) {
+		return extractZip(archive, name)
+	}
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
 		return nil, err
@@ -187,4 +209,23 @@ func extract(archive []byte, name string) ([]byte, error) {
 			return io.ReadAll(io.LimitReader(tr, 200<<20))
 		}
 	}
+}
+
+func extractZip(archive []byte, name string) ([]byte, error) {
+	zr, err := zip.NewReader(bytes.NewReader(archive), int64(len(archive)))
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range zr.File {
+		if path.Base(f.Name) != name || f.FileInfo().IsDir() {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		defer rc.Close()
+		return io.ReadAll(io.LimitReader(rc, 200<<20))
+	}
+	return nil, fmt.Errorf("%s not found in the archive", name)
 }

@@ -16,12 +16,12 @@ import (
 	"github.com/moukrea/automodel/internal/update"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/moukrea/automodel/internal/catalog"
@@ -38,6 +38,12 @@ import (
 )
 
 var version = "dev"
+
+// servingPidFile is the detached proxy's pidfile, kept right across restarts.
+var servingPidFile string
+
+// restartedEnv marks a proxy started by the one it replaces.
+const restartedEnv = "AUTOMODEL_RESTARTED"
 
 const usage = `automodel — automatic model/effort routing for Claude Code via Jev
 
@@ -190,6 +196,8 @@ func serve(cfg *config.Config, args []string) error {
 	log.Printf("automodel %s listening on %s → %s (model %q, catalog %s)", version, cfg.Listen, cfg.Upstream, cfg.CustomModelID, cfg.Catalog)
 	afterUpdate(cfg)
 	exe := install.Self()
+	update.RemoveOld(exe)
+	servingPidFile = install.PidFile(cfg)
 	switch {
 	case upgradeCmd(exe) != "":
 		go watchBinary(exe, p)
@@ -197,7 +205,24 @@ func serve(cfg *config.Config, args []string) error {
 		go autoUpdate(cfg, p, exe)
 	}
 	srv := &http.Server{Addr: cfg.Listen, Handler: p, ReadHeaderTimeout: 30 * time.Second}
-	return srv.ListenAndServe()
+	ln, err := listen(cfg.Listen)
+	if err != nil {
+		return err
+	}
+	return srv.Serve(ln)
+}
+
+// listen binds addr. A proxy restarted by a new process (Windows, see
+// reexec) waits for the old one to release the port.
+func listen(addr string) (net.Listener, error) {
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		ln, err := net.Listen("tcp", addr)
+		if err == nil || os.Getenv(restartedEnv) == "" || time.Now().After(deadline) {
+			return ln, err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func evalCmd(cfg *config.Config, args []string) error {
@@ -630,8 +655,7 @@ func watchBinary(exe string, p *proxy.Proxy) {
 
 // restart runs exe in place of the proxy once it is idle. Under systemd or
 // launchd an exit is enough (they restart it); otherwise (a detached proxy,
-// or `serve` run by hand) the process re-executes itself, keeping its pid so
-// the pidfile stays right.
+// or `serve` run by hand) the process re-executes itself (see reexec).
 func restart(p *proxy.Proxy, exe string) {
 	for !p.Idle(10 * time.Second) {
 		time.Sleep(2 * time.Second)
@@ -640,7 +664,10 @@ func restart(p *proxy.Proxy, exe string) {
 	case install.Systemd, install.Launchd:
 		os.Exit(0)
 	}
-	err := syscall.Exec(exe, append([]string{exe}, os.Args[1:]...), os.Environ())
+	err := reexec(exe)
+	if err == nil {
+		os.Exit(0)
+	}
 	log.Printf("restart on %s: %v", exe, err)
 	os.Exit(1)
 }

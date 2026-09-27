@@ -11,8 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/moukrea/automodel/internal/flock"
 )
 
 // Decision is the tier applied to a scope (main session or one subagent).
@@ -226,11 +227,12 @@ func lock(path string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	unlock, err := flock.Lock(f)
+	if err != nil {
 		f.Close()
 		return nil, err
 	}
-	return func() { syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
+	return func() { unlock(); f.Close() }, nil
 }
 
 // Prune removes session files and prompt index entries untouched for longer

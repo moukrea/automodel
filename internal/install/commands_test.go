@@ -36,8 +36,9 @@ func TestSlashCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"allowed-tools: Bash(/x/automodel --config " + cfgPath + " why *)",
-		"!`/x/automodel --config " + cfgPath + ` why --session "${CLAUDE_SESSION_ID}" -n 3`} {
+	cfg := cmdArg(cfgPath)
+	for _, want := range []string{"allowed-tools: Bash(/x/automodel --config " + cfg + " why *)",
+		"!`/x/automodel --config " + cfg + ` why --session "${CLAUDE_SESSION_ID}" -n 3`} {
 		if !strings.Contains(string(why), want) {
 			t.Errorf("why.md lacks %q:\n%s", want, why)
 		}

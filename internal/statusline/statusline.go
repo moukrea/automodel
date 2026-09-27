@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/moukrea/automodel/internal/router"
@@ -140,18 +138,12 @@ func chain(stateDir, command, sessionID string, stdin []byte) string {
 	in, out, running := filepath.Join(dir, id+".in"), filepath.Join(dir, id+".out"), filepath.Join(dir, id+".running")
 	if st, err := os.Stat(running); err != nil || time.Since(st.ModTime()) > 3*time.Second {
 		if os.WriteFile(in, stdin, 0o600) == nil && os.WriteFile(running, nil, 0o600) == nil {
-			tmp := out + ".tmp"
-			script := fmt.Sprintf("(%s) < %q > %q 2>/dev/null; mv -f %q %q; rm -f %q", command, in, tmp, tmp, out, running)
-			cmd := exec.Command("sh", "-c", script)
-			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-			if cmd.Start() == nil {
-				cmd.Process.Release()
-			}
+			startChain(command, in, out+".tmp", out, running)
 		}
 	}
 	for deadline := time.Now().Add(1500 * time.Millisecond); ; time.Sleep(20 * time.Millisecond) {
 		if b, err := os.ReadFile(out); err == nil {
-			return strings.TrimRight(string(b), "\n")
+			return strings.TrimRight(string(b), "\r\n")
 		}
 		if time.Now().After(deadline) {
 			return ""

@@ -72,7 +72,7 @@ func proxyProblem(ctx context.Context, env *router.Env) string {
 	fix := "systemctl --user restart automodel (logs: journalctl --user -u automodel)"
 	if runtime.GOOS == "darwin" {
 		fix = "launchctl kickstart -k gui/$(id -u)/com.github.moukrea.automodel"
-	} else if _, err := os.Stat(install.PidFile(env.Cfg)); err == nil {
+	} else if _, err := os.Stat(install.PidFile(env.Cfg)); err == nil || runtime.GOOS == "windows" {
 		fix = "automodel start (log: " + install.LogFile(env.Cfg) + ")"
 	}
 	return fmt.Sprintf("automodel's local proxy (%s) is not answering, so Claude Code can't reach the API. "+

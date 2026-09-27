@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -128,8 +129,8 @@ func TestLedgerNotWritable(t *testing.T) {
 	ro := filepath.Join(t.TempDir(), "ro")
 	os.Mkdir(ro, 0o500)
 	e.Cfg.Ledger = filepath.Join(ro, "ledger.jsonl")
-	if os.Geteuid() == 0 {
-		t.Skip("root writes anywhere")
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("root writes anywhere; Windows ignores directory permission bits")
 	}
 	if r := find(t, Run(e), "ledger"); r.Status != Fail {
 		t.Errorf("ledger: %s %s", r.Status, r.Detail)

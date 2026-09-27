@@ -129,6 +129,10 @@ func TestDominates(t *testing.T) {
 // The skill's frontier.py must apply the same rules as the Go validator.
 func TestFrontierPyAgrees(t *testing.T) {
 	py, err := exec.LookPath("python3")
+	if err == nil {
+		// Windows may only have the Microsoft Store's python3 stub.
+		err = exec.Command(py, "--version").Run()
+	}
 	if err != nil {
 		t.Skip("python3 not found")
 	}
@@ -137,7 +141,9 @@ func TestFrontierPyAgrees(t *testing.T) {
 	files = append(files, "../../catalog.toml")
 	for _, f := range files {
 		t.Run(filepath.Base(f), func(t *testing.T) {
-			out, _ := exec.Command(py, script, f, "--json", "--today", "2026-09-26").Output()
+			cmd := exec.Command(py, script, f, "--json", "--today", "2026-09-26")
+			cmd.Env = append(os.Environ(), "PYTHONUTF8=1") // UTF-8 stdout on Windows too
+			out, _ := cmd.Output()
 			var r struct {
 				Errors, Warnings []Issue
 			}

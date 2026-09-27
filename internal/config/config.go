@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -198,7 +199,9 @@ func (c *Config) APIKey() string {
 
 // KeyFileTooOpen reports a config file holding a key that others can read.
 func (c *Config) KeyFileTooOpen() bool {
-	if c.OpenRouterAPIKey == "" || c.path == "" {
+	// Windows has no mode bits (Perm is always 0666 or 0444): the file is
+	// in the user's profile, which its ACL keeps private.
+	if c.OpenRouterAPIKey == "" || c.path == "" || runtime.GOOS == "windows" {
 		return false
 	}
 	st, err := os.Stat(c.path)
