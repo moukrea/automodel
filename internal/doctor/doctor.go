@@ -192,9 +192,12 @@ func (e Env) settings() []Result {
 	}
 	out = append(out, list("env", "entries in place", "missing or changed: ", env, fix))
 	out = append(out, list("hooks", "all in place", "missing or for another binary: ", r.Hooks, fix))
-	if r.Statusline {
+	switch r.StatuslineBy {
+	case "automodel":
 		out = append(out, Result{OK, "statusline", "automodel segment set", ""})
-	} else {
+	case "agentline":
+		out = append(out, Result{OK, "statusline", "agentline shows the automodel segment", ""})
+	default:
 		out = append(out, Result{Fail, "statusline", "not the automodel statusline", fix})
 	}
 	return out

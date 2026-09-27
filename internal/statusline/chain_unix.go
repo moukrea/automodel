@@ -4,6 +4,7 @@ package statusline
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -14,6 +15,7 @@ import (
 func startChain(command, in, tmp, out, running string) {
 	script := fmt.Sprintf("(%s) < %q > %q 2>/dev/null; mv -f %q %q; rm -f %q", command, in, tmp, tmp, out, running)
 	cmd := exec.Command("sh", "-c", script)
+	cmd.Env = append(os.Environ(), ChainedEnv+"=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if cmd.Start() == nil {
 		cmd.Process.Release()
