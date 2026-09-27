@@ -71,6 +71,11 @@ type Request struct {
 	// Warm turns (the cache is intact): Current is the decision in force,
 	// SwitchCost the dollar cost of moving to a tier (cache rebuild), Scale
 	// the dollars per catalog cost unit of the work ahead.
+	// Signals the user gave (interrupted turn, asked for more thinking);
+	// MinTier is a floor they imply.
+	Signals map[string]any
+	MinTier string
+
 	Warm       bool
 	Current    *state.Decision
 	SwitchCost func(*catalog.Tier) float64
@@ -104,6 +109,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	rec := ledger.Decision{
 		TS: start, Kind: "decision", SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
 		AgentType: req.AgentType, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
+		Signals: req.Signals,
 	}
 	if cur != nil {
 		rec.From = cur.ID
@@ -124,7 +130,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 
 	// A warm switch has to pay back its cost: when no answer could, Jev
 	// is not asked at all.
-	if cur != nil && f.CostAware && req.SwitchCost != nil {
+	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" {
 		// Modes flip for free but wait for the next free moment then.
 		if g := policy.MaxGain(c, req.Scope, cur, req.SwitchCost, params); g <= 0 {
 			rec.Skipped = true
@@ -263,10 +269,14 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	c, f := e.Catalog, e.Cfg.Features
 	tier, pk := e.pick(req, rd, cur, params)
 	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context)
+	floor := false
+	if min := c.Tier(req.Scope, req.MinTier); min != nil && tier.Rank < min.Rank {
+		tier, floor = min, true
+	}
 	mode := e.mode(req, rd, tier)
 	v := Verdict{Tier: tier, Mode: mode, Pick: pk}
-	if cur == nil {
-		return v
+	if cur == nil || floor {
+		return v // the user asked for it: no warm gate
 	}
 	curMode := req.Current.Mode
 	cont := rd.continues != nil && *rd.continues >= c.Meta.ContinuesThreshold()

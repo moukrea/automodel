@@ -634,3 +634,41 @@ func TestRepoPolicyPrivacyAndModes(t *testing.T) {
 		t.Fatalf("disabled mode used: %+v", s.Main)
 	}
 }
+
+func TestUserSignals(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	write := func(lines ...string) { os.WriteFile(tp, []byte(strings.Join(lines, "\n")+"\n"), 0o600) }
+	u := func(text string) string {
+		return `{"type":"user","message":{"role":"user","content":[{"type":"text","text":` + strconvQuote(text) + `}]}}`
+	}
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd, "transcript_path": tp}) }
+
+	write(u("What does 409 mean?"))
+	prompt("What does 409 mean?")
+	// The user stopped the next turn, then asks again: Jev is told.
+	write(u("What does 409 mean?"), u("Explain the checkout flow"), u("[Request interrupted by user]"), u("Explain the checkout flow, in detail"))
+	prompt("Explain the checkout flow, in detail")
+	st := fj.last().State.(map[string]any)
+	if sig, _ := st["user_signals"].(map[string]any); sig["previous_turn_interrupted"] != true {
+		t.Fatalf("interruption not signalled: %v", st["user_signals"])
+	}
+	for _, p := range st["recent_prompts"].([]any) {
+		if strings.Contains(p.(string), "interrupted") {
+			t.Fatal("the interruption marker was sent as a prompt")
+		}
+	}
+	// "Think harder": at least one tier up, even if Jev says low.
+	sess, _ := env.State.Load("s1")
+	before := sess.Main.Tier
+	prompt("Hmm, think harder about the retry path")
+	sess, _ = env.State.Load("s1")
+	if sess.Main.Tier == before || sess.Main.Tier == "low" {
+		t.Fatalf("think harder didn't raise the tier: %s → %s", before, sess.Main.Tier)
+	}
+}
+
+func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }

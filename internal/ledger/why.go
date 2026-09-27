@@ -156,6 +156,12 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	fmt.Fprintf(w, "%s · confidence %.2f\n", line, d.Confidence)
 
 	var why []string
+	if d.Signals["asks_more_thinking"] == true {
+		why = append(why, "you asked for more thinking: one tier up at least")
+	}
+	if d.Signals["previous_turn_interrupted"] == true {
+		why = append(why, "the previous turn was interrupted")
+	}
 	if d.KeepReason != "" {
 		why = append(why, d.KeepReason)
 	}

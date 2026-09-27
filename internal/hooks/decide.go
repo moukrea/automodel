@@ -229,7 +229,7 @@ func workScale(env *router.Env, s *state.Session) float64 {
 	return k * h
 }
 
-func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript.Info, signals *state.RepoSignals, trigger string) router.Request {
+func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript.Info, repoSignals *state.RepoSignals, trigger string) router.Request {
 	budget := env.Budget(catalog.ScopeMain)
 	phase := map[string]string{"initial": "initial", "compact": "post_compact", "cold": "resumed", "warm": "warm"}[trigger]
 	reserve := 1500
@@ -238,6 +238,10 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	}
 	left := budget - reserve
 	st := map[string]any{"phase": phase}
+	signals := map[string]any{}
+	if asksMoreThinking(in.Prompt) {
+		signals["asks_more_thinking"] = true
+	}
 	task := tokens.Truncate(in.Prompt, left/3)
 	st["task"] = task
 	left -= tokens.Estimate(task)
@@ -255,6 +259,10 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		prev := tr.UserPrompts
 		if n := len(prev); n > 0 && strings.TrimSpace(prev[n-1]) == strings.TrimSpace(in.Prompt) {
 			prev = prev[:n-1]
+		}
+		// The last turn was stopped by the user: likely the wrong effort.
+		if tr.Interrupted && tr.InterruptedAt >= len(prev) {
+			signals["previous_turn_interrupted"] = true
 		}
 		if len(prev) > recentPrompts {
 			prev = prev[len(prev)-recentPrompts:]
@@ -295,11 +303,27 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	if len(session) > 0 {
 		st["session"] = session
 	}
-	if r := router.FitRepo(signals, left-50); r != nil {
+	if r := router.FitRepo(repoSignals, left-50); r != nil {
 		st["repo"] = r
 	}
-	return router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
+	req := router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
 		State: st, RepoDir: in.Cwd, Context: ctxTokens}
+	if len(signals) > 0 {
+		st["user_signals"] = signals
+		req.Signals = signals
+	}
+	// Asking for more thinking is a floor: one tier above the current one.
+	if signals["asks_more_thinking"] == true && sess.Main != nil {
+		if cur := env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier); cur != nil {
+			for _, t := range env.Catalog.TiersByRank(catalog.ScopeMain) {
+				if t.Rank > cur.Rank {
+					req.MinTier = t.ID
+					break
+				}
+			}
+		}
+	}
+	return req
 }
 
 // goAheads are prompts that only tell Claude to carry on.
@@ -323,6 +347,12 @@ func goAhead(prompt string) bool {
 	p = strings.Join(strings.Fields(p), " ")
 	return len(p) <= 24 && goAheads[p]
 }
+
+var moreThinkingRE = regexp.MustCompile(`(?i)\b(think (harder|more|deeply|carefully|it through)|ultrathink|take your time|be thorough|dig deeper|r[ée]fl[ée]chis (plus|bien|davantage|en profondeur)|prends (ton|le) temps|creuse (plus|bien|davantage))\b`)
+
+// asksMoreThinking reports whether a prompt explicitly asks for more
+// thinking.
+func asksMoreThinking(prompt string) bool { return moreThinkingRE.MatchString(prompt) }
 
 var effortTagRE = regexp.MustCompile(`(?i)\[effort:\s*(low|medium|high|xhigh|max|auto)\s*\]`)
 
