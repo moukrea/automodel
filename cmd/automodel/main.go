@@ -42,7 +42,7 @@ Usage:
   automodel serve                      run the proxy
   automodel hook <name>                run a hook (%s)
   automodel statusline                 render the statusline segment
-  automodel report [--json] [--since 7d]
+  automodel report [--json] [--since 7d] [--baseline xhigh]
   automodel why [--session id] [-n 5] [--follow]   explain the latest routing decisions
   automodel catalog check [--json] [--catalog path]
   automodel eval [--catalog path] [--cases file] [--format score|choice] [--json]
@@ -215,6 +215,7 @@ func report(cfg *config.Config, args []string) error {
 	asJSON := fs.Bool("json", false, "JSON output")
 	since := fs.String("since", "", "only entries newer than this age (e.g. 7d, 12h)")
 	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
+	baseline := fs.String("baseline", "xhigh", "effort the savings estimate compares with (Claude Code's own setting)")
 	fs.Parse(args)
 	var from time.Time
 	if *since != "" {
@@ -228,12 +229,20 @@ func report(cfg *config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
+		if sv, err := ledger.EstimateSavingsFile(*ledgerPath, from, c, c.DefaultTier(catalog.ScopeMain).Model, *baseline); err == nil && sv.Requests > 0 {
+			rep.Savings = sv
+		}
+	}
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
 	}
 	rep.Markdown(os.Stdout)
+	if rep.Savings != nil {
+		rep.Savings.Markdown(os.Stdout)
+	}
 	return nil
 }
 

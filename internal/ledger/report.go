@@ -86,6 +86,7 @@ type Report struct {
 	RoutedCacheHit   float64                 `json:"routed_cache_hit_rate"`
 	UnroutedCacheHit float64                 `json:"unrouted_cache_hit_rate"`
 	Shadow           *ShadowStats            `json:"shadow,omitempty"`
+	Savings          *Savings                `json:"savings,omitempty"`
 }
 
 // BuildReport aggregates ledger lines newer than since.
