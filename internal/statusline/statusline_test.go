@@ -120,7 +120,7 @@ func TestJSONRouted(t *testing.T) {
 		return true
 	})
 	m := runJSON(t, env, jevIn)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}`
+	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}`
 	if m["_raw"] != want {
 		t.Errorf("got  %s\nwant %s", m["_raw"], want)
 	}
@@ -154,13 +154,18 @@ func TestJSONStates(t *testing.T) {
 			map[string]any{"flash": "compact"}},
 		{"old flash", state.Session{Main: &state.Decision{Model: "claude-opus-5-5", Effort: "xhigh", Trigger: "compact", Confidence: 0.7, DecidedAt: now.Add(-time.Hour)}},
 			map[string]any{"flash": ""}},
+		{"over budget", state.Session{TotalUSD: 2, Main: &state.Decision{Model: "claude-opus-5-5", Effort: "low", Trigger: "cold", Confidence: 0.8, DecidedAt: now.Add(-time.Hour)}},
+			map[string]any{"budget": "over", "text": "jev → opus-5.5·low 0.80 ⚠ budget"}},
 	}
 	for _, tc := range cases {
 		env := jsonEnv(t)
+		if tc.name == "over budget" {
+			env.Cfg.Budget.USDPerSession = 1
+		}
 		sess := tc.sess
 		env.State.Update("s", func(s *state.Session) bool { *s = sess; s.SessionID = "s"; return true })
 		m := runJSON(t, env, jevIn)
-		for _, k := range []string{"v", "routed", "alias", "model", "label", "effort", "mode", "state", "confidence", "pin", "issue", "flash", "text"} {
+		for _, k := range []string{"v", "routed", "alias", "model", "label", "effort", "mode", "state", "confidence", "pin", "issue", "flash", "budget", "text"} {
 			if _, ok := m[k]; !ok {
 				t.Errorf("%s: no %q in %s", tc.name, k, m["_raw"])
 			}
@@ -176,7 +181,7 @@ func TestJSONStates(t *testing.T) {
 func TestJSONCatalogError(t *testing.T) {
 	var out strings.Builder
 	CatalogErrorJSON("jev", strings.NewReader(jevIn), &out)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","text":"jev → ⚠ catalog"}` + "\n"
+	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","budget":"","text":"jev → ⚠ catalog"}` + "\n"
 	if out.String() != want {
 		t.Errorf("got  %s\nwant %s", out.String(), want)
 	}

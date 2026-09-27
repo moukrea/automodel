@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -576,9 +577,15 @@ func doctorCmd(cfg *config.Config) error {
 	return nil
 }
 
+// hasFlag reports whether a boolean flag is set: --x, -x, --x=true, -x=1…
 func hasFlag(args []string, flag string) bool {
+	name := strings.TrimLeft(flag, "-")
 	for _, a := range args {
-		if a == flag || a == "-"+strings.TrimLeft(flag, "-") {
+		k, v, hasV := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || k != name {
+			continue
+		}
+		if b, err := strconv.ParseBool(v); !hasV || (err == nil && b) {
 			return true
 		}
 	}
