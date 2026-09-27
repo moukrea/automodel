@@ -7,7 +7,7 @@ Decisions come from [TypeSafe Jev](https://docs.typesafe.ai) on OpenRouter
 (under a second, ~$0.00004 each); your Claude traffic stays on your own
 subscription.
 
-<p align="center"><a href="docs/demo.mp4"><img src="docs/demo-poster.png" width="820" alt="Demo video, 3 minutes"></a><br><sub>Demo: <a href="docs/demo.mp4">docs/demo.mp4</a></sub></p>
+<p align="center"><a href="docs/demo.mp4"><img src="docs/demo-poster.png" width="820" alt="Demo video, 5 minutes"></a><br><sub>Demo: <a href="docs/demo.mp4">docs/demo.mp4</a></sub></p>
 
 ## Install
 
