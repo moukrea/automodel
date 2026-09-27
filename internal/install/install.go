@@ -58,9 +58,12 @@ func (o Options) statuslineCmd() string {
 
 // delegating reports whether a statusLine command renders the automodel
 // segment itself (agentline calls `automodel statusline --json`): install and
-// update leave it in place instead of chaining it.
+// update leave it in place instead of chaining it. automodel's own status
+// line never is, even from a path that contains "agentline" (a checkout named
+// automodel-agentline, a config under ~/.config/agentline/): it is retargeted
+// by install and removed by uninstall like any other.
 func delegating(cmd string) bool {
-	return strings.Contains(cmd, "agentline")
+	return !owned(cmd) && strings.Contains(cmd, "agentline")
 }
 
 // statuslineCommand is settings.json's statusLine command ("" if none).
@@ -297,7 +300,7 @@ func Remove(o Options) error {
 		// A delegating status line (agentline) is the user's: left in place.
 		if sl, ok := settings.Get("statusLine"); ok {
 			if slo, ok := sl.(*Object); ok {
-				if c := statuslineCommand(settings); owned(c) && !delegating(c) {
+				if owned(statuslineCommand(settings)) {
 					if cfg.StatuslineCommand != "" {
 						slo.Set("command", cfg.StatuslineCommand)
 					} else {

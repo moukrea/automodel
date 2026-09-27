@@ -142,3 +142,51 @@ func TestApplyRemoveKeepAgentline(t *testing.T) {
 		t.Fatalf("automodel entries left: %s", b)
 	}
 }
+
+// automodel's own status line is never mistaken for agentline's because its
+// path contains "agentline" (a checkout named automodel-agentline): install
+// retargets it, doctor doesn't vouch for a stale one, uninstall removes it.
+func TestOwnStatuslineUnderAgentlinePath(t *testing.T) {
+	dir := t.TempDir()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go http.Serve(l, http.NotFoundHandler())
+	defer l.Close()
+	var calls []string
+	dev := Options{Exe: "/home/u/code/automodel-agentline/automodel", ConfigPath: filepath.Join(dir, "config.toml"), CatalogPath: filepath.Join(dir, "catalog.toml"),
+		SettingsPath: filepath.Join(dir, "settings.json"), UnitPath: filepath.Join(dir, "automodel.service"),
+		GOOS: "linux", Run: fakeRun(true, &calls), Log: t.Logf}
+	os.WriteFile(dev.ConfigPath, []byte(fmt.Sprintf("catalog = %q\nstate_dir = %q\nlisten = %q\n", dev.CatalogPath, filepath.Join(dir, "state"), l.Addr())), 0o600)
+	if delegating(dev.statuslineCmd()) {
+		t.Fatalf("own statusline taken for agentline: %q", dev.statuslineCmd())
+	}
+	if err := Apply(dev); err != nil {
+		t.Fatal(err)
+	}
+	rel := dev
+	rel.Exe = "/home/u/.local/bin/automodel"
+	cfg, err := config.Load(rel.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := InspectSettings(rel, cfg); r.StatuslineBy != "" {
+		t.Errorf("another binary's statusline reported as %q", r.StatuslineBy)
+	}
+	if err := Apply(rel); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := readSettingsOnly(rel.SettingsPath)
+	if c := statuslineCommand(s); c != rel.statuslineCmd() {
+		t.Fatalf("statusline not retargeted: %q", c)
+	}
+	if err := Remove(rel); err != nil {
+		t.Fatal(err)
+	}
+	s, _ = readSettingsOnly(rel.SettingsPath)
+	if _, ok := s.Get("statusLine"); ok {
+		b, _ := json.Marshal(s)
+		t.Fatalf("uninstall left the automodel statusline: %s", b)
+	}
+}
