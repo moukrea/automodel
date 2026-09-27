@@ -136,3 +136,20 @@ func TestLedgerNotWritable(t *testing.T) {
 		t.Errorf("ledger: %s %s", r.Status, r.Detail)
 	}
 }
+
+// agentline renders the automodel segment itself: a healthy setup.
+func TestAgentlineStatusline(t *testing.T) {
+	e, _ := setup(t)
+	s, _ := os.ReadFile(e.Install.SettingsPath)
+	os.WriteFile(e.Install.SettingsPath, bytes.Replace(s, []byte(`"/x/automodel --config `+e.Install.ConfigPath+` statusline"`),
+		[]byte(`"bash /home/u/.claude/agentline/statusline.sh"`), 1), 0o600)
+	r := find(t, Run(e), "statusline")
+	if r.Status != OK || r.Detail != "agentline shows the automodel segment" {
+		t.Errorf("statusline: %s %s", r.Status, r.Detail)
+	}
+	os.WriteFile(e.Install.SettingsPath, bytes.Replace(s, []byte(`"/x/automodel --config `+e.Install.ConfigPath+` statusline"`),
+		[]byte(`"~/bin/mine"`), 1), 0o600)
+	if r := find(t, Run(e), "statusline"); r.Status != Fail {
+		t.Errorf("foreign statusline: %s %s", r.Status, r.Detail)
+	}
+}

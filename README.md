@@ -73,7 +73,8 @@ statusLine ─▶ automodel statusline:  jev → opus-5.5·xhigh +ultracode 0.82
   statusline as `statusline_command` (rendered before the automodel segment;
   it runs detached behind a cache, so a slow script never delays the
   segment: Claude Code cancels a statusline run whenever the next update
-  arrives);
+  arrives), except [agentline](#status-line), which shows the segment
+  itself and is left in place;
 - installs and starts the service (systemd user unit `automodel.service`, a
   launchd agent on macOS, or else a background process with a pidfile and
   `proxy.log` in the state dir), then checks
@@ -116,7 +117,49 @@ and main tiers must offer at least
 
 `automodel install --dry-run` only prints what would be merged.
 `automodel uninstall` removes the settings entries and the slash commands,
-restores your statusline and removes the service (config and state are kept).
+restores your statusline (agentline's is left as is) and removes the service
+(config and state are kept).
+
+## Status line
+
+On a `jev` session the automodel segment shows what the routing chose:
+`jev → opus-5.5·xhigh +ultracode 0.86` (model, effort, mode, Jev's
+confidence), `(default)` before the first decision, `(pinned)` while your
+`/effort` wins, `⚠ fallback` and `⚠ jev: <why>` when Jev couldn't be asked, `⚠ budget`
+over the spending cap,
+and `↻ switched|compact|cold` for `statusline_flash` (30s) after a
+redecision. Sessions on a named model show nothing.
+
+**Your own status line** is kept: `install` saves it as `statusline_command`
+in `config.toml` and prints it above the segment (it runs detached behind a
+cache and sees `AUTOMODEL_CHAINED=1` in its environment). Set or change
+`statusline_command` there to chain another one.
+
+**[agentline](https://github.com/moukrea/agentline)** renders the routing
+natively instead: the routed model and effort in place of Claude Code's
+`Jev (auto)`, then the confidence and flags in its own `route` segment, fitted
+to the terminal width. A status line whose command contains `agentline` is
+left in place by `install`, the daily self-update and `uninstall` (never
+chained), and `doctor` reports `agentline shows the automodel segment`.
+
+**Other status line authors**: `automodel [--config path] statusline --json`
+reads Claude Code's status line JSON on stdin, records model switches like
+the text status line, never runs `statusline_command`, and prints one line:
+
+```json
+{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}
+```
+
+`{"v":1,"routed":false}` for a session automodel doesn't route. `state` is
+`routed|default|fallback|pinned|error` (`error`: the catalog can't load,
+`issue` says `catalog`); `confidence` is 0 unless `routed`; `pin` is the
+pinned effort; `issue` why Jev couldn't be asked; `flash`
+`switched|compact|cold|""`; `budget` `over` past the spending cap, else
+`""`; `text` the text segment. Find the command in
+`settings.json` (the `UserPromptSubmit` hook ending in ` hook decide`, minus
+that suffix) and check `automodel help` mentions `statusline … --json`
+before calling it: older releases would render (and chain) the text status
+line instead. Skip the call when `AUTOMODEL_CHAINED=1`.
 
 ## When it decides (main session)
 

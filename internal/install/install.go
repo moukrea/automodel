@@ -56,6 +56,34 @@ func (o Options) statuslineCmd() string {
 	return fmt.Sprintf("%s --config %s statusline", cmdArg(o.Exe), cmdArg(o.ConfigPath))
 }
 
+// delegating reports whether a statusLine command renders the automodel
+// segment itself (agentline calls `automodel statusline --json`): install and
+// update leave it in place instead of chaining it.
+func delegating(cmd string) bool {
+	return strings.Contains(cmd, "agentline")
+}
+
+// statuslineCommand is settings.json's statusLine command ("" if none).
+func statuslineCommand(s *Object) string {
+	if sl, ok := s.Get("statusLine"); ok {
+		if slo, ok := sl.(*Object); ok {
+			if c, _ := slo.Get("command"); c != nil {
+				return fmt.Sprint(c)
+			}
+		}
+	}
+	return ""
+}
+
+// chainable is the statusLine a new config keeps as statusline_command:
+// the user's own, not automodel's nor a delegating one.
+func chainable(s *Object) string {
+	if c := statuslineCommand(s); !owned(c) && !delegating(c) {
+		return c
+	}
+	return ""
+}
+
 func owned(cmd string) bool {
 	return strings.Contains(cmd, "automodel") && (strings.Contains(cmd, " hook ") || strings.HasSuffix(cmd, " statusline"))
 }
@@ -103,15 +131,10 @@ func Apply(o Options) error {
 	if err != nil {
 		return err
 	}
-	prevStatusline := ""
-	if sl, ok := settings.Get("statusLine"); ok {
-		if slo, ok := sl.(*Object); ok {
-			if c, _ := slo.Get("command"); c != nil && !owned(fmt.Sprint(c)) {
-				prevStatusline = fmt.Sprint(c)
-			}
-		}
+	if c := statuslineCommand(settings); delegating(c) {
+		o.Log("statusline kept: agentline shows the automodel segment (%s)", c)
 	}
-	if err := writeConfig(o, prevStatusline); err != nil {
+	if err := writeConfig(o, chainable(settings)); err != nil {
 		return err
 	}
 	cfg, err := config.Load(o.ConfigPath)
@@ -155,9 +178,11 @@ func merge(s *Object, o Options, cfg *config.Config) {
 	if !containsAny(list, "Workflow") {
 		perms.Set("allow", append(list, "Workflow"))
 	}
-	sl := s.Obj("statusLine")
-	sl.Set("type", "command")
-	sl.Set("command", o.statuslineCmd())
+	if !delegating(statuslineCommand(s)) {
+		sl := s.Obj("statusLine")
+		sl.Set("type", "command")
+		sl.Set("command", o.statuslineCmd())
+	}
 	hooks := s.Obj("hooks")
 	removeOwnedHooks(hooks)
 	for _, h := range hookEvents {
@@ -181,7 +206,10 @@ type SettingsReport struct {
 	Env        map[string]string // the env entries as set
 	BadEnv     []string          // automodel env vars missing or different
 	Hooks      []string          // hooks missing or running another binary or config
-	Statusline bool              // the automodel statusline is set
+	Statusline bool              // the automodel segment is shown
+	// StatuslineBy is who renders the segment: "automodel" (its statusline),
+	// "agentline" (a delegating status line), or "" (nobody).
+	StatuslineBy string
 }
 
 // InspectSettings reads settings.json; a missing file is an error.
@@ -210,8 +238,13 @@ func InspectSettings(o Options, cfg *config.Config) (*SettingsReport, error) {
 			r.Hooks = append(r.Hooks, h.name)
 		}
 	}
-	c, _ := s.Obj("statusLine").Get("command")
-	r.Statusline = c == o.statuslineCmd()
+	switch c := statuslineCommand(s); {
+	case c == o.statuslineCmd():
+		r.StatuslineBy = "automodel"
+	case delegating(c):
+		r.StatuslineBy = "agentline"
+	}
+	r.Statusline = r.StatuslineBy != ""
 	return r, nil
 }
 
@@ -236,7 +269,8 @@ func hasHook(hooks *Object, event, cmd string) bool {
 	return false
 }
 
-// Remove undoes Apply: settings entries, statusline (restored), service.
+// Remove undoes Apply: settings entries, statusline (restored; a delegating
+// one is left), service.
 func Remove(o Options) error {
 	settings, raw, err := readSettings(o.SettingsPath)
 	if err != nil {
@@ -260,9 +294,10 @@ func Remove(o Options) error {
 		if hooks.Len() == 0 {
 			settings.Delete("hooks")
 		}
+		// A delegating status line (agentline) is the user's: left in place.
 		if sl, ok := settings.Get("statusLine"); ok {
 			if slo, ok := sl.(*Object); ok {
-				if c, _ := slo.Get("command"); owned(fmt.Sprint(c)) {
+				if c := statuslineCommand(settings); owned(c) && !delegating(c) {
 					if cfg.StatuslineCommand != "" {
 						slo.Set("command", cfg.StatuslineCommand)
 					} else {
@@ -539,9 +574,6 @@ func SeedCatalog(path string, shipped []byte, stateDir string) (bool, error) {
 	return true, os.WriteFile(mark, []byte(sum(shipped)+"\n"), 0o600)
 }
 
-// Refresh re-applies the settings entries after a self-update (a new
-// release may add hooks or environment variables). Settings are only
-// rewritten when they change; the service is left alone.
 // ownedBy reports whether settings already run this install: its statusline
 // or one of its hooks calls automodel with this exact config. A refresh
 // never retargets settings that another install (or nobody) owns.
@@ -559,6 +591,10 @@ func ownedBy(s *Object, o Options) bool {
 	return bytes.Contains(b, bytes.Trim(hook, `"`))
 }
 
+// Refresh re-applies the settings entries after a self-update (a new
+// release may add hooks or environment variables). Settings are only
+// rewritten when they change; the service is left alone, and so is a
+// delegating status line (merge).
 func Refresh(o Options, cfg *config.Config) error {
 	settings, raw, err := readSettings(o.SettingsPath)
 	if err != nil || raw == nil {
