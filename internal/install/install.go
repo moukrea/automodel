@@ -291,6 +291,9 @@ func Remove(o Options) error {
 		run("systemctl", "--user", "daemon-reload")
 		o.Log("service stopped and removed")
 	}
+	if removeLogon() {
+		o.Log("logon entry removed")
+	}
 	if StopDetached(cfg) {
 		o.Log("background proxy stopped")
 	}
@@ -372,6 +375,8 @@ func startService(o Options, cfg *config.Config) error {
 	case Systemd:
 		StopDetached(cfg) // left by an install without systemd
 		return startSystemd(o, cfg)
+	case Logon:
+		return startLogon(o, cfg)
 	}
 	return startDetached(o, cfg)
 }

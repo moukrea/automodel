@@ -122,6 +122,7 @@ func setup(t *testing.T, fj *fakeJev) *router.Env {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // os.UserHomeDir on Windows
 	t.Setenv("ANTHROPIC_MODEL", "")
 	t.Setenv("CLAUDE_PID", "")
 	t.Setenv("CLAUDE_PROJECT_DIR", home)

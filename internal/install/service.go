@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/moukrea/automodel/internal/config"
@@ -20,6 +19,7 @@ import (
 const (
 	Systemd  = "systemd"
 	Launchd  = "launchd"
+	Logon    = "logon"    // Windows: a background process, started at each logon (HKCU Run key)
 	Detached = "detached" // background process started by install, no supervisor
 )
 
@@ -33,13 +33,16 @@ func execRunner(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }
 
-// ServiceMode picks how the proxy runs on goos: launchd on macOS, a systemd
-// user unit when a user manager answers, else a detached process (containers,
-// WSL1, minimal distros).
+// ServiceMode picks how the proxy runs on goos: launchd on macOS, a
+// background process started at each logon on Windows, a systemd user unit
+// when a user manager answers, else a detached process (containers, WSL1,
+// minimal distros).
 func ServiceMode(goos string, run Runner) string {
 	switch goos {
 	case "darwin":
 		return Launchd
+	case "windows":
+		return Logon
 	case "linux":
 		// Fails when systemctl is missing or there is no user bus ("Failed to
 		// connect to bus"). is-system-running would also fail on a merely
@@ -65,6 +68,8 @@ func InstalledMode(goos, unitPath string, cfg *config.Config, run Runner) string
 		return Launchd
 	case goos == "linux" && exists(unitPath):
 		return Systemd
+	case goos == "windows" && logonInstalled():
+		return Logon
 	case exists(PidFile(cfg)):
 		return Detached
 	}
@@ -90,23 +95,11 @@ func DetachedPid(cfg *config.Config) int {
 		return 0
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	if pid <= 0 || syscall.Kill(pid, 0) != nil {
-		return 0
-	}
-	// A reused pid must not be taken for ours (nothing to check without
-	// /proc or ps: trust the pidfile).
-	if c := cmdline(pid); c != "" && !(strings.Contains(c, "automodel") && strings.Contains(c, "serve")) {
+	// A reused pid must not be taken for ours.
+	if pid <= 0 || !processAlive(pid) || !isProxy(pid) {
 		return 0
 	}
 	return pid
-}
-
-func cmdline(pid int) string {
-	if b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
-		return strings.ReplaceAll(string(b), "\x00", " ")
-	}
-	out, _ := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-	return strings.TrimSpace(string(out))
 }
 
 // StopDetached stops the detached proxy, if one runs, and reports whether it
@@ -117,17 +110,40 @@ func StopDetached(cfg *config.Config) bool {
 	if pid == 0 {
 		return false
 	}
-	syscall.Kill(pid, syscall.SIGTERM)
-	for i := 0; i < 50 && syscall.Kill(pid, 0) == nil; i++ {
-		time.Sleep(100 * time.Millisecond)
-	}
-	syscall.Kill(pid, syscall.SIGKILL)
+	stopProcess(pid)
 	return true
 }
 
 // startDetached runs `automodel serve` in its own session, logging to the
 // state dir, and records its pid. Nothing restarts it after a reboot.
 func startDetached(o Options, cfg *config.Config) error {
+	if err := launchDetached(o, cfg); err != nil {
+		return err
+	}
+	start := o.StartCmd()
+	o.Log("No systemd user session here: the proxy runs as a background process (log %s)", LogFile(cfg))
+	o.Log("and will NOT be restarted after a reboot. Start it at each login with:")
+	o.Log("  %s", start)
+	o.Log("for instance with this line in ~/.profile:")
+	o.Log("  %s >/dev/null 2>&1", start)
+	return nil
+}
+
+// startLogon runs the proxy as a background process now and registers
+// `automodel start` to run at each logon (Windows, no admin rights needed).
+func startLogon(o Options, cfg *config.Config) error {
+	if err := registerLogon(o); err != nil {
+		return err
+	}
+	if err := launchDetached(o, cfg); err != nil {
+		return err
+	}
+	o.Log("started at each logon: %s", logonEntry)
+	return nil
+}
+
+// launchDetached starts the background proxy and waits until it listens.
+func launchDetached(o Options, cfg *config.Config) error {
 	StopDetached(cfg)
 	if listening(cfg.Listen) {
 		return fmt.Errorf("%s is already in use (another `automodel serve`?); settings left untouched", cfg.Listen)
@@ -140,11 +156,13 @@ func startDetached(o Options, cfg *config.Config) error {
 		return err
 	}
 	defer logf.Close()
-	cmd := exec.Command(o.Exe, "--config", o.ConfigPath, "serve")
-	cmd.Stdout, cmd.Stderr = logf, logf
-	cmd.Env = append(os.Environ(), ServiceEnv+"="+Detached)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
+	cmd, err := startDetachedProcess(func() *exec.Cmd {
+		cmd := exec.Command(o.Exe, "--config", o.ConfigPath, "serve")
+		cmd.Stdout, cmd.Stderr = logf, logf
+		cmd.Env = append(os.Environ(), ServiceEnv+"="+Detached)
+		return cmd
+	})
+	if err != nil {
 		return err
 	}
 	pid := cmd.Process.Pid
@@ -155,12 +173,6 @@ func startDetached(o Options, cfg *config.Config) error {
 	if err := waitListening(o, cfg, fmt.Sprintf("background proxy (pid %d)", pid)); err != nil {
 		return fmt.Errorf("%w\n%s", err, tail(LogFile(cfg), 20))
 	}
-	start := o.StartCmd()
-	o.Log("No systemd user session here: the proxy runs as a background process (log %s)", LogFile(cfg))
-	o.Log("and will NOT be restarted after a reboot. Start it at each login with:")
-	o.Log("  %s", start)
-	o.Log("for instance with this line in ~/.profile:")
-	o.Log("  %s >/dev/null 2>&1", start)
 	return nil
 }
 
@@ -168,7 +180,7 @@ func startDetached(o Options, cfg *config.Config) error {
 // manager (the hooks' guard, after it died). Without a pidfile the proxy
 // wasn't installed that way: an error.
 func Relaunch(cfg *config.Config) error {
-	if _, err := os.Stat(PidFile(cfg)); err != nil {
+	if _, err := os.Stat(PidFile(cfg)); err != nil && !logonInstalled() {
 		return errors.New("no service manager and no background proxy installed")
 	}
 	o := Options{Exe: Self(), ConfigPath: cfg.Path(), Log: func(string, ...any) {}}
@@ -197,7 +209,7 @@ func Self() string {
 
 // StartCmd is the command that starts the proxy if it isn't running.
 func (o Options) StartCmd() string {
-	return fmt.Sprintf("%s --config %s start", o.Exe, o.ConfigPath)
+	return fmt.Sprintf("%s --config %s start", cmdArg(o.Exe), cmdArg(o.ConfigPath))
 }
 
 // Start makes sure the proxy runs: it is what to run at login when no
@@ -228,6 +240,16 @@ func ServiceStatus(o Options, cfg *config.Config) (mode, detail string, ok bool)
 			return mode, "agent " + launchdLabel + " not loaded", false
 		}
 		return mode, "agent " + launchdLabel + " loaded", true
+	case Logon:
+		if cmd, ok := logonCommand(); !ok {
+			return mode, "not started at logon (no " + logonEntry + ")", false
+		} else if cmd != o.logonCmd() {
+			return mode, logonEntry + " runs " + cmd + ", not this install", false
+		}
+		if pid := DetachedPid(cfg); pid > 0 {
+			return mode, fmt.Sprintf("background process, pid %d, started at each logon", pid), true
+		}
+		return mode, "no background process (" + PidFile(cfg) + ")", false
 	}
 	if pid := DetachedPid(cfg); pid > 0 {
 		return mode, fmt.Sprintf("background process, pid %d (not restarted after a reboot)", pid), true

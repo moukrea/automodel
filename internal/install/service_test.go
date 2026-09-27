@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -130,7 +129,9 @@ func TestRelaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	pid := DetachedPid(cfg)
-	syscall.Kill(pid, syscall.SIGKILL)
+	if p, err := os.FindProcess(pid); err == nil {
+		p.Kill()
+	}
 	for i := 0; i < 50 && listening(cfg.Listen); i++ {
 		time.Sleep(20 * time.Millisecond)
 	}
