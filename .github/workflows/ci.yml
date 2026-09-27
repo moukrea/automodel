@@ -42,3 +42,25 @@ jobs:
       - run: go build ./...
       - run: go test ./...
       - run: scripts/install-test.sh --host
+  # Windows: vet, tests, then install.ps1 end to end with the binary built from
+  # this commit: Windows PowerShell 5.1 (irm | iex) and PowerShell 7, a
+  # reinstall over the running proxy, the logon entry, hooks and statusline
+  # through Git Bash and PowerShell, a folder with spaces, uninstall.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - run: git config --global core.autocrlf false # the files as committed
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./...
+      - run: go run ./cmd/automodel catalog check --catalog catalog.toml
+      - run: ./scripts/install-test.ps1
+        shell: pwsh
+      - name: proxy and hook logs
+        if: failure()
+        shell: pwsh
+        run: Get-ChildItem "$env:USERPROFILE\.local\state\automodel\*.log" -ErrorAction SilentlyContinue | ForEach-Object { "== $_"; Get-Content $_ -Tail 50 }
