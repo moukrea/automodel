@@ -39,7 +39,7 @@ func startChain(command, in, tmp, out, running string) {
 	// No console window, and out of the caller's job when it allows it:
 	// Claude Code may kill the statusline's job once it has printed.
 	flags := uint32(windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW)
-	cmd.Env = append(os.Environ(), ChainedEnv+"=1")
+	cmd.Env = chainedEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: flags | windows.CREATE_BREAKAWAY_FROM_JOB}
 	if cmd.Start() != nil {
 		retry := exec.Command(cmd.Path, cmd.Args[1:]...)

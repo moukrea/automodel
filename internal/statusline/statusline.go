@@ -30,6 +30,18 @@ type Input struct {
 // itself (agentline) must not, since the segment is printed after it.
 const ChainedEnv = "AUTOMODEL_CHAINED"
 
+// chainedEnv is the chained command's environment: ours, with ChainedEnv=1
+// replacing any value it had (names are case-insensitive on Windows).
+func chainedEnv() []string {
+	env := []string{ChainedEnv + "=1"}
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); !strings.EqualFold(k, ChainedEnv) {
+			env = append(env, kv)
+		}
+	}
+	return env
+}
+
 // Run reads the statusline JSON on stdin and prints the chained statusline
 // followed by the automodel segment on its own line: chained statuslines are
 // often multi-line or padded to the terminal width, which would truncate it.
