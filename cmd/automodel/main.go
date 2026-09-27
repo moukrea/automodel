@@ -203,6 +203,9 @@ func evalCmd(cfg *config.Config, args []string) error {
 	asJSON := fs.Bool("json", false, "JSON output")
 	parallel := fs.Int("parallel", 8, "concurrent Jev calls")
 	catPath := fs.String("catalog", "", "catalog to evaluate (default: the configured one)")
+	repeat := fs.Int("repeat", 1, "ask every case this many times (Jev varies a little between calls)")
+	split := fs.String("split", "all", "cases to run: train, test (held out) or all")
+	summary := fs.Bool("summary", false, "print the summary only, without the per-case table")
 	fs.Parse(args)
 	if *catPath != "" {
 		c := *cfg
@@ -222,10 +225,15 @@ func evalCmd(cfg *config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	rs := eval.Run(context.Background(), env, cs, *format, *parallel)
+	cs = eval.Filter(cs, *split)
+	rs := eval.Run(context.Background(), env, cs, *format, *parallel, *repeat)
 	sum := eval.Summarize(env.Catalog, rs)
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"results": rs, "summary": sum})
+	}
+	if *summary {
+		eval.PrintSummary(os.Stdout, sum)
+		return nil
 	}
 	eval.Print(os.Stdout, env.Catalog, rs, sum)
 	return nil

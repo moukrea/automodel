@@ -33,10 +33,34 @@ type Case struct {
 	Accept    []string        `json:"accept"`
 	Modes     map[string]bool `json:"modes"`
 	Continues *bool           `json:"continues"`
+	// Split is "train" (criteria and rules may be tuned on it) or "test"
+	// (held out: only measured). Note says why the label is right.
+	Split string `json:"split,omitempty"`
+	Note  string `json:"note,omitempty"`
+}
+
+// Filter keeps the cases of a split ("" or "all" keeps every case; a case
+// without a split is a train case).
+func Filter(cs []Case, split string) []Case {
+	if split == "" || split == "all" {
+		return cs
+	}
+	var out []Case
+	for _, c := range cs {
+		s := c.Split
+		if s == "" {
+			s = "train"
+		}
+		if s == split {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 type Result struct {
 	Case
+	Run int    `json:"run,omitempty"`
 	Got string `json:"got"`
 	// Decision is what the router does with the answer (policy, gates,
 	// modes); Kept says why a warm case stays on its current tier.
@@ -80,20 +104,25 @@ func Parse(r io.Reader, path string) ([]Case, error) {
 	return out, sc.Err()
 }
 
-// Run asks Jev every case. format is "score" (the router's questions) or
+// Run asks Jev every case, repeat times (Jev's answers vary a little from
+// one call to the next). format is "score" (the router's questions) or
 // "choice" (the v1 tier Choice, for comparison).
-func Run(ctx context.Context, env *router.Env, cases []Case, format string, parallel int) []Result {
-	out := make([]Result, len(cases))
+func Run(ctx context.Context, env *router.Env, cases []Case, format string, parallel, repeat int) []Result {
+	repeat = max(1, repeat)
+	out := make([]Result, len(cases)*repeat)
 	sem := make(chan struct{}, max(1, parallel))
 	var wg sync.WaitGroup
-	for i, c := range cases {
-		wg.Add(1)
-		go func(i int, c Case) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			out[i] = one(ctx, env, c, format)
-		}(i, c)
+	for k := 0; k < repeat; k++ {
+		for i, c := range cases {
+			wg.Add(1)
+			go func(j, k int, c Case) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				out[j] = one(ctx, env, c, format)
+				out[j].Run = k
+			}(k*len(cases)+i, k, c)
+		}
 	}
 	wg.Wait()
 	return out
@@ -173,6 +202,10 @@ type Summary struct {
 	Modes                        map[string]*Binary
 	Continues                    Binary
 	CostUSD                      float64
+	// Scopes holds the per-scope tier metrics: exact accuracy, recall per
+	// tier, confusion matrices, tier share against label share, rank
+	// error and calibration.
+	Scopes map[string]*ScopeStats
 }
 
 type Bucket struct {
@@ -235,10 +268,10 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 		}
 		s.Cases++
 		s.MeanConf += r.Conf
-		good := contains(r.Accept, r.Got)
+		good := contains(r.acceptSet(), r.Got)
 		if r.Decision != "" {
 			decN++
-			if contains(r.Accept, r.Decision) {
+			if contains(r.acceptSet(), r.Decision) {
 				dec++
 			}
 		}
@@ -304,6 +337,12 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 		b.finish()
 	}
 	s.Continues.finish()
+	s.Scopes = map[string]*ScopeStats{}
+	for _, sc := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
+		if st := ScopeMetrics(cat, sc, rs); st.N > 0 {
+			s.Scopes[sc] = st
+		}
+	}
 	return s
 }
 
@@ -317,7 +356,7 @@ func Print(w io.Writer, cat *catalog.Catalog, rs []Result, s Summary) {
 			continue
 		}
 		mark := ""
-		if !contains(r.Accept, r.Got) {
+		if !contains(r.acceptSet(), r.Got) {
 			mark = " ✗"
 		}
 		var modes []string
@@ -336,7 +375,7 @@ func Print(w io.Writer, cat *catalog.Catalog, rs []Result, s Summary) {
 			}
 		}
 		decision := r.Decision
-		if r.Decision != "" && !contains(r.Accept, r.Decision) {
+		if r.Decision != "" && !contains(r.acceptSet(), r.Decision) {
 			decision += " ✗"
 		}
 		if r.Mode != "" {
@@ -347,7 +386,13 @@ func Print(w io.Writer, cat *catalog.Catalog, rs []Result, s Summary) {
 		}
 		fmt.Fprintf(w, "| %s | %s | %s%s | %.2f | %.2f | %s | %s | %s |\n", r.ID, r.Want, r.Got, mark, r.Probs[r.Want], r.Conf, decision, strings.Join(modes, ", "), cont)
 	}
-	fmt.Fprintf(w, "\n%d cases (%d errors): Jev's top tier exact %.0f%%, acceptable %.0f%%; router decision acceptable %.0f%%\n", s.Cases, s.Errors, 100*s.Exact, 100*s.Acceptable, 100*s.DecisionOK)
+	fmt.Fprintln(w)
+	PrintSummary(w, s)
+}
+
+// PrintSummary writes the summary without the per-case table.
+func PrintSummary(w io.Writer, s Summary) {
+	fmt.Fprintf(w, "%d cases (%d errors): Jev's top tier exact %.0f%%, acceptable %.0f%%; router decision acceptable %.0f%%\n", s.Cases, s.Errors, 100*s.Exact, 100*s.Acceptable, 100*s.DecisionOK)
 	fmt.Fprintf(w, "confidence: mean %.2f, when acceptable %.2f, when not %.2f\n", s.MeanConf, s.ConfRight, s.ConfBad)
 	for _, b := range s.Buckets {
 		if b.N > 0 {
@@ -362,7 +407,12 @@ func Print(w io.Writer, cat *catalog.Catalog, rs []Result, s Summary) {
 		fmt.Fprintf(w, "continues @%.2f: %d/%d right (false yes %d, false no %d), mean p yes-cases %.2f, no-cases %.2f\n",
 			b.Threshold, b.Right, b.N, b.FalseYes, b.FalseNos, b.MeanYesP, b.MeanNoP)
 	}
-	fmt.Fprintf(w, "Jev cost: $%.4f\n", s.CostUSD)
+	for _, sc := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
+		if st := s.Scopes[sc]; st != nil {
+			PrintScope(w, st)
+		}
+	}
+	fmt.Fprintf(w, "\nJev cost: $%.4f\n", s.CostUSD)
 }
 
 func contains(xs []string, x string) bool {
