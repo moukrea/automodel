@@ -51,6 +51,7 @@ type Config struct {
 	// only when the cache is already lost, confidence-escalation policy).
 	Features Features `toml:"features"`
 	Update   Update   `toml:"update"`
+	Budget   Budget   `toml:"budget"`
 	// OpenRouterAPIKey is used when $OPENROUTER_API_KEY is unset. Keep the
 	// file private (0600): automodel warns in hooks.log otherwise.
 	OpenRouterAPIKey string `toml:"openrouter_api_key"`
@@ -64,6 +65,16 @@ type Update struct {
 	// Interval, applied when the proxy is idle; systemd restarts it).
 	Auto     bool     `toml:"auto"`
 	Interval Duration `toml:"interval"`
+}
+
+// Budget caps spending: once the day's (or a session's) spend reaches its
+// cap, routing picks no tier above MaxTierWhenOver until the next day (or
+// session). 0 turns a cap off. Pins are never capped.
+type Budget struct {
+	USDPerDay               float64 `toml:"usd_per_day"`
+	USDPerSession           float64 `toml:"usd_per_session"`
+	MaxTierWhenOver         string  `toml:"max_tier_when_over"`
+	MaxSubagentTierWhenOver string  `toml:"max_subagent_tier_when_over"`
 }
 
 type Features struct {
@@ -112,6 +123,7 @@ func Default() *Config {
 		RouteWorkflowSteps:           true,
 		RecordStates:                 true,
 		Update:                       Update{Auto: true, Interval: Duration{24 * time.Hour}},
+		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "opus-medium"},
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
 			WarmMinConfidence: 0.7, WarmTimeout: Duration{3 * time.Second}, SwitchHorizonPrompts: 3,
@@ -206,6 +218,8 @@ func (c *Config) check() error {
 		return fmt.Errorf("features.warm_min_confidence must be in [0, 1]")
 	case c.Features.SwitchHorizonPrompts <= 0:
 		return fmt.Errorf("features.switch_horizon_prompts must be > 0")
+	case c.Budget.USDPerDay < 0 || c.Budget.USDPerSession < 0:
+		return fmt.Errorf("budget caps must be >= 0 (0 = off)")
 	case c.StateBudgetTokens <= 0 || c.StateBudgetTokens > 30000:
 		return fmt.Errorf("state_budget_tokens must be in (0, 30000] (Jev limit is 32k for state + question)")
 	}

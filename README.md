@@ -176,6 +176,23 @@ disable_modes = ["ultracode"]
 privacy = "metadata"            # a repo can make privacy stricter, never looser
 ```
 
+## Spending cap
+
+```toml
+[budget]
+usd_per_day = 20               # 0 = off (the default)
+usd_per_session = 0            # optional, per session
+max_tier_when_over = "medium"  # the highest tier once a cap is reached
+max_subagent_tier_when_over = "opus-medium"
+```
+
+The proxy prices every response with the catalog and keeps the day's total
+(`state_dir/spend.json`, local day) and each session's. Once a cap is
+reached, routing picks nothing above `max_tier_when_over` until the next
+day (or session); the status line shows `⚠ budget`, and `why` and `report`
+show the cap and the decisions it lowered. Your pins are not capped: it's
+your call.
+
 ## What leaves your machine
 
 - **Claude traffic** goes to api.anthropic.com through the local proxy,

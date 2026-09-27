@@ -108,7 +108,8 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			trigger = "pinned-" + trigger
 		}
 	}
-	if trigger == "warm" && pin == "" && env.Cfg.Features.FastPath && goAhead(in.Prompt) {
+	if trigger == "warm" && pin == "" && env.Cfg.Features.FastPath && goAhead(in.Prompt) &&
+		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) {
 		// A bare go-ahead continues the work in progress: nothing to ask.
 		env.LogKept(in.SessionID, sess.Main, "go-ahead: continues the work in progress")
 		trigger = ""

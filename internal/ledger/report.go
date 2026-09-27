@@ -88,6 +88,15 @@ type Report struct {
 	Shadow           *ShadowStats            `json:"shadow,omitempty"`
 	Savings          *Savings                `json:"savings,omitempty"`
 	Suggestions      []Suggestion            `json:"suggestions,omitempty"`
+	Budget           *BudgetStats            `json:"budget,omitempty"`
+}
+
+// BudgetStats covers the spending cap ([budget]).
+type BudgetStats struct {
+	Capped        int     `json:"capped_decisions"`
+	TodayUSD      float64 `json:"today_usd"`
+	USDPerDay     float64 `json:"usd_per_day,omitempty"`
+	USDPerSession float64 `json:"usd_per_session,omitempty"`
 }
 
 // BuildReport aggregates ledger lines newer than since.
@@ -120,6 +129,12 @@ func BuildReport(r io.Reader, since time.Time) (*Report, error) {
 				rep.Scopes[d.Scope] = s
 			}
 			rep.JevCostUSD += d.JevCostUSD
+			if d.BudgetCap != "" {
+				if rep.Budget == nil {
+					rep.Budget = &BudgetStats{}
+				}
+				rep.Budget.Capped++
+			}
 			if d.Warm {
 				w := s.Warm
 				if w == nil {
@@ -312,6 +327,16 @@ func (rep *Report) Markdown(w io.Writer) {
 		if len(sh.Disagreement) > 0 {
 			fmt.Fprintf(w, "Disagreements (applied→shadow): %s\n", kv(sh.Disagreement))
 		}
+	}
+	if b := rep.Budget; b != nil {
+		fmt.Fprintf(w, "\n## Budget\n\nToday $%.2f", b.TodayUSD)
+		if b.USDPerDay > 0 {
+			fmt.Fprintf(w, " of $%.2f per day", b.USDPerDay)
+		}
+		if b.USDPerSession > 0 {
+			fmt.Fprintf(w, " (session cap $%.2f)", b.USDPerSession)
+		}
+		fmt.Fprintf(w, "; %d decisions lowered to the cap.\n", b.Capped)
 	}
 	writeSuggestions(w, rep.Suggestions)
 }

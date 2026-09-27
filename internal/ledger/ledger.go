@@ -53,9 +53,10 @@ type Decision struct {
 	Loss       map[string]float64 `json:"loss,omitempty"`
 	GainUSD    float64            `json:"gain_usd,omitempty"`
 	SwitchUSD  float64            `json:"switch_cost_usd,omitempty"`
-	Skipped    bool               `json:"skipped,omitempty"` // warm: Jev not asked (no switch could pay back)
-	Signals    map[string]any     `json:"signals,omitempty"` // user signals (interrupted turn, asked for more thinking)
-	Repo       string             `json:"repo,omitempty"`    // repository root, when known
+	Skipped    bool               `json:"skipped,omitempty"`    // warm: Jev not asked (no switch could pay back)
+	Signals    map[string]any     `json:"signals,omitempty"`    // user signals (interrupted turn, asked for more thinking)
+	Repo       string             `json:"repo,omitempty"`       // repository root, when known
+	BudgetCap  string             `json:"budget_cap,omitempty"` // tier lowered to the budget cap
 }
 
 type Usage struct {

@@ -171,6 +171,9 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	if d.KeepReason != "" {
 		why = append(why, d.KeepReason)
 	}
+	if d.BudgetCap != "" {
+		why = append(why, "⚠ budget cap: "+d.BudgetCap+" → "+d.Chosen)
+	}
 	if d.ContinuesP != nil {
 		why = append(why, fmt.Sprintf("continues the work: %.2f", *d.ContinuesP))
 	}

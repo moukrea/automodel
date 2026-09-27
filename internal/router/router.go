@@ -134,7 +134,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 
 	// A warm switch has to pay back its cost: when no answer could, Jev
 	// is not asked at all.
-	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" {
+	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" && !e.AboveCap(req.SessionID, req.Scope, cur) {
 		// Modes flip for free but wait for the next free moment then.
 		if g := policy.MaxGain(c, req.Scope, cur, req.SwitchCost, params); g <= 0 {
 			rec.Skipped = true
@@ -184,7 +184,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 			log.Printf("jev %s/%s: %v (kept %s)", req.Scope, req.Trigger, err, cur.ID)
 			return keep("jev error")
 		}
-		tier := policy.Constrain(c, req.Scope, c.DefaultTier(req.Scope), rp, req.Context)
+		tier := e.capTier(req, policy.Constrain(c, req.Scope, c.DefaultTier(req.Scope), rp, req.Context))
 		dec.Trigger, dec.Cause = "fallback", req.Trigger
 		rec.Trigger, rec.Cause = "fallback", req.Trigger
 		log.Printf("jev %s/%s: %v (default tier %s)", req.Scope, req.Trigger, err, tier.ID)
@@ -201,6 +201,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	dec.JevChoice, dec.Confidence, dec.Probs = rd.top, rd.conf, rd.probs
 
 	v := e.Judge(req, rd, cur, rp, params)
+	v, rec.BudgetCap = e.capBudget(req, v, cur)
 	if v.Pick != nil {
 		rec.Loss, rec.GainUSD, rec.SwitchUSD = v.Pick.Loss, v.Pick.Gain, v.Pick.SwitchCost
 	}

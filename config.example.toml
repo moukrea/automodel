@@ -42,3 +42,11 @@ warm_min_confidence = 0.7
 warm_timeout = "3s"
 # Prompts a switch is expected to serve, when weighed against a cache rebuild.
 switch_horizon_prompts = 3
+
+# Spending cap (prices from the catalog). Once reached, routing stays at or
+# below max_tier_when_over until the next day (or session). Pins are not capped.
+# [budget]
+# usd_per_day = 0                             # 0 = off
+# usd_per_session = 0
+# max_tier_when_over = "medium"
+# max_subagent_tier_when_over = "opus-medium"

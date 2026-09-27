@@ -136,6 +136,11 @@ func TestRewriteMainFromDecision(t *testing.T) {
 		s, _ := p.State.Load("sess-1")
 		return s.ContextTokens == 5252 && s.Model == "jev"
 	})
+	// The day's and the session's spend feed the budget cap.
+	waitFor(t, func() bool {
+		s, _ := p.State.Load("sess-1")
+		return s.TotalUSD > 0 && s.TotalUSD == s.SpendUSD && p.State.SpentToday(time.Now()) > s.TotalUSD
+	})
 }
 
 func TestPassthroughUntouched(t *testing.T) {

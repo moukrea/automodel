@@ -260,6 +260,13 @@ func report(cfg *config.Config, args []string) error {
 		}
 		rep.Suggestions = suggestions(cfg, c, *ledgerPath, from)
 	}
+	if b := cfg.Budget; b.USDPerDay > 0 || b.USDPerSession > 0 || rep.Budget != nil {
+		if rep.Budget == nil {
+			rep.Budget = &ledger.BudgetStats{}
+		}
+		rep.Budget.TodayUSD = state.Store{Dir: cfg.StateDir}.SpentToday(time.Now())
+		rep.Budget.USDPerDay, rep.Budget.USDPerSession = b.USDPerDay, b.USDPerSession
+	}
 	if *asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -333,7 +340,8 @@ func why(cfg *config.Config, args []string) error {
 	if len(ds) == 0 {
 		return errors.New("no decision recorded yet (is the session on Jev?)")
 	}
-	fmt.Printf("session %s · last %d decisions\n\n", sid[:min(8, len(sid))], len(ds))
+	fmt.Printf("session %s · last %d decisions\n", sid[:min(8, len(sid))], len(ds))
+	fmt.Print(budgetLine(cfg, sid), "\n")
 	ledger.WriteWhy(os.Stdout, ds, o)
 	if !*follow {
 		return nil
@@ -388,6 +396,20 @@ func flagCmd(cfg *config.Config, args []string) error {
 	}
 	fmt.Printf("flagged %s %s → want %s (%s): %s\n", d.Scope, d.Chosen, *want, d.TS.Local().Format("15:04:05"), *out)
 	return nil
+}
+
+// budgetLine says when a spending cap is reached ("" otherwise).
+func budgetLine(cfg *config.Config, sid string) string {
+	b, st := cfg.Budget, state.Store{Dir: cfg.StateDir}
+	today := st.SpentToday(time.Now())
+	s, _ := st.Load(sid)
+	switch {
+	case b.USDPerDay > 0 && today >= b.USDPerDay:
+		return fmt.Sprintf("⚠ budget: $%.2f today (cap $%.2f): tiers capped at %s until tomorrow\n", today, b.USDPerDay, b.MaxTierWhenOver)
+	case b.USDPerSession > 0 && s != nil && s.TotalUSD >= b.USDPerSession:
+		return fmt.Sprintf("⚠ budget: $%.2f this session (cap $%.2f): tiers capped at %s\n", s.TotalUSD, b.USDPerSession, b.MaxTierWhenOver)
+	}
+	return ""
 }
 
 func catalogCmd(cfg *config.Config, args []string) error {
