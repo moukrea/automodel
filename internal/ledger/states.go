@@ -61,27 +61,37 @@ func (s States) Put(r StateRecord) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	// The lock is a side file: the data file itself is rewritten when it
+	// grows too big, which Windows refuses on a locked file.
+	lf, err := os.OpenFile(p+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	unlock, err := flock.Lock(f)
+	defer lf.Close()
+	unlock, err := flock.Lock(lf)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if _, err := f.Write(append(line, '\n')); err != nil {
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
 		return err
 	}
-	if st, err := f.Stat(); err == nil && st.Size() > maxStateFile {
-		return trimHalf(f, p)
+	_, err = f.Write(append(line, '\n'))
+	st, serr := f.Stat()
+	f.Close()
+	if err != nil {
+		return err
+	}
+	if serr == nil && st.Size() > maxStateFile {
+		return trimHalf(p)
 	}
 	return nil
 }
 
-// trimHalf keeps the newest half of the file's lines (under the caller's lock).
-func trimHalf(f *os.File, p string) error {
+// trimHalf keeps the newest half of the file's lines (under the caller's
+// lock), through a temporary file renamed over it.
+func trimHalf(p string) error {
 	b, err := os.ReadFile(p)
 	if err != nil {
 		return err
@@ -90,11 +100,11 @@ func trimHalf(f *os.File, p string) error {
 	if cut < 0 {
 		return nil
 	}
-	if err := f.Truncate(0); err != nil {
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b[len(b)/2+cut+1:], 0o600); err != nil {
 		return err
 	}
-	_, err = f.Write(b[len(b)/2+cut+1:])
-	return err
+	return os.Rename(tmp, p)
 }
 
 // ErrNoState is returned when no routing state was kept for a decision.
