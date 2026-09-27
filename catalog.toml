@@ -5,7 +5,7 @@
 
 [meta]
 schema = 1
-last_refresh = "2026-09-26"
+last_refresh = "2026-09-27"
 benchmark = "artificial-analysis-intelligence-index"
 benchmark_version = "v4.3.2"
 jev_model = "typesafe/jev-1.13"
@@ -46,25 +46,19 @@ efforts = ["low", "medium", "high", "xhigh", "max"]
 default_effort = "medium"
 per_turn_effort = true
 price = { input = 4.0, output = 20.0, cache_read = 0.20, cache_write_5m = 5.0, cache_write_1h = 8.0 }
-# Fast mode stays off (docs/research/2026-09-routing-quality.md): 2x the price
-# per token ($8/$40, cache multipliers on top) for up to 2.5x output tokens per
-# second, not time to first token; a speed change misses the prompt cache;
-# research preview (access provisioned per org, usage credits on plans). On a
-# low turn ($0.55, ~80 s per task) it would double the cost to save at most
-# ~48 s of generation, plus one uncached rewrite of the context at fast prices.
 fast = { allowed = false, input = 8.0, output = 40.0, speedup = 2.5 }
-verified_at = "2026-09-26"
+verified_at = "2026-09-27"
 sources = [
   "https://platform.claude.com/docs/en/about-claude/models/overview",
   "https://platform.claude.com/docs/en/about-claude/pricing",
-  "https://platform.claude.com/docs/en/build-with-claude/fast-mode",
-  "https://code.claude.com/docs/en/fast-mode",
+  "https://platform.claude.com/docs/en/build-with-claude/effort",
+  "Claude Code 2.1.283 embedded model catalog (native_1m, per_turn_effort)",
 ]
 
 [models.claude-haiku-4-5]
 label = "Haiku 4.5"
 status = "active"
-reason = "Not measured on index v4.3.2; kept for mechanical subagent work pending ledger data."
+reason = "Cheapest subagent config for mechanical work. Routed Haiku runs without thinking (the proxy strips it), so the index v4.3.2 reasoning-variant cost (0.28) does not apply; the tier is priced as it runs (tier cost 0.14, from prices and the ledger)."
 api_id = "claude-haiku-4-5-20251001"
 alias = "haiku"
 context = 200_000
@@ -72,51 +66,113 @@ max_output = 64_000
 efforts = []
 price = { input = 1.0, output = 5.0, cache_read = 0.10, cache_write_5m = 1.25, cache_write_1h = 2.0 }
 scopes = ["subagent"]
-verified_at = "2026-09-26"
-sources = ["https://platform.claude.com/docs/en/about-claude/pricing"]
+verified_at = "2026-09-27"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-4-5-haiku",
+]
 
 [models.claude-sonnet-5]
 label = "Sonnet 5"
 status = "dominated"
-reason = "Every effort dominated by Opus 5.5 low (index 38 max vs 42); low is quasi-dominated (7% cheaper than Opus 5.5 low for -18 points). Cache read costs the same as Opus 5.5 ($0.20/M)."
+reason = "Dominated by Opus 5.5 for coding work. Index v4.3.2: medium to max (28 to 38, $1.00 to $5.09) dominated by Opus 5.5 low/medium/high; high costs $1.79, the same as Opus 5.5 high ($1.82), for 32 vs 54. Low (24, $0.51, 157 s) is only 7% cheaper than Opus 5.5 low (42, $0.55, 81 s) for -18 points and 1.9x the time. CursorBench 4.0 (agentic coding): every effort dominated; low costs more than Opus 5.5 low ($1.39 vs $1.17 for 24.1% vs 43.7%, 1.5x the tokens, 1.6x the steps). Emits 1.25-1.68x Opus 5.5's output tokens at equal effort; cache read costs the same ($0.20/M); no per-turn effort in Claude Code."
 api_id = "claude-sonnet-5"
 alias = "sonnet"
 context = 1_000_000
 long_context = "native"
 max_output = 128_000
 efforts = ["low", "medium", "high", "xhigh", "max"]
+default_effort = "high"
 price = { input = 2.0, output = 10.0, cache_read = 0.20, cache_write_5m = 2.50, cache_write_1h = 4.0 }
-verified_at = "2026-09-26"
-sources = ["https://platform.claude.com/docs/en/about-claude/pricing"]
+verified_at = "2026-09-27"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5",
+  "https://cursor.com/cursorbench",
+]
+
+[models.claude-fable-5-1]
+label = "Fable 5.1"
+status = "dominated"
+reason = "Dominated by Opus 5.5. Index v4.3.2: low 47 at $2.37 and high 51 at $3.91 vs Opus 5.5 medium 51 at $1.34; xhigh and max 53 at $5.98/$7.63 vs Opus 5.5 xhigh 56 at $3.46. CursorBench 4.0: its best config (max, 51.8%, $17.28) scores below Opus 5.5 medium (52.5%, $2.91). Anthropic's Opus 5.5 system card: below Opus 5.5 on every coding eval (Terminal-Bench 4.0 55.8 vs 66.4, SWE-bench Pro 81.2 vs 89.9). Its only non-dominated point, the Coding Agent Index v1.5 at max in Claude Code (62.2, $12.39, 2090 s vs Opus 5.5 max 66.0, $13.04, 3867 s), is 5% cheaper and lower quality, which is no reason to route to it. List prices 2.5x Opus 5.5; cache read $0.25/M vs $0.20/M."
+api_id = "claude-fable-5-1"
+alias = "fable"
+context = 1_000_000
+long_context = "native"
+max_output = 128_000
+efforts = ["low", "medium", "high", "xhigh", "max"]
+default_effort = "high"
+per_turn_effort = true
+price = { input = 10.0, output = 50.0, cache_read = 0.25, cache_write_5m = 12.50, cache_write_1h = 20.0 }
+verified_at = "2026-09-27"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://platform.claude.com/docs/en/models/fable-5-1/overview",
+  "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1",
+  "https://cursor.com/cursorbench",
+  "https://artificialanalysis.ai/agents/coding-agents",
+  "https://www.anthropic.com/claude-opus-5-5-system-card",
+]
+
+[models.claude-fable-5]
+label = "Fable 5"
+status = "dominated"
+reason = "Legacy, superseded by Fable 5.1. Index v4.3.2 (max, the only config measured): 50 at $8.75/task vs Opus 5.5 medium 51 at $1.34 (6.5x the cost). Cache read $1/M (5x Opus 5.5). No per-message effort (the API returns 400). The `fable` alias resolves to Fable 5.1, so subagents can't reach it."
+api_id = "claude-fable-5"
+context = 1_000_000
+long_context = "native"
+max_output = 128_000
+efforts = ["low", "medium", "high", "xhigh", "max"]
+default_effort = "high"
+price = { input = 10.0, output = 50.0, cache_read = 1.0, cache_write_5m = 12.50, cache_write_1h = 20.0 }
+verified_at = "2026-09-27"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://platform.claude.com/docs/en/models/fable-5/overview",
+  "https://artificialanalysis.ai/models/releases/claude-fable-5",
+]
 
 [models.claude-opus-5]
 label = "Opus 5"
 status = "dominated"
-reason = "Superseded by Opus 5.5 at equal or lower cost per task; figures to record at the first refresh."
+reason = "Dominated by Opus 5.5 at every effort. Index v4.3.2: low 39 at $1.10 vs Opus 5.5 low 42 at $0.55; medium to max (45 to 51, $2.19 to $5.86) vs Opus 5.5 medium 51 at $1.34. CursorBench 4.0 max: 46.6% at $11.95 vs Opus 5.5 medium 52.5% at $2.91."
+api_id = "claude-opus-5"
+efforts = ["low", "medium", "high", "xhigh", "max"]
+price = { input = 5.0, output = 25.0, cache_read = 0.50, cache_write_5m = 6.25, cache_write_1h = 10.0 }
+verified_at = "2026-09-27"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://artificialanalysis.ai/models/releases/claude-opus-5",
+]
 
 [models.claude-opus-4-8]
 label = "Opus 4.8"
 status = "dominated"
-reason = "Dominated by Opus 5.5; still used automatically by Opus 5.5 cyber safeguards, nothing to route. Figures to record at the first refresh."
-
-[models.claude-fable-5-1]
-label = "Fable 5.1"
-status = "excluded"
-reason = "Replaced by Opus 5.5."
+reason = "Dominated: index v4.3.2 max 42 at $4.08/task, the index Opus 5.5 low reaches at $0.55 (7.4x cheaper). Opus 5.5's cyber safeguards still fall back to it automatically; nothing to route."
+api_id = "claude-opus-4-8"
+efforts = ["low", "medium", "high", "xhigh", "max"]
+price = { input = 5.0, output = 25.0, cache_read = 0.50, cache_write_5m = 6.25, cache_write_1h = 10.0 }
+verified_at = "2026-09-27"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://artificialanalysis.ai/models/releases/claude-opus-4-8",
+]
 
 # ---------------------------------------------------------- measurements
 # Artificial Analysis Intelligence Index v4.3.2 (knowledge work + terminal
 # agentic; not pure Claude Code — the ledger confirms or corrects).
+# Re-read 2026-09-27: AA revised several times per task since 2026-09-26.
 
 [[measurements]]
 model = "claude-opus-5-5"
 effort = "low"
 index = 42
 cost_per_task = 0.55
-time_per_task_s = 80
+time_per_task_s = 81
+output_tokens_per_task = 10_000
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
-source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
 
 [[measurements]]
 model = "claude-opus-5-5"
@@ -124,47 +180,65 @@ effort = "medium"
 index = 51
 cost_per_task = 1.34
 time_per_task_s = 203
+output_tokens_per_task = 26_000
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
-source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
 
 [[measurements]]
 model = "claude-opus-5-5"
 effort = "high"
 index = 54
 cost_per_task = 1.82
-time_per_task_s = 262
+time_per_task_s = 284
+output_tokens_per_task = 36_000
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
-source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
 
 [[measurements]]
 model = "claude-opus-5-5"
 effort = "xhigh"
 index = 56
 cost_per_task = 3.46
-time_per_task_s = 458
+time_per_task_s = 468
+output_tokens_per_task = 66_000
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
-source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
 
 [[measurements]]
 model = "claude-opus-5-5"
 effort = "max"
 index = 58
 cost_per_task = 5.98
+output_tokens_per_task = 119_000
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
-source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
+
+[[measurements]]
+model = "claude-haiku-4-5"
+# Reasoning variant (extended thinking). Non-reasoning: index 15, no cost published.
+# Kept under its own version: routed Haiku subagents run without thinking
+# (the proxy strips adaptive thinking), so this is not the configuration
+# that runs and must not set the tier's cost.
+index = 17
+cost_per_task = 0.28
+time_per_task_s = 187
+output_tokens_per_task = 18_000
+benchmark_version = "v4.3.2-reasoning"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-4-5-haiku"
 
 [[measurements]]
 model = "claude-sonnet-5"
 effort = "low"
 index = 24
 cost_per_task = 0.51
-time_per_task_s = 150
+time_per_task_s = 157
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
+measured_at = "2026-09-27"
 source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
 
 [[measurements]]
@@ -172,22 +246,336 @@ model = "claude-sonnet-5"
 effort = "medium"
 index = 28
 cost_per_task = 1.00
-time_per_task_s = 253
+time_per_task_s = 276
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
+measured_at = "2026-09-27"
 source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
 
-# Sonnet 5 high/xhigh: not recorded (range medium→max 28→38 is dominated).
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "high"
+index = 32
+cost_per_task = 1.79
+time_per_task_s = 404
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "xhigh"
+index = 34
+cost_per_task = 2.87
+time_per_task_s = 597
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
 
 [[measurements]]
 model = "claude-sonnet-5"
 effort = "max"
 index = 38
 cost_per_task = 5.09
-time_per_task_s = 862
+time_per_task_s = 997
 benchmark_version = "v4.3.2"
-measured_at = "2026-09-26"
+measured_at = "2026-09-27"
 source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "low"
+index = 47
+cost_per_task = 2.37
+time_per_task_s = 245
+output_tokens_per_task = 22_000
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "medium"
+index = 49
+cost_per_task = 2.98
+time_per_task_s = 318
+output_tokens_per_task = 28_000
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "high"
+index = 51
+cost_per_task = 3.91
+time_per_task_s = 445
+output_tokens_per_task = 38_000
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "xhigh"
+index = 53
+cost_per_task = 5.98
+time_per_task_s = 646
+output_tokens_per_task = 61_000
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "max"
+index = 53
+cost_per_task = 7.63
+time_per_task_s = 711
+output_tokens_per_task = 78_000
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-fable-5-1"
+
+[[measurements]]
+model = "claude-fable-5"
+effort = "max"
+index = 50
+cost_per_task = 8.75
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/claude-fable-5"
+
+[[measurements]]
+model = "claude-opus-5"
+effort = "low"
+index = 39
+cost_per_task = 1.10
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/claude-opus-5"
+
+[[measurements]]
+model = "claude-opus-5"
+effort = "medium"
+index = 45
+cost_per_task = 2.19
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/claude-opus-5"
+
+[[measurements]]
+model = "claude-opus-5"
+effort = "high"
+index = 48
+cost_per_task = 3.61
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/claude-opus-5"
+
+[[measurements]]
+model = "claude-opus-5"
+effort = "xhigh"
+index = 50
+cost_per_task = 4.88
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/claude-opus-5"
+
+[[measurements]]
+model = "claude-opus-5"
+effort = "max"
+index = 51
+cost_per_task = 5.86
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/claude-opus-5"
+
+[[measurements]]
+model = "claude-opus-4-8"
+effort = "max"
+index = 42
+cost_per_task = 4.08
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/models/releases/claude-opus-4-8"
+
+# CursorBench 4.0 (2026-09-10): agentic coding on real Cursor sessions, run in
+# Cursor's harness; index = score in %, cost per task at list prices with
+# cache reads/writes. Never compared with v4.3.2 (frontier.py ignores it by
+# default; see it with --version cursorbench-4.0). Opus 5.5 costs are
+# Anthropic's estimates from Cursor's token counts; the others are Cursor's.
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "low"
+index = 43.7
+cost_per_task = 1.17
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "medium"
+index = 52.5
+cost_per_task = 2.91
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "high"
+index = 56.0
+cost_per_task = 3.97
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "xhigh"
+index = 56.0
+cost_per_task = 6.98
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "max"
+index = 57.8
+cost_per_task = 13.43
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "low"
+index = 24.1
+cost_per_task = 1.39
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "medium"
+index = 28.0
+cost_per_task = 2.31
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "high"
+index = 30.8
+cost_per_task = 3.48
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "xhigh"
+index = 32.0
+cost_per_task = 4.55
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-sonnet-5"
+effort = "max"
+index = 34.1
+cost_per_task = 7.17
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "low"
+index = 45.1
+cost_per_task = 5.44
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "medium"
+index = 46.8
+cost_per_task = 7.05
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "high"
+index = 49.2
+cost_per_task = 9.08
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "xhigh"
+index = 51.6
+cost_per_task = 13.01
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "max"
+index = 51.8
+cost_per_task = 17.28
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-27"
+source = "https://cursor.com/cursorbench"
+
+# Artificial Analysis Coding Agent Index v1.5 (DeepSWE v1.1, Terminal-Bench
+# 4.0, SWE-Atlas-QnA), run in Claude Code, max effort only; data materialized
+# 2026-09-26. Time = agent wall time per task. Never compared with v4.3.2.
+
+[[measurements]]
+model = "claude-opus-5-5"
+effort = "max"
+index = 66.0
+cost_per_task = 13.04
+time_per_task_s = 3867
+output_tokens_per_task = 333_177
+benchmark_version = "aa-coding-agent-index-v1.5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/agents/coding-agents"
+
+[[measurements]]
+model = "claude-fable-5-1"
+effort = "max"
+index = 62.2
+cost_per_task = 12.39
+time_per_task_s = 2090
+output_tokens_per_task = 133_632
+benchmark_version = "aa-coding-agent-index-v1.5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/agents/coding-agents"
+
+[[measurements]]
+model = "claude-opus-5"
+effort = "max"
+index = 59.7
+cost_per_task = 10.79
+time_per_task_s = 2516
+output_tokens_per_task = 136_656
+benchmark_version = "aa-coding-agent-index-v1.5"
+measured_at = "2026-09-27"
+source = "https://artificialanalysis.ai/agents/coding-agents"
 
 # ------------------------------------------------------------ main tiers
 # The main session stays on one model; only effort varies (per-turn effort
@@ -243,7 +631,11 @@ no = "Work one assistant does well alone: a single feature, bug, question, or re
 [tiers.subagent.haiku]
 rank = 1
 model = "claude-haiku-4-5"
-cost = 0.15  # no measurement: Opus 5.5 low x the Haiku/Opus price ratio
+# Priced as it runs (no thinking): a quarter of Opus 5.5's per-token prices
+# × Opus low's cost per task (0.55). Ledger 2026-09-27: 115 routed Haiku
+# subagent requests averaged 429 output tokens and $0.011 each, vs about
+# $0.05 for Opus low subagent requests.
+cost = 0.14
 criteria = "Mechanical, fully specified work: finding files, listing or extracting facts, grepping, applying an explicit edit, one-line answers."
 
 [tiers.subagent.opus-low]
