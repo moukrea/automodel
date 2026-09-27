@@ -152,7 +152,11 @@ func (t *tap) finish() {
 		if !t.seen && t.status < 400 {
 			return
 		}
-		go t.record()
+		t.p.bg.Add(1)
+		go func() {
+			defer t.p.bg.Done()
+			t.record()
+		}()
 	})
 }
 

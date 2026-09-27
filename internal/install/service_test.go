@@ -147,6 +147,11 @@ func TestDetachedPidIgnoresOtherProcess(t *testing.T) {
 		t.Skip(err)
 	}
 	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+	// Right after fork the child may not have exec'd sleep yet (empty or
+	// parent command line): wait until it has.
+	for deadline := time.Now().Add(3 * time.Second); !strings.Contains(cmdline(cmd.Process.Pid), "sleep") && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
 	cfg := config.Default()
 	cfg.StateDir = t.TempDir()
 	os.WriteFile(PidFile(cfg), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600)
