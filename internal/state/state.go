@@ -93,6 +93,8 @@ type Session struct {
 	// epoch reset; their ratio calibrates switch-cost decisions.
 	SpendUSD float64 `json:"spend_usd,omitempty"`
 	Prompts  int     `json:"prompts,omitempty"`
+	// TotalUSD is the whole session's spend, all scopes (budget cap).
+	TotalUSD float64 `json:"total_usd,omitempty"`
 
 	// Pin is an effort the user chose (Claude Code's /effort, or an
 	// [effort:X] tag in a prompt): routing stops until it is released
@@ -235,7 +237,7 @@ func lock(path string) (func(), error) {
 // than maxAge, and returns the number of sessions removed.
 func (s Store) Prune(maxAge time.Duration) int {
 	n := 0
-	for _, sub := range []string{"sessions", "prompts", "statusline"} {
+	for _, sub := range []string{"sessions", "prompts", "statusline", "states"} {
 		dir := filepath.Join(s.Dir, sub)
 		entries, _ := os.ReadDir(dir)
 		for _, e := range entries {

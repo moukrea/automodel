@@ -33,6 +33,7 @@ type Case struct {
 	Accept    []string        `json:"accept"`
 	Modes     map[string]bool `json:"modes"`
 	Continues *bool           `json:"continues"`
+	Note      string          `json:"note,omitempty"`
 }
 
 type Result struct {

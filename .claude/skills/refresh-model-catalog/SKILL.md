@@ -118,6 +118,10 @@ the user's explicit approval.
      no ≤ 0.68 → 0.75). If the gap closes, rewrite the yes/no criteria first.
    - Add cases to `testdata/eval/routing.jsonl` for every misroute found in
      the ledger (one line: state, want, accept, modes, continues).
+   - Review `~/.local/state/automodel/flagged.jsonl` (decisions the user
+     flagged with `automodel flag`; `automodel eval --cases` runs them);
+     turn flagged cases into anonymised eval cases (never copy the user's
+     text into the public repo).
    - Calibrate `meta.underprovision_penalty` from the ledger: warm decisions
      that switch *up* right after a switch *down* (the lower tier was not
      enough) argue for a higher penalty; routine prompts kept high argue for

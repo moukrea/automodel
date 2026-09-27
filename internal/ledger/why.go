@@ -171,6 +171,9 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	if d.KeepReason != "" {
 		why = append(why, d.KeepReason)
 	}
+	if d.BudgetCap != "" {
+		why = append(why, "⚠ budget cap: "+d.BudgetCap+" → "+d.Chosen)
+	}
 	if d.ContinuesP != nil {
 		why = append(why, fmt.Sprintf("continues the work: %.2f", *d.ContinuesP))
 	}
@@ -211,4 +214,19 @@ func FollowFrom(path, session string, seen int, o WhyOptions, w io.Writer, stop 
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// Nth returns the n-th latest decision (1 = the latest) of a session (ID
+// or prefix; "" = the most recent) in a scope ("" = any).
+func Nth(all []Decision, session, scope string, n int) (Decision, bool) {
+	sid, ds := SessionDecisions(all, session, 0)
+	for i := len(ds) - 1; i >= 0 && sid != ""; i-- {
+		if scope != "" && ds[i].Scope != scope {
+			continue
+		}
+		if n--; n <= 0 {
+			return ds[i], true
+		}
+	}
+	return Decision{}, false
 }

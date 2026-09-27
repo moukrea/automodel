@@ -572,6 +572,9 @@ func TestEffortTagPins(t *testing.T) {
 	if sess.Pin != "xhigh" || sess.PinSource != "prompt" || sess.Main.Tier != "xhigh" || sess.Main.Trigger != "pinned" || fj.calls() != calls {
 		t.Fatalf("tag not pinned without asking Jev: pin %q, main %+v, calls %d→%d", sess.Pin, sess.Main, calls, fj.calls())
 	}
+	if all, _ := ledger.Decisions(env.Cfg.Ledger); all[len(all)-1].Repo != cwd {
+		t.Errorf("pin recorded without its repo: %+v", all[len(all)-1])
+	}
 	if sess.PendingEffort == nil && sess.EffortBase != "" {
 		t.Error("a pinned effort change must go through per-turn effort")
 	}
