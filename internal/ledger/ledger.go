@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
+
+	"github.com/moukrea/automodel/internal/flock"
 )
 
 type Shadow struct {
@@ -92,10 +93,11 @@ func (l Ledger) Append(rec any) error {
 		return err
 	}
 	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	unlock, err := flock.Lock(f)
+	if err != nil {
 		return err
 	}
-	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer unlock()
 	_, err = f.Write(append(line, '\n'))
 	return err
 }
