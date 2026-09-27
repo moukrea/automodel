@@ -64,6 +64,10 @@ statusLine ─▶ automodel statusline:  jev → opus-5.5·xhigh +ultracode 0.82
 - backs up `~/.claude/settings.json` (`settings.json.automodel-backup-*`) and
   merges the `env` vars, the hooks, the statusline and
   `permissions.allow: ["Workflow"]`.
+- adds two user slash commands, `~/.claude/commands/why.md` and `flag.md`:
+  `/why` shows the current session's latest decisions, `/flag xhigh too hard
+  for low` flags the last one (a file of that name you wrote yourself is
+  kept).
 
 The key lives in the config file (read on every hook call, no restart
 needed); `automodel key set` reads it on stdin:
@@ -93,8 +97,8 @@ and main tiers must offer at least
 `meta.main_min_context` (1M).
 
 `automodel install --dry-run` only prints what would be merged.
-`automodel uninstall` removes the settings entries, restores your statusline
-and removes the service (config and state are kept).
+`automodel uninstall` removes the settings entries and the slash commands,
+restores your statusline and removes the service (config and state are kept).
 
 ## When it decides (main session)
 
