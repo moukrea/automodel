@@ -98,6 +98,11 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			trigger = "pinned-" + trigger
 		}
 	}
+	if trigger == "warm" && pin == "" && env.Cfg.Features.FastPath && goAhead(in.Prompt) {
+		// A bare go-ahead continues the work in progress: nothing to ask.
+		env.LogKept(in.SessionID, sess.Main, "go-ahead: continues the work in progress")
+		trigger = ""
+	}
 	if trigger != "" && pin == "" { // no routing while pinned
 		if tr == nil && trigger != "initial" {
 			tr = readTranscript(in.TranscriptPath)
@@ -295,6 +300,28 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	}
 	return router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
 		State: st, RepoDir: in.Cwd, Context: ctxTokens}
+}
+
+// goAheads are prompts that only tell Claude to carry on.
+var goAheads = map[string]bool{}
+
+func init() {
+	for _, p := range []string{"y", "yes", "yep", "yeah", "yup", "ok", "okay", "k", "sure", "go", "go ahead", "go on",
+		"continue", "carry on", "keep going", "proceed", "do it", "lgtm", "sounds good", "looks good", "perfect", "great",
+		"oui", "ouais", "ok go", "vas y", "vas-y", "go go", "continue stp", "continue please", "please continue", "yes please",
+		"d'accord", "dac", "parfait", "fonce", "allez", "allez-y", "c'est bon", "c'est parti", "on y va", "ok vas-y", "oui vas-y"} {
+		goAheads[p] = true
+	}
+}
+
+var goAheadTrim = regexp.MustCompile(`[\s.!,;:]+$`)
+
+// goAhead reports whether a prompt is only a go-ahead.
+func goAhead(prompt string) bool {
+	p := strings.ToLower(strings.TrimSpace(prompt))
+	p = goAheadTrim.ReplaceAllString(p, "")
+	p = strings.Join(strings.Fields(p), " ")
+	return len(p) <= 24 && goAheads[p]
 }
 
 var effortTagRE = regexp.MustCompile(`(?i)\[effort:\s*(low|medium|high|xhigh|max|auto)\s*\]`)

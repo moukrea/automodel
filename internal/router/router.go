@@ -379,6 +379,20 @@ func (e *Env) Pinned(sessionID string, t *catalog.Tier, source string) *state.De
 	return d
 }
 
+// LogKept records a warm turn that kept the current decision without
+// asking Jev.
+func (e *Env) LogKept(sessionID string, cur *state.Decision, reason string) {
+	if cur == nil {
+		return
+	}
+	rec := ledger.Decision{TS: e.Now(), Kind: "decision", SessionID: sessionID, Scope: cur.Scope, Trigger: "warm",
+		Warm: true, From: cur.Tier, Kept: true, KeepReason: reason, Skipped: true,
+		Chosen: cur.Tier, Model: cur.APIID, Effort: cur.Effort, Mode: cur.Mode}
+	if err := e.Ledger.Append(rec); err != nil {
+		log.Printf("ledger: %v", err)
+	}
+}
+
 // DefaultDecision is the tier applied when nothing was decided.
 func (e *Env) DefaultDecision(scope, trigger string) *state.Decision {
 	d := &state.Decision{Scope: scope, Trigger: trigger, DecidedAt: e.Now()}

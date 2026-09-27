@@ -71,6 +71,10 @@ type Features struct {
 	// effort against the cost of switching (cache rebuild), and only switches
 	// on a warm turn when the decision is confident enough.
 	CostAware bool `toml:"cost_aware"`
+	// FastPath keeps the current tier without asking Jev on warm turns whose
+	// prompt is a bare go-ahead ("yes", "continue", "vas-y"): it continues
+	// the work in progress.
+	FastPath bool `toml:"fast_path"`
 
 	// WarmMinConfidence is the confidence a warm switch needs.
 	WarmMinConfidence float64 `toml:"warm_min_confidence"`
@@ -102,7 +106,7 @@ func Default() *Config {
 		RouteWorkflowSteps:           true,
 		Update:                       Update{Auto: true, Interval: Duration{24 * time.Hour}},
 		Features: Features{
-			WarmDecisions: true, PerTurnEffort: true, CostAware: true,
+			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
 			WarmMinConfidence: 0.7, WarmTimeout: Duration{3 * time.Second}, SwitchHorizonPrompts: 3,
 		},
 	}

@@ -202,7 +202,7 @@ func TestDecideLifecycle(t *testing.T) {
 	// warm "continue": Jev is asked (with the continuation question), the
 	// tier is kept, no second notice.
 	fj.answers = []fa{{tier: "xhigh", conf: 0.9, ultra: 0.5, cont: 0.9}}
-	if out := prompt("continue"); out != nil {
+	if out := prompt("continue with the remaining modules"); out != nil {
 		t.Errorf("unexpected output %+v", out)
 	}
 	if fj.calls() != 2 || fj.last().Questions[jev.QContinues].Type != "noul" || fj.last().State.(map[string]any)["phase"] != "warm" {
@@ -589,5 +589,31 @@ func TestEffortTagPins(t *testing.T) {
 	}
 	if effortTag("no tag here") != "" || effortTag("[Effort: MAX] please") != "max" || effortTag("[effort:ultra]") != "" {
 		t.Error("effortTag parsing")
+	}
+}
+
+func TestGoAheadFastPath(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd}) }
+	prompt("Find the race in checkout, don't fix yet")
+	calls := fj.calls()
+	for _, p := range []string{"yes", "Vas-y !", "continue.", "OK go", "  LGTM  "} {
+		prompt(p)
+	}
+	if fj.calls() != calls {
+		t.Fatalf("Jev asked for a go-ahead (%d calls)", fj.calls()-calls)
+	}
+	if s, _ := env.State.Load("s1"); s.Main.Tier != "xhigh" {
+		t.Fatalf("go-ahead changed the tier: %+v", s.Main)
+	}
+	prompt("yes, and also add rate limiting to the login endpoint")
+	if fj.calls() != calls+1 {
+		t.Fatal("a real prompt starting with yes wasn't routed")
+	}
+	if goAhead("continue the refactor of the payment module") {
+		t.Error("goAhead matched a real instruction")
 	}
 }
