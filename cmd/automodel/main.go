@@ -26,6 +26,7 @@ import (
 
 	"github.com/moukrea/automodel/internal/catalog"
 	"github.com/moukrea/automodel/internal/config"
+	"github.com/moukrea/automodel/internal/doctor"
 	"github.com/moukrea/automodel/internal/hooks"
 	"github.com/moukrea/automodel/internal/install"
 	"github.com/moukrea/automodel/internal/ledger"
@@ -51,6 +52,7 @@ Usage:
                                        print (or apply) the Claude Code settings, config and service
   automodel uninstall                  remove the settings entries and the service
   automodel start                      start the proxy if it isn't running (at login, without systemd)
+  automodel doctor                     check the installation (non-zero exit on a failed check)
   automodel update [--check]           install the latest release (the service also does it daily)
   automodel key set                    read the OpenRouter key on stdin into the config (0600)
   automodel prune [--older-than 30d]   drop old session state
@@ -88,6 +90,10 @@ func run(cfgPath, cmd string, args []string) error {
 	if err != nil {
 		if cmd == "hook" || cmd == "statusline" {
 			return nil // never break Claude Code
+		}
+		if cmd == "doctor" {
+			doctor.Print(os.Stdout, []doctor.Result{{Status: doctor.Fail, Name: "config", Detail: err.Error(), Fix: "fix or remove the file, then automodel install"}})
+			os.Exit(1)
 		}
 		return err
 	}
@@ -139,6 +145,8 @@ func run(cfgPath, cmd string, args []string) error {
 			return err
 		}
 		return install.Start(o, cfg)
+	case "doctor":
+		return doctorCmd(cfg)
 	case "prune":
 		fs := flag.NewFlagSet("prune", flag.ExitOnError)
 		older := fs.String("older-than", "30d", "age")
@@ -171,6 +179,7 @@ func serve(cfg *config.Config, args []string) error {
 		return err
 	}
 	p.Debug = *debug
+	p.Version = version
 	log.Printf("automodel %s listening on %s → %s (model %q, catalog %s)", version, cfg.Listen, cfg.Upstream, cfg.CustomModelID, cfg.Catalog)
 	afterUpdate(cfg)
 	exe := install.Self()
@@ -346,6 +355,30 @@ func printInstall(o install.Options, cfg *config.Config) error {
 	}
 	fmt.Printf("# Entries merged into %s (config: %s)\n%s\n", o.SettingsPath, o.ConfigPath, b)
 	fmt.Printf("# Service: %s runs `%s --config %s serve`\n", o.UnitPath, o.Exe, o.ConfigPath)
+	return nil
+}
+
+func doctorCmd(cfg *config.Config) error {
+	o, err := installOptions(cfg, nil)
+	if err != nil {
+		return err
+	}
+	up := upgradeCmd(o.Exe)
+	if up == "" {
+		up = "automodel update"
+	}
+	rs := doctor.Run(doctor.Env{Version: version, UpdateCmd: up, Cfg: cfg, Install: o,
+		Latest: func(ctx context.Context) (string, error) {
+			rel, err := update.Latest(ctx)
+			if err != nil {
+				return "", err
+			}
+			return rel.Tag, nil
+		}})
+	if n := doctor.Print(os.Stdout, rs); n > 0 {
+		fmt.Printf("%d check(s) failed\n", n)
+		os.Exit(1)
+	}
 	return nil
 }
 

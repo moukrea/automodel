@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,10 @@ const (
 	maxBody       = 64 << 20
 	stateThrottle = 20 * time.Second
 	maxBindings   = 50000
+
+	// HealthPath answers the proxy's own version (automodel doctor); it is
+	// never forwarded.
+	HealthPath = "/automodel/health"
 )
 
 type Proxy struct {
@@ -40,6 +45,7 @@ type Proxy struct {
 	State   state.Store
 	Ledger  ledger.Ledger
 	Debug   bool
+	Version string // reported on HealthPath
 
 	upstream *url.URL
 	rp       *httputil.ReverseProxy
@@ -116,6 +122,11 @@ func (p *Proxy) Idle(d time.Duration) bool {
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == HealthPath {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"version": p.Version, "pid": os.Getpid()})
+		return
+	}
 	p.inflight.Add(1)
 	p.lastReq.Store(time.Now().UnixNano())
 	defer p.inflight.Add(-1)

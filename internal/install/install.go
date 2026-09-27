@@ -176,6 +176,66 @@ func merge(s *Object, o Options, cfg *config.Config) {
 	}
 }
 
+// SettingsReport compares settings.json with what Apply merges.
+type SettingsReport struct {
+	Env        map[string]string // the env entries as set
+	BadEnv     []string          // automodel env vars missing or different
+	Hooks      []string          // hooks missing or running another binary or config
+	Statusline bool              // the automodel statusline is set
+}
+
+// InspectSettings reads settings.json; a missing file is an error.
+func InspectSettings(o Options, cfg *config.Config) (*SettingsReport, error) {
+	s, raw, err := readSettings(o.SettingsPath)
+	if err != nil {
+		return nil, err
+	}
+	if raw == nil {
+		return nil, fmt.Errorf("%s not found", o.SettingsPath)
+	}
+	r := &SettingsReport{Env: map[string]string{}}
+	env := s.Obj("env")
+	for _, k := range env.keys {
+		v, _ := env.Get(k)
+		r.Env[k] = fmt.Sprint(v)
+	}
+	for _, kv := range envVars(cfg) {
+		if v, ok := r.Env[kv[0]]; !ok || v != kv[1] {
+			r.BadEnv = append(r.BadEnv, kv[0])
+		}
+	}
+	hooks := s.Obj("hooks")
+	for _, h := range hookEvents {
+		if !hasHook(hooks, h.event, o.hookCmd(h.name)) {
+			r.Hooks = append(r.Hooks, h.name)
+		}
+	}
+	c, _ := s.Obj("statusLine").Get("command")
+	r.Statusline = c == o.statuslineCmd()
+	return r, nil
+}
+
+func hasHook(hooks *Object, event, cmd string) bool {
+	groups, _ := hooks.Get(event)
+	list, _ := groups.([]any)
+	for _, g := range list {
+		gobj, ok := g.(*Object)
+		if !ok {
+			continue
+		}
+		hs, _ := gobj.Get("hooks")
+		hl, _ := hs.([]any)
+		for _, h := range hl {
+			if ho, ok := h.(*Object); ok {
+				if c, _ := ho.Get("command"); c == cmd {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Remove undoes Apply: settings entries, statusline (restored), service.
 func Remove(o Options) error {
 	settings, raw, err := readSettings(o.SettingsPath)
