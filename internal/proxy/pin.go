@@ -57,7 +57,7 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 			return false // not a change (the proxy restarted)
 		}
 		s.ClientEffortLast = effort
-		if effort == s.ClientEffort0 {
+		if effort == s.ClientEffort0 && s.PinModel == "" {
 			if s.PinSource == "/effort" {
 				s.Pin, s.PinSource = "", ""
 				log.Printf("pin %s: released (/effort back to %s)", short(sessionID), effort)
@@ -65,6 +65,18 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 			return true
 		}
 		if s.Main == nil {
+			return true
+		}
+		if s.PinModel != "" { // pinned model: /effort changes its effort
+			if m := cat.Model(s.PinModel); m != nil && m.SupportsEffort(effort) && s.Main.Effort != effort {
+				d := *s.Main
+				d.Effort, d.Cause, d.DecidedAt = effort, "/effort", time.Now()
+				s.Main, s.Pin, s.PinSource = &d, effort, "/effort"
+				if perTurn(cat, m) && !s.PerTurnRejected && s.EffortBase != "" {
+					s.PendingEffort = &state.PendingEffort{Effort: effort, CreatedAt: time.Now()}
+				}
+				pinned = &d
+			}
 			return true
 		}
 		t := cat.TierFor(catalog.ScopeMain, s.Main.Model, effort)

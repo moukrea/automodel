@@ -33,6 +33,10 @@ type Decision struct {
 	Epoch      int                `json:"epoch"`
 }
 
+// PinnedTier is the tier of a decision pinned to a model outside the
+// catalog's tiers ([model:X]): the proxy applies its model and effort as is.
+const PinnedTier = "pinned"
+
 // PendingAgent is registered by the agent hook and bound by the proxy to the
 // X-Claude-Code-Agent-Id of the subagent whose first message contains Prompt.
 type PendingAgent struct {
@@ -95,6 +99,7 @@ type Session struct {
 	// (/effort back to ClientEffort0, or [effort:auto]). ClientEffort0 is
 	// the effort Claude Code sent first, i.e. its default.
 	Pin              string `json:"pin,omitempty"`
+	PinModel         string `json:"pin_model,omitempty"`  // [model:X]: catalog model the session is pinned to
 	PinSource        string `json:"pin_source,omitempty"` // "/effort" | "prompt"
 	ClientEffort0    string `json:"client_effort0,omitempty"`
 	ClientEffortLast string `json:"client_effort_last,omitempty"` // last one seen: pins follow changes

@@ -156,6 +156,11 @@ still win.
   pauses (statusline `(pinned)`) until you set `/effort` back to its default.
 - **`[effort:xhigh]`** (or `low`, `medium`, `high`, `max`) anywhere in a
   prompt pins it the same way; **`[effort:auto]`** hands control back to Jev.
+- **`[model:sonnet]`** (any catalog model by alias, with a 1M window) pins
+  the model too, at the effort of `[effort:X]` or the current one;
+  `[model:auto]` releases it. Switching model rewrites the prompt cache.
+  (`/model opus` in Claude Code leaves automodel out of the session
+  entirely.)
 - **"think harder"**, "ultrathink", "take your time", "réfléchis bien"…:
   at least one tier above the current one for that prompt.
 - A bare **go-ahead** ("yes", "continue", "vas-y", "lgtm") keeps the current

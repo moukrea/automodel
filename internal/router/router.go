@@ -393,6 +393,25 @@ func (e *Env) Pinned(sessionID string, t *catalog.Tier, source string) *state.De
 	return d
 }
 
+// PinnedModel is the decision for a model the user pinned ([model:X]),
+// at effort. A model and effort that a main tier runs are pinned as that
+// tier; any other pair keeps state.PinnedTier.
+func (e *Env) PinnedModel(sessionID, model, effort, source string) *state.Decision {
+	if t := e.Catalog.TierFor(catalog.ScopeMain, model, effort); t != nil {
+		return e.Pinned(sessionID, t, source)
+	}
+	now := e.Now()
+	m := e.Catalog.Model(model)
+	d := &state.Decision{Scope: catalog.ScopeMain, Tier: state.PinnedTier, Model: model, APIID: m.APIID, Effort: effort,
+		Trigger: "pinned", Cause: source, DecidedAt: now, Confidence: 1}
+	rec := ledger.Decision{TS: now, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain, Trigger: "pinned",
+		Cause: source, Chosen: d.Tier, Model: d.APIID, Effort: d.Effort, Confidence: 1}
+	if err := e.Ledger.Append(rec); err != nil {
+		log.Printf("ledger: %v", err)
+	}
+	return d
+}
+
 // LogKept records a warm turn that kept the current decision without
 // asking Jev.
 func (e *Env) LogKept(sessionID string, cur *state.Decision, reason string) {

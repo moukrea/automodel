@@ -711,3 +711,34 @@ func TestRepoBoundsWinOverSignalsAndPrivacyOnlyTightens(t *testing.T) {
 		t.Fatalf("think harder went past max_tier: %s", s.Main.Tier)
 	}
 }
+
+func TestModelTagPins(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": p, "cwd": cwd}) }
+	prompt("What does 409 mean?")
+	calls := fj.calls()
+	prompt("[model:sonnet] summarize the README")
+	s, _ := env.State.Load("s1")
+	if s.PinModel != "claude-sonnet-5" || s.Main.Model != "claude-sonnet-5" || s.Main.Tier != state.PinnedTier || s.Main.Effort != "low" || fj.calls() != calls {
+		t.Fatalf("model pin: pin %q/%q, main %+v, calls %d", s.PinModel, s.Pin, s.Main, fj.calls()-calls)
+	}
+	prompt("[effort:high] and explain the tricky part")
+	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5" || s.Main.Effort != "high" {
+		t.Fatalf("effort on a pinned model: %+v", s.Main)
+	}
+	prompt("[model:haiku] quick one") // 200K window: can't run a main session
+	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5" {
+		t.Fatalf("haiku pinned for the main session: %+v", s.Main)
+	}
+	prompt("[model:opus] [effort:xhigh] back to opus") // a model and effort a tier runs: pinned as that tier
+	if s, _ = env.State.Load("s1"); s.Main.Tier != "xhigh" || s.PinModel != "claude-opus-5-5" {
+		t.Fatalf("opus pin: %+v (pin model %q)", s.Main, s.PinModel)
+	}
+	prompt("[model:auto] now route it again")
+	if s, _ = env.State.Load("s1"); s.Pin != "" || s.PinModel != "" || fj.calls() != calls+1 {
+		t.Fatalf("model:auto didn't release: %q %q, calls %d", s.Pin, s.PinModel, fj.calls()-calls)
+	}
+}

@@ -67,41 +67,61 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		trigger = ""
 	}
 
-	// A user-chosen effort outranks routing: an [effort:X] tag pins it, an
-	// [effort:auto] tag releases the pin (and this prompt is routed).
-	// Only prompts the user typed count: subagent results and notifications
-	// can quote a tag.
-	tag := ""
+	// A user-chosen effort or model outranks routing: [effort:X] pins the
+	// effort on the session's model, [model:X] pins a model (with the
+	// effort of [effort:X], else the current one), [effort:auto] or
+	// [model:auto] releases the pin (and this prompt is routed). Only
+	// prompts the user typed count: subagent results and notifications can
+	// quote a tag.
+	etag, mtag := "", ""
 	if !synthetic {
-		tag = effortTag(in.Prompt)
+		etag, mtag = effortTag(in.Prompt), modelTag(env.Catalog, in.Prompt)
 	}
-	pinModel := env.Catalog.DefaultTier(catalog.ScopeMain).Model
+	curModel, curEffort := env.Catalog.DefaultTier(catalog.ScopeMain).Model, ""
 	if sess.Main != nil {
-		pinModel = sess.Main.Model
+		curModel, curEffort = sess.Main.Model, sess.Main.Effort
 	}
-	if tag != "" && tag != "auto" && env.Catalog.TierFor(catalog.ScopeMain, pinModel, tag) == nil {
-		tag = "" // an effort this model doesn't have: ignored
-	}
-	pin, pinSource := sess.Pin, sess.PinSource
+	pin, pinModel, pinSource := sess.Pin, sess.PinModel, sess.PinSource
 	switch {
-	case tag == "auto":
-		pin, pinSource = "", ""
+	case etag == "auto" || mtag == "auto":
+		pin, pinModel, pinSource = "", "", ""
 		if trigger == "" && sess.Main != nil && sess.Pin != "" && env.Cfg.Features.WarmDecisions {
 			trigger = "warm"
 		}
-	case tag != "":
-		pin, pinSource = tag, "prompt"
+	case mtag != "":
+		m := env.Catalog.Model(mtag)
+		eff := etag
+		for _, e := range []string{etag, curEffort, env.Catalog.DefaultTier(catalog.ScopeMain).Effort, "high"} {
+			if e != "" && m.SupportsEffort(e) {
+				eff = e
+				break
+			}
+		}
+		if m.SupportsEffort(eff) {
+			pin, pinModel, pinSource = eff, mtag, "prompt"
+		}
+	case etag != "":
+		switch {
+		case pinModel != "" && env.Catalog.Model(pinModel).SupportsEffort(etag):
+			pin, pinSource = etag, "prompt"
+		case pinModel == "" && env.Catalog.TierFor(catalog.ScopeMain, curModel, etag) != nil:
+			pin, pinSource = etag, "prompt"
+		} // else: an effort this model doesn't have: ignored
 	}
+	tagged := (etag != "" && etag != "auto") || (mtag != "" && mtag != "auto")
 
 	var dec *state.Decision
 	var signals *state.RepoSignals
 	if pin != "" && !synthetic {
-		t := env.Catalog.TierFor(catalog.ScopeMain, pinModel, pin)
-		switch {
-		case t == nil:
+		redecide := tagged || trigger == "initial" || trigger == "compact" || trigger == "cold" || sess.Main == nil
+		if pinModel != "" {
+			if redecide || sess.Main.Model != pinModel || sess.Main.Effort != pin {
+				dec = env.PinnedModel(in.SessionID, pinModel, pin, pinSource)
+				trigger = "pinned-" + trigger
+			}
+		} else if t := env.Catalog.TierFor(catalog.ScopeMain, curModel, pin); t == nil {
 			pin, pinSource = "", "" // no such effort on this model: ignore the pin
-		case tag != "" || trigger == "initial" || trigger == "compact" || trigger == "cold" ||
-			sess.Main == nil || sess.Main.Tier != t.ID:
+		} else if redecide || sess.Main.Tier != t.ID {
 			dec = env.Pinned(in.SessionID, t, pinSource)
 			trigger = "pinned-" + trigger
 		}
@@ -144,7 +164,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			s.Model, s.ModelSource = mi.Model, mi.Source
 		}
 		if !synthetic {
-			s.Pin, s.PinSource = pin, pinSource
+			s.Pin, s.PinModel, s.PinSource = pin, pinModel, pinSource
 		}
 		if dec != nil {
 			prev := s.Main
@@ -363,6 +383,28 @@ var moreThinkingRE = regexp.MustCompile(`(?i)\b(think (harder|more|deeply|carefu
 // asksMoreThinking reports whether a prompt explicitly asks for more
 // thinking.
 func asksMoreThinking(prompt string) bool { return moreThinkingRE.MatchString(prompt) }
+
+var modelTagRE = regexp.MustCompile(`(?i)\[model:\s*([a-z0-9._-]+)\s*\]`)
+
+// modelTag returns the catalog model a [model:X] tag asks for (by alias,
+// catalog key or API ID), "auto" to release a pin, or "". Only models that
+// can run a main session count: an API ID and at least the main window.
+func modelTag(c *catalog.Catalog, prompt string) string {
+	m := modelTagRE.FindAllStringSubmatch(prompt, -1)
+	if len(m) == 0 {
+		return ""
+	}
+	want := strings.ToLower(m[len(m)-1][1])
+	if want == "auto" {
+		return "auto"
+	}
+	for key, md := range c.Models {
+		if (key == want || md.Alias == want || md.APIID == want) && md.APIID != "" && md.Context >= c.Meta.MinMainContext() {
+			return key
+		}
+	}
+	return ""
+}
 
 var effortTagRE = regexp.MustCompile(`(?i)\[effort:\s*(low|medium|high|xhigh|max|auto)\s*\]`)
 

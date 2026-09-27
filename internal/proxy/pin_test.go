@@ -62,3 +62,17 @@ func TestClientEffortPins(t *testing.T) {
 }
 
 func ledgerDecisions(p *Proxy) ([]ledger.Decision, error) { return ledger.Decisions(p.Ledger.Path) }
+
+func TestPinnedModelRewrite(t *testing.T) {
+	p, up, ps := setup(t)
+	p.State.Update("sess-t", func(s *state.Session) bool {
+		s.Main = &state.Decision{Scope: "main", Tier: state.PinnedTier, Model: "claude-sonnet-5", APIID: "claude-sonnet-5", Effort: "high", Trigger: "pinned"}
+		s.PinModel, s.Pin = "claude-sonnet-5", "high"
+		return true
+	})
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-t"}, turnBody(user("p1", true)))
+	m := up.last(t)
+	if m["model"] != "claude-sonnet-5" || m["output_config"].(map[string]any)["effort"] != "high" {
+		t.Fatalf("pinned model not applied: model %v, output_config %v", m["model"], m["output_config"])
+	}
+}

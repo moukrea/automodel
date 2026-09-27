@@ -279,6 +279,11 @@ func (p *Proxy) decisionFor(cat *catalog.Catalog, rt *route, fields map[string]j
 			return b
 		}
 	}
+	// A model the user pinned outside the tiers applies as is.
+	if sess != nil && sess.Main != nil && sess.Main.Tier == state.PinnedTier && cat.Model(sess.Main.Model) != nil {
+		d := *sess.Main
+		return &d
+	}
 	// Main thread, and subagents that inherit the session model (workflow
 	// agents without an explicit model do), follow the main decision.
 	if sess != nil && sess.Main != nil && cat.Tier(catalog.ScopeMain, sess.Main.Tier) != nil {
