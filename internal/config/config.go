@@ -94,7 +94,8 @@ type Features struct {
 	// the work in progress.
 	FastPath bool `toml:"fast_path"`
 
-	// WarmMinConfidence is the confidence a warm switch needs.
+	// WarmMinConfidence is the confidence a warm switch that costs something
+	// (a cache rebuild) needs; a free per-turn effort change follows Jev.
 	WarmMinConfidence float64 `toml:"warm_min_confidence"`
 	// WarmTimeout bounds the Jev call on warm turns (on timeout nothing changes).
 	WarmTimeout Duration `toml:"warm_timeout"`
@@ -127,7 +128,7 @@ func Default() *Config {
 		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "opus-medium"},
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
-			WarmMinConfidence: 0.7, WarmTimeout: Duration{3 * time.Second}, SwitchHorizonPrompts: 3,
+			WarmMinConfidence: 0.8, WarmTimeout: Duration{3 * time.Second}, SwitchHorizonPrompts: 3,
 		},
 	}
 }

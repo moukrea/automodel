@@ -141,9 +141,17 @@ switch must:
    plus the switch cost (0 for a per-turn effort change, else the context
    written to the cache again) picks the tier. When no answer could pay back a
    switch, Jev is not even asked;
-2. **be confident**: Jev's confidence ≥ `features.warm_min_confidence`;
-3. **not downgrade work in progress**: when Jev says the prompt continues the
-   ongoing work ("yes, do it", "continue"), effort can go up, never down.
+2. when the switch costs something (a cache rebuild; not a per-turn effort
+   change), **be confident**: Jev's confidence ≥
+   `features.warm_min_confidence`;
+3. and, for such a switch, **not downgrade work in progress**: when Jev says
+   the prompt continues the ongoing work, effort can go up, never down.
+
+A free switch (per-turn effort) follows Jev's answer: holding the tier there
+made sessions sticky (`docs/research/2026-09-routing-quality.md`). A bare
+go-ahead ("yes", "continue") keeps the tier without asking Jev, also after a
+compaction or a pause, unless it answers a proposal ("Want me to fix it?"):
+then it starts that work and is routed.
 
 **What Jev is asked** (one call): a *Score* over the scope's tiers (they are
 ordered, and a Score sharpens the distribution: mean confidence 0.92 vs 0.88

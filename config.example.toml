@@ -28,7 +28,9 @@ openrouter_api_key = ""
 # compaction, cold cache), with the confidence-escalation policy.
 [features]
 # Re-evaluate the tier on warm turns too. A switch has to beat its cost
-# (see cost_aware) and clear warm_min_confidence.
+# (see cost_aware); one that costs something (a cache rebuild) must also clear
+# warm_min_confidence and not downgrade work in progress. A free per-turn
+# effort change follows Jev's answer.
 warm_decisions = true
 # Change effort mid-conversation without losing the prompt cache
 # (effort-only system messages; models with per_turn_effort in the catalog).
@@ -38,7 +40,7 @@ per_turn_effort = true
 # switch (a cache rebuild of the whole context, unless per-turn effort keeps
 # it). When no switch could pay back, Jev is not even asked.
 cost_aware = true
-warm_min_confidence = 0.7
+warm_min_confidence = 0.8
 warm_timeout = "3s"
 # Prompts a switch is expected to serve, when weighed against a cache rebuild.
 switch_horizon_prompts = 3

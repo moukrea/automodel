@@ -99,33 +99,68 @@ the user's explicit approval.
    - `criteria` are the levels of Jev's Score question, lowest first:
      describe **situations** ("a race condition", "a commit message"), not
      degrees ("moderately complex"); keep neighbouring levels mutually
-     exclusive; English.
+     exclusive; English. Jev judges each level **on its own**: it never sees
+     the level numbers or the neighbours, so "harder than the previous level"
+     or "levels are ordered" means nothing to it. How to write and test them:
+     `references/routing-eval.md`. A wording change is kept only if it wins
+     on the train split *and* holds on the held-out split.
    - Tiers without a measurement need a `cost` (relative cost per task, same
      unit as `cost_per_task`), otherwise it is interpolated (warning).
    - `python3 …/frontier.py catalog.proposed.toml` must exit 0, and
      `automodel catalog check --catalog catalog.proposed.toml` must report no
      error.
 
-6. **Decision quality** — whenever criteria, modes, questions or the Jev
-   version change, and at every periodic refresh:
-   - `automodel eval --catalog catalog.proposed.toml` against
-     `automodel eval` (current catalog); `--format choice` compares with the
-     v1 question. No regression is acceptable on "router decision acceptable"; mean
-     confidence should not drop.
+6. **Decision quality** — whenever criteria, modes, questions, the policy
+   (`underprovision_penalty`, gates) or the Jev version change, and at every
+   periodic refresh. Details and pitfalls: `references/routing-eval.md`.
+   - Build a dev binary and run the eval with an isolated config (never the
+     real `~/.config/automodel`: the eval saves the evaluated catalog as the
+     last-good copy of its state dir):
+     `automodel eval --catalog catalog.proposed.toml --repeat 3 --summary`,
+     once with `--split train` and once with `--split test`, and the same
+     for the current `catalog.toml`. Jev varies a little between calls:
+     compare runs of 3 repeats, never single runs.
+   - **Read the metrics, not just "acceptable".** For each scope: exact
+     accuracy and rank error of Jev's top level *and* of the router's
+     decision (the gap between the two is the policy's doing); recall per
+     tier; the confusion matrices (a tier skipped, e.g. low → high with
+     medium empty, is the collapse); **decision share vs label share** per
+     tier; ECE of the top probability.
+   - **Regression gate** (mandatory):
+     `automodel eval --catalog catalog.proposed.toml --split test --repeat 3 --summary --check`
+     must print "regression gate: pass" (decision exact ≥ 88%, recall ≥ 80%
+     per tier, each tier's decision share within 6 points of its label
+     share, rank error ≤ 0.12). A proposal that fails is not proposed. If
+     a new Jev version or tier set makes a gate unreachable, report it with
+     the tables; changing `eval.DefaultGate` needs the user's approval.
+   - Tune on `--split train` only. The `test` cases are held out: look at
+     their aggregate numbers, never at their per-case rows while tuning, or
+     the gate stops meaning anything. New cases go to train unless you add a
+     batch big enough to split (alternate train/test within each label).
    - Thresholds come from the eval, never from intuition: a mode's
      `threshold` and `meta.continues_threshold` sit in the gap between the
-     yes-cases' and no-cases' probabilities the eval prints (e.g. yes ≥ 0.85,
-     no ≤ 0.68 → 0.75). If the gap closes, rewrite the yes/no criteria first.
+     yes-cases' and no-cases' probabilities on the train split (print them
+     with `--json`); if there is no gap, pick the value with the fewest
+     false no's and rewrite the yes/no criteria. `features.warm_min_confidence`
+     (costly switches only) sits where exact accuracy by confidence bucket
+     jumps (0.8 for jev-1.13: 39–46% below, 83%+ above).
+   - `meta.underprovision_penalty`: compare the cost-aware rule at several
+     penalties against Jev's argmax on both splits (exact accuracy and the
+     realized cost loss against the labels, `references/routing-eval.md`).
+     A penalty that moves decisions above the labels (decision share of
+     high/xhigh above label share, "above the label" count growing) is too
+     high; 1.5 was the measured optimum for jev-1.13. Cross-check with the
+     ledger: warm switches up right after a switch down argue for more.
    - Add cases to `testdata/eval/routing.jsonl` for every misroute found in
-     the ledger (one line: state, want, accept, modes, continues).
+     the ledger (state, want, accept, note, modes, continues). Invent the
+     text: never copy real prompts (the repository is public). Before
+     trusting ledger shares, drop demo and test sessions (sessions whose
+     transcript lives in a demo project): in 2026-09, 77 of 98 decisions
+     came from scripted demos built on extreme prompts.
    - Review `~/.local/state/automodel/flagged.jsonl` (decisions the user
      flagged with `automodel flag`; `automodel eval --cases` runs them);
      turn flagged cases into anonymised eval cases (never copy the user's
      text into the public repo).
-   - Calibrate `meta.underprovision_penalty` from the ledger: warm decisions
-     that switch *up* right after a switch *down* (the lower tier was not
-     enough) argue for a higher penalty; routine prompts kept high argue for
-     a lower one. Report the evidence, change it only with approval.
 
 7. **Report to the user** — also written to
    `docs/research/YYYY-MM-<topic>.md` (sources with their dates, frontier
@@ -169,9 +204,10 @@ the user's explicit approval.
       current one is applied, both are logged;
    2. after enough decisions, compare with `automodel report --json`
       (`shadow.agree_rate`, `shadow.disagreements`, confidence buckets);
-   3. run `automodel eval` on both versions; recalibrate mode thresholds,
-      `continues_threshold`, `features.warm_min_confidence` and (v1 policy)
-      `theta_act` / `theta_low` for the new version;
+   3. run `automodel eval` on both versions (`--repeat 3`, train and test,
+      `--check`); recalibrate mode thresholds, `continues_threshold`,
+      `features.warm_min_confidence`, `underprovision_penalty` and (v1
+      policy) `theta_act` / `theta_low` for the new version;
    4. switch `meta.jev_model`, clear `jev_shadow_model`, log it in the history.
 
 ## History entry template
@@ -192,6 +228,13 @@ value depends on keeping the prompt cache: a beta header the model doesn't
 need (the long-context beta on a native-1M model did exactly this), a
 top-level effort change on a per-turn model, or a model switch each rewrite
 the whole conversation at cache-write price. Step 8 is not optional.
+
+**"Acceptable" hides a collapsing router.** A router can score 90%
+acceptable while it never picks medium: accept sets absorb the adjacent
+error on every case. Check exact accuracy, recall per tier and decision
+share against label share at every refresh (`--check` does). And look at
+the gap between Jev's top level and the router's decision: in 2026-09 Jev was
+right and the policy (penalty 3.0, gates on free switches) was not.
 
 **Context windows are a hard constraint, not a cost trade-off.** Main tiers
 must sit on models with at least `meta.main_min_context` (1M): routing a long

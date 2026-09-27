@@ -294,22 +294,40 @@ func TestWarmDecisions(t *testing.T) {
 		t.Errorf("per-turn switch: %+v / pending %+v / base %q", s.Main, s.PendingEffort, s.EffortBase)
 	}
 
-	// Not confident enough: kept.
+	// A free switch (per-turn effort) follows Jev even when it is unsure
+	// or the prompt continues the work: holding the tier made sessions sticky.
 	warmSession(t, env, "w2", "xhigh", 300_000)
 	fj.answers = []fa{{tier: "low", conf: 0.5, cont: 0.1}}
 	decide("w2", "hmm")
-	if s := main("w2"); s.Main.Tier != "xhigh" || s.PendingEffort != nil {
-		t.Errorf("low confidence switched: %+v", s.Main)
+	if s := main("w2"); s.Main.Tier == "xhigh" || s.PendingEffort == nil {
+		t.Errorf("free switch held by the confidence gate: %+v", s.Main)
+	}
+	warmSession(t, env, "w3", "xhigh", 300_000)
+	fj.answers = []fa{{tier: "medium", conf: 0.9, cont: 0.9}}
+	decide("w3", "ok fix that typo in the test fixture too")
+	if s := main("w3"); s.Main.Tier != "medium" {
+		t.Errorf("free switch held by the continuation gate: %+v", s.Main)
 	}
 
-	// A go-ahead on the work in progress never downgrades...
-	warmSession(t, env, "w3", "xhigh", 300_000)
-	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.9}}
-	decide("w3", "yes")
-	if s := main("w3"); s.Main.Tier != "xhigh" {
-		t.Errorf("continuation downgraded: %+v", s.Main)
+	// A switch that costs something (no per-turn effort: the cache is
+	// rebuilt) needs a confident answer, and never downgrades work that
+	// continues.
+	env.Cfg.Features.PerTurnEffort = false
+	warmSession(t, env, "w2c", "xhigh", 2_000)
+	fj.answers = []fa{{tier: "low", conf: 0.5, cont: 0.1}}
+	decide("w2c", "hmm")
+	if s := main("w2c"); s.Main.Tier != "xhigh" {
+		t.Errorf("costly switch on low confidence: %+v", s.Main)
 	}
-	// ...but may upgrade.
+	warmSession(t, env, "w3c", "xhigh", 2_000)
+	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.9}}
+	decide("w3c", "ok and the other one")
+	if s := main("w3c"); s.Main.Tier != "xhigh" {
+		t.Errorf("costly downgrade of continuing work: %+v", s.Main)
+	}
+	env.Cfg.Features.PerTurnEffort = true
+
+	// A continuation may upgrade.
 	warmSession(t, env, "w4", "low", 50_000)
 	fj.answers = []fa{{tier: "high", conf: 0.9, cont: 0.9}}
 	decide("w4", "yes, apply the fix")
@@ -612,6 +630,25 @@ func TestGoAheadFastPath(t *testing.T) {
 	}
 	if s, _ := env.State.Load("s1"); s.Main.Tier != "xhigh" {
 		t.Fatalf("go-ahead changed the tier: %+v", s.Main)
+	}
+	// A go-ahead to a proposal starts the proposed work: routed.
+	tp := filepath.Join(cwd, "t.jsonl")
+	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"There is no lock, so two orders can oversell. **Want me to fix it?**"}]}}`+"\n"), 0o644)
+	run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "yes", "cwd": cwd, "transcript_path": tp})
+	if fj.calls() != calls+1 {
+		t.Fatalf("a go-ahead to a proposal was not routed (%d calls)", fj.calls()-calls)
+	}
+	calls = fj.calls()
+	if router.Proposes("Done, all tests pass.") || !router.Proposes("Should I also add a test?\n") {
+		t.Error("Proposes")
+	}
+
+	// After a compaction, "continue" carries on the pending work: its tier
+	// is kept without asking Jev (which rates the bare word as trivial).
+	run(t, env, "precompact", map[string]any{"session_id": "s1", "trigger": "auto"})
+	prompt("continue")
+	if s, _ := env.State.Load("s1"); fj.calls() != calls || s.Main.Tier != "xhigh" || s.CompactPending || s.Main.Trigger != "compact" || s.Main.Cause != "go-ahead" {
+		t.Fatalf("post-compaction go-ahead: %d calls, %+v", fj.calls()-calls, s)
 	}
 	prompt("yes, and also add rate limiting to the login endpoint")
 	if fj.calls() != calls+1 {
