@@ -14,6 +14,7 @@ respect_explicit_subagent_model = true
 jev_shadow_model = ""            # set during a new Jev version's observation period
 # stale_days = 60                # catalog data older than this warns
 # repo_policy_file = ".automodel.toml"   # min_tier / max_tier / min_subagent_tier / max_subagent_tier
+# privacy = "full"   # "metadata": Jev gets sizes and task-kind hints, never the text of prompts, replies or repo files
 # statusline_flash = "30s"
 # OpenRouter key for Jev ($OPENROUTER_API_KEY wins if set). Keep this file 0600.
 openrouter_api_key = ""

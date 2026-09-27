@@ -617,3 +617,20 @@ func TestGoAheadFastPath(t *testing.T) {
 		t.Error("goAhead matched a real instruction")
 	}
 }
+
+func TestRepoPolicyPrivacyAndModes(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, ultra: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	markJev(t, env, "s1")
+	cwd := t.TempDir()
+	os.MkdirAll(filepath.Join(cwd, ".git"), 0o755)
+	os.WriteFile(filepath.Join(cwd, ".automodel.toml"), []byte("privacy = \"metadata\"\ndisable_modes = [\"ultracode\"]\n"), 0o644)
+	run(t, env, "decide", map[string]any{"session_id": "s1", "prompt": "Audit the whole codebase for injection bugs", "cwd": cwd})
+	st := fj.last().State.(map[string]any)
+	if _, ok := st["task"]; ok || st["task_features"] == nil {
+		t.Fatalf("metadata mode sent the prompt: %v", st)
+	}
+	if s, _ := env.State.Load("s1"); s.Main.Mode != "" || s.Main.Tier != "xhigh" {
+		t.Fatalf("disabled mode used: %+v", s.Main)
+	}
+}

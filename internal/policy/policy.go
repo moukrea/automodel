@@ -20,6 +20,21 @@ type RepoPolicy struct {
 	MaxTier         string `toml:"max_tier"`
 	MinSubagentTier string `toml:"min_subagent_tier"`
 	MaxSubagentTier string `toml:"max_subagent_tier"`
+	// Privacy overrides the global privacy mode for this repository
+	// ("metadata": no text is sent to Jev).
+	Privacy string `toml:"privacy"`
+	// DisableModes turns modes off in this repository (e.g. ["ultracode"]).
+	DisableModes []string `toml:"disable_modes"`
+}
+
+// ModeAllowed reports whether the repository allows a mode.
+func (p RepoPolicy) ModeAllowed(id string) bool {
+	for _, m := range p.DisableModes {
+		if m == id {
+			return false
+		}
+	}
+	return true
 }
 
 // LoadRepoPolicy looks for name in dir and its parents, stopping at a .git

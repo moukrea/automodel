@@ -90,6 +90,10 @@ type Outcome struct {
 func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome) {
 	c := e.Catalog
 	f := e.Cfg.Features
+	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
+	if privacy := firstNonEmpty(rp.Privacy, e.Cfg.Privacy); privacy == PrivacyMetadata {
+		req.State = MetadataOnly(req.State)
+	}
 	qs, ids := jev.Questions(c, req.Scope, req.Warm)
 	stateTokens := tokens.Estimate(mustJSON(req.State))
 	start := e.Now()
@@ -162,7 +166,6 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		rec.JevCostUSD = resp.Usage.Cost
 	}
 	e.noteJev(req.SessionID, err)
-	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
 	dec := &state.Decision{Scope: req.Scope, Trigger: req.Trigger, DecidedAt: start}
 	if err != nil {
 		rec.Error = err.Error()
@@ -346,9 +349,10 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier) string {
 	if req.Warm && rd.continues != nil && *rd.continues >= e.Catalog.Meta.ContinuesThreshold() {
 		return cur
 	}
+	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
 	for _, m := range e.Catalog.ModesFor(req.Scope) {
 		p, ok := rd.modeP[m.ID]
-		if !ok {
+		if !ok || !rp.ModeAllowed(m.ID) {
 			continue
 		}
 		if min := e.Catalog.Tier(req.Scope, m.MinTier); min != nil && t.Rank < min.Rank {
@@ -429,6 +433,15 @@ func FitRepo(r *state.RepoSignals, budget int) map[string]any {
 		out["claude_md_head"] = tokens.Truncate(r.ClaudeMDHead, budget)
 	}
 	return out
+}
+
+func firstNonEmpty(s ...string) string {
+	for _, v := range s {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func mustJSON(v any) string {

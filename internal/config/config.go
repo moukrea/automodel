@@ -38,9 +38,12 @@ type Config struct {
 	JevShadowModel               string   `toml:"jev_shadow_model"`
 	StaleDays                    int      `toml:"stale_days"`
 	RepoPolicyFile               string   `toml:"repo_policy_file"`
-	StatuslineFlash              Duration `toml:"statusline_flash"`
-	StatuslineCommand            string   `toml:"statusline_command"`
-	RouteWorkflowSteps           bool     `toml:"route_workflow_steps"`
+	// Privacy is what the routing state sent to Jev may contain: "full"
+	// (default) or "metadata" (sizes and task-kind hints, no text).
+	Privacy            string   `toml:"privacy"`
+	StatuslineFlash    Duration `toml:"statusline_flash"`
+	StatuslineCommand  string   `toml:"statusline_command"`
+	RouteWorkflowSteps bool     `toml:"route_workflow_steps"`
 	// Features are the v2 behaviours; all off gives the v1 router (decisions
 	// only when the cache is already lost, confidence-escalation policy).
 	Features Features `toml:"features"`
