@@ -2,6 +2,9 @@ package hooks
 
 import (
 	"context"
+	"time"
+
+	"github.com/moukrea/automodel/internal/transcript"
 
 	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/state"
@@ -59,7 +62,13 @@ func SessionStart(ctx context.Context, env *router.Env, in *Input) (*Output, err
 		return changed
 	})
 	if err == nil && in.Source == "compact" {
-		compactDecision(ctx, env, in)
+		// The summary may not be in the transcript yet when this hook runs:
+		// a detached copy waits for it, without holding up Claude Code.
+		if at, ok := compactMode(); ok {
+			compactDecision(ctx, env, in, at)
+		} else {
+			spawnCompact(in, env.Now())
+		}
 	}
 	return nil, err
 }
@@ -68,14 +77,22 @@ func SessionStart(ctx context.Context, env *router.Env, in *Input) (*Output, err
 // the status line shows the pick for the work ahead at once. The next
 // prompt still re-decides for free (the cache is rebuilt anyway), with the
 // prompt itself.
-func compactDecision(ctx context.Context, env *router.Env, in *Input) {
+func compactDecision(ctx context.Context, env *router.Env, in *Input, at time.Time) {
+	var tr *transcript.Info
+	for deadline := time.Now().Add(compactWait); ; time.Sleep(200 * time.Millisecond) {
+		if tr = readTranscript(in.TranscriptPath); tr != nil && tr.CompactSummary != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			return
+		}
+	}
 	sess, err := env.State.Load(in.SessionID)
 	if err != nil || sess.Main == nil || sess.Pin != "" || !env.IsCustom(sess.Model) || !env.Cfg.Features.WarmDecisions {
 		return
 	}
-	tr := readTranscript(in.TranscriptPath)
-	if tr == nil || tr.CompactSummary == "" {
-		return
+	if sess.LastPromptAt.After(at) {
+		return // a prompt came in first: it re-decides itself
 	}
 	pin := *in
 	pin.Prompt = ""
@@ -85,6 +102,9 @@ func compactDecision(ctx context.Context, env *router.Env, in *Input) {
 		return
 	}
 	env.State.Update(in.SessionID, func(s *state.Session) bool {
+		if s.LastPromptAt.After(at) {
+			return false
+		}
 		dec.Epoch = 1
 		if s.Main != nil {
 			dec.Epoch = s.Main.Epoch + 1

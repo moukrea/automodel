@@ -50,7 +50,11 @@ type fakeJev struct {
 }
 
 // No detached processes from tests.
-func init() { spawnLate = func(*Input, string, time.Time) {} }
+func init() {
+	spawnLate = func(*Input, string, time.Time) {}
+	spawnCompact = func(*Input, time.Time) {}
+	compactWait = 300 * time.Millisecond
+}
 
 func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
@@ -939,7 +943,16 @@ func TestCompactDecision(t *testing.T) {
 	tp := filepath.Join(t.TempDir(), "t.jsonl")
 	os.WriteFile(tp, []byte(`{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"We fixed the oversell race; next: make checkout idempotent."}}`+"\n"), 0o600)
 	fj.answers = []fa{{tier: "xhigh", conf: 0.9}}
-	run(t, env, "session-start", map[string]any{"session_id": "c1", "source": "compact", "transcript_path": tp})
+	var spawned bool
+	spawnCompact = func(*Input, time.Time) { spawned = true }
+	t.Cleanup(func() { spawnCompact = func(*Input, time.Time) {} })
+	in := map[string]any{"session_id": "c1", "source": "compact", "transcript_path": tp}
+	run(t, env, "session-start", in) // the hook itself only starts the detached decision
+	if s, _ := env.State.Load("c1"); !spawned || s.Main.Tier != "low" {
+		t.Fatalf("hook decided inline or didn't spawn: %+v", s.Main)
+	}
+	t.Setenv(CompactEnv, fmt.Sprint(time.Now().UnixNano()))
+	run(t, env, "session-start", in)
 	s, _ := env.State.Load("c1")
 	if s.Main.Tier != "xhigh" || s.Main.Trigger != "compact" || !s.CompactPending {
 		t.Fatalf("after compaction: %+v (pending %v)", s.Main, s.CompactPending)
