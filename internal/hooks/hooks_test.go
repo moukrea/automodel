@@ -867,6 +867,14 @@ func TestAskedTier(t *testing.T) {
 	if s := main("a1"); s.Main.Tier == "haiku" {
 		t.Errorf("warm Opus session moved to Haiku: %+v", s.Main)
 	}
+	// [effort:high] on a Haiku session pins Opus at high.
+	markJev(t, env, "a4")
+	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.97}}
+	decide("a4", "What does HTTP 409 mean?")
+	decide("a4", "[effort:high] Explain the checkout flow")
+	if s := main("a4"); s.Main.Model != "claude-opus-5-5" || s.Main.Effort != "high" || s.Pin != "high" {
+		t.Errorf("effort tag on a Haiku session: %+v pin %q", s.Main, s.Pin)
+	}
 	// ...and a session outgrowing Haiku's window moves up.
 	warmSession(t, env, "a3", "haiku", 10_000)
 	env.State.Update("a3", func(s *state.Session) bool { s.Main.Model, s.Main.Effort, s.ContextTokens = "claude-haiku-4-5", "", 160_000; return true })

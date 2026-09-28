@@ -79,14 +79,21 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 			}
 			return true
 		}
-		t := cat.TierFor(catalog.ScopeMain, s.Main.Model, effort)
+		model := s.Main.Model
+		if m := cat.Model(model); m != nil && len(m.Efforts) == 0 {
+			model = cat.DefaultTier(catalog.ScopeMain).Model // /effort on Haiku: the default model at that effort
+		}
+		t := cat.TierFor(catalog.ScopeMain, model, effort)
 		if t == nil {
 			return true // an effort this model doesn't have (or not a main tier)
 		}
 		s.Pin, s.PinSource = effort, "/effort"
 		if s.Main.Tier != t.ID {
 			d := *s.Main
-			d.Tier, d.Effort, d.Trigger, d.Cause, d.Mode, d.Workflows = t.ID, t.Effort, "pinned", "/effort", "", false
+			d.Tier, d.Model, d.Effort, d.Trigger, d.Cause, d.Mode, d.Workflows = t.ID, t.Model, t.Effort, "pinned", "/effort", "", false
+			if m := cat.Model(t.Model); m != nil {
+				d.APIID = m.APIID
+			}
 			d.Confidence, d.DecidedAt, d.Epoch = 1, time.Now(), s.Main.Epoch+1
 			s.Main = &d
 			if m := cat.Model(d.Model); m != nil && perTurn(cat, m) && !s.PerTurnRejected && s.EffortBase != "" {
