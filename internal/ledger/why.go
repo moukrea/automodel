@@ -165,6 +165,9 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	if d.Signals["asks_more_thinking"] == true {
 		why = append(why, "you asked for more thinking: one tier up at least")
 	}
+	if d.Signals["released_pin"] == true {
+		why = append(why, "you handed the pick back ([effort:auto] / [model:auto])")
+	}
 	if d.Signals["previous_turn_interrupted"] == true {
 		why = append(why, "the previous turn was interrupted")
 	}

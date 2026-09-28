@@ -217,6 +217,11 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if v.Pick != nil {
 		rec.Loss, rec.GainUSD, rec.SwitchUSD = v.Pick.Loss, v.Pick.Gain, v.Pick.SwitchCost
 	}
+	// Leaving a model outside the tiers (a released [model:x] pin): there is
+	// nothing to stay on, the move is the user's call, but its cost is real.
+	if cur == nil && req.Current != nil && req.SwitchCost != nil {
+		rec.SwitchUSD = req.SwitchCost(v.Tier)
+	}
 	if shadow != nil && shAnswer != nil {
 		sd := e.Read(shAnswer, ids, req.Scope)
 		sv := e.Judge(req, sd, cur, rp, params)

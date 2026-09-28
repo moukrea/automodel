@@ -171,6 +171,18 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			signals = repo.Signals(ctx, in.Cwd)
 		}
 		req := mainRequest(env, in, sess, tr, signals, trigger)
+		// [model:auto] / [effort:auto] handing a pin back: say so in the
+		// ledger (and to Jev) — the move off a pinned model is the user's call.
+		if (etag == "auto" || mtag == "auto") && sess.Pin != "" {
+			if req.Signals == nil {
+				req.Signals = map[string]any{}
+				req.State["user_signals"] = req.Signals
+			}
+			req.Signals["released_pin"] = true
+			if sess.PinModel != "" {
+				req.Signals["released_pin_model"] = sess.PinModel
+			}
+		}
 		if trigger == "warm" {
 			req.Warm, req.Current = true, sess.Main
 			req.SwitchCost, req.Scale = switchCost(env, sess), workScale(env, sess)
