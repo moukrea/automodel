@@ -86,6 +86,13 @@ Verified 2026-09-26 on Claude Code 2.1.283 (see docs/spikes.md):
 - Claude Code 2.1.284: the `sonnet` alias is Sonnet 5.5 (first-party), and
   the Explore subagent now inherits an unknown session model (the routed
   "jev") instead of switching to Opus; the agent hook's alias still wins.
+- Claude Code 2.1.284 can send a conversation as a **message thread** even
+  behind a custom `ANTHROPIC_BASE_URL`: `thread: {type: "create"}` carries the
+  whole history, `{type: "continue", previous_message_id}` only the new
+  messages, and `output_config` must stay the same across a thread (400
+  `thread_fingerprint_mismatch` otherwise; Claude Code then starts a new
+  thread). The proxy keeps the top-level effort for the whole thread and adds
+  an effort statement after the new prompt on a continue.
 - Sonnet 5.5 rejects `thinking: disabled` (400), can't read other models'
   thinking blocks (dropped silently), and returns 400 when anything before a
   replayed Sonnet 5.5 thinking block changed (prefix binding): the proxy's

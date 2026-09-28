@@ -449,3 +449,54 @@ func TestAnchor(t *testing.T) {
 		t.Error("a changed text kept its anchor")
 	}
 }
+
+// Message threads: a continue request carries only the new messages; the
+// top-level effort stays, and an effort change is a statement after the new
+// prompt. A create request replays the whole history with every mark in place.
+func TestPerTurnEffortThreads(t *testing.T) {
+	p, up, ps := setup(t)
+	h := map[string]string{HeaderSession: "sess-t"}
+	setMain := func(effort string, pending bool) {
+		p.State.Update("sess-t", func(s *state.Session) bool {
+			s.Main = &state.Decision{Tier: effort, Model: "claude-opus-5-5", Effort: effort}
+			if pending {
+				s.PendingEffort = &state.PendingEffort{Effort: effort, Prompt: "p"}
+			}
+			return true
+		})
+	}
+	thread := func(kind string, msgs ...string) string {
+		b := turnBody(msgs...)
+		return strings.Replace(b, `"stream":true,`, `"stream":true,"thread":{"type":"`+kind+`","previous_message_id":"msg_1"},`, 1)
+	}
+	effortOf := func(m map[string]any) any { return m["output_config"].(map[string]any)["effort"] }
+	msgsOf := func(m map[string]any) []any { return m["messages"].([]any) }
+
+	setMain("xhigh", false)
+	post(t, ps.URL, h, thread("create", user("p1", true)))
+	if m := up.last(t); effortOf(m) != "xhigh" || len(msgsOf(m)) != 2 {
+		t.Fatalf("create: %v", m)
+	}
+	// Continue with a switch to low: top-level stays xhigh, a statement follows p2.
+	setMain("low", true)
+	post(t, ps.URL, h, thread("continue", asst("a1"), user("p2", true)))
+	m := up.last(t)
+	ms := msgsOf(m)
+	if effortOf(m) != "xhigh" || len(ms) != 3 || ms[2].(map[string]any)["output_config"].(map[string]any)["effort"] != "low" {
+		t.Fatalf("continue with a switch: effort %v, %v", effortOf(m), ms)
+	}
+	// Next continue: nothing re-inserted (the thread holds it), no epoch reset.
+	post(t, ps.URL, h, thread("continue", asst("a2"), user("p3", true)))
+	if m := up.last(t); effortOf(m) != "xhigh" || len(msgsOf(m)) != 2 {
+		t.Fatalf("plain continue: effort %v, %v", effortOf(m), msgsOf(m))
+	}
+	// A new thread replays everything: both statements at their places.
+	post(t, ps.URL, h, thread("create", user("p1", false), asst("a1"), user("p2", false), asst("a2"), user("p3", true)))
+	ms = msgsOf(up.last(t))
+	if len(ms) != 7 || ms[1].(map[string]any)["role"] != "system" || ms[4].(map[string]any)["role"] != "system" {
+		t.Errorf("replay: marks not in place: %v", ms)
+	}
+	if s, _ := p.State.Load("sess-t"); s.EffortBase != "xhigh" || len(s.EffortMarks) != 2 {
+		t.Errorf("state: %+v", s)
+	}
+}
