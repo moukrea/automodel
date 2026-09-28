@@ -125,8 +125,9 @@ restores your statusline (agentline's is left as is) and removes the service
 On a `jev` session the automodel segment shows what the routing chose:
 `jev → opus-5.5·xhigh +ultracode 0.86` (model, effort, mode, Jev's
 confidence), `(default)` before the first decision, `(pinned)` while your
-`/effort` wins, `⚠ fallback` and `⚠ jev: <why>` when Jev couldn't be asked, `⚠ budget`
-over the spending cap,
+`/effort` wins, `· real effort: low (Claude Code shows xhigh)` when Claude
+Code's own spinner shows another effort than the one routed, `⚠ fallback` and
+`⚠ jev: <why>` when Jev couldn't be asked, `⚠ budget` over the spending cap,
 and `↻ switched|compact|cold` for `statusline_flash` (30s) after a
 redecision. Sessions on a named model show nothing.
 
@@ -147,7 +148,7 @@ reads Claude Code's status line JSON on stdin, records model switches like
 the text status line, never runs `statusline_command`, and prints one line:
 
 ```json
-{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}
+{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","claude_effort":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}
 ```
 
 `{"v":1,"routed":false}` for a session automodel doesn't route (with every
@@ -156,7 +157,9 @@ field and `state` `error` when the catalog can't load: read `routed` first).
 load, `issue` says `catalog`); `confidence` is 0 unless `routed`; `pin` is the
 pinned effort; `issue` why Jev couldn't be asked; `flash`
 `switched|compact|cold|""`; `budget` `over` past the spending cap, else
-`""`; `text` the text segment. Find the command in
+`""`; `claude_effort` the effort Claude Code itself shows when it differs from
+`effort` (its spinner shows its own setting, not the routed one), else `""`;
+`text` the text segment. Find the command in
 `settings.json` (the `UserPromptSubmit` hook ending in ` hook decide`, minus
 that suffix) and check `automodel help` mentions `statusline … --json`
 before calling it: older releases would render (and chain) the text status

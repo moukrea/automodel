@@ -120,7 +120,7 @@ func TestJSONRouted(t *testing.T) {
 		return true
 	})
 	m := runJSON(t, env, jevIn)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}`
+	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","claude_effort":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}`
 	if m["_raw"] != want {
 		t.Errorf("got  %s\nwant %s", m["_raw"], want)
 	}
@@ -181,7 +181,7 @@ func TestJSONStates(t *testing.T) {
 func TestJSONCatalogError(t *testing.T) {
 	var out strings.Builder
 	CatalogErrorJSON("jev", strings.NewReader(jevIn), &out)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","budget":"","text":"jev → ⚠ catalog"}` + "\n"
+	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","budget":"","claude_effort":"","text":"jev → ⚠ catalog"}` + "\n"
 	if out.String() != want {
 		t.Errorf("got  %s\nwant %s", out.String(), want)
 	}
@@ -212,5 +212,19 @@ func TestChainedEnv(t *testing.T) {
 	t.Setenv(ChainedEnv, "0") // replaced, not duplicated
 	if got := chain(t.TempDir(), chainedEnvEcho, "s", []byte(`{}`)); got != "chained=1" {
 		t.Fatalf("chained env: %q", got)
+	}
+}
+
+func TestRealEffortVsClaudeCode(t *testing.T) {
+	c, _, _ := catalog.Load("../../catalog.toml", time.Now(), 3650)
+	env := &router.Env{Cfg: config.Default(), Catalog: c, Now: time.Now}
+	sess := &state.Session{ClientEffort0: "xhigh", Main: &state.Decision{Tier: "low", Model: "claude-opus-5-5", Effort: "low", Trigger: "warm", Confidence: 0.95}}
+	v := Build(env, sess, time.Now().Add(time.Hour))
+	if v.ClaudeEffort != "xhigh" || v.Text != "jev → opus-5.5·low 0.95 · real effort: low (Claude Code shows xhigh)" {
+		t.Fatalf("got %q (claude_effort %q)", v.Text, v.ClaudeEffort)
+	}
+	sess.Main.Effort, sess.Main.Tier = "xhigh", "xhigh"
+	if v := Build(env, sess, time.Now().Add(time.Hour)); v.ClaudeEffort != "" || strings.Contains(v.Text, "real effort") {
+		t.Fatalf("same effort still annotated: %q", v.Text)
 	}
 }

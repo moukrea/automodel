@@ -4,6 +4,7 @@
 package statusline
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -135,7 +136,11 @@ type View struct {
 	Issue      string  `json:"issue"`      // why Jev couldn't be asked, or the error
 	Flash      string  `json:"flash"`      // switched|compact|cold after a recent redecision
 	Budget     string  `json:"budget"`     // "over" when the session is over its spending cap
-	Text       string  `json:"text"`       // the text segment
+	// ClaudeEffort is the effort Claude Code itself shows (its spinner says
+	// "thinking with X effort"): its own setting, not the routed effort.
+	// "" when it matches Effort or is unknown.
+	ClaudeEffort string `json:"claude_effort"`
+	Text         string `json:"text"` // the text segment
 
 	full  bool // print every field even when not routed
 	short string
@@ -180,6 +185,9 @@ func Build(env *router.Env, sess *state.Session, now time.Time) View {
 	if env.OverBudget(sess) {
 		v.Budget = "over"
 	}
+	if ce := cmp.Or(sess.ClientEffortLast, sess.ClientEffort0); ce != "" && d.Effort != "" && ce != d.Effort {
+		v.ClaudeEffort = ce
+	}
 	cause := d.Trigger
 	if cause == "fallback" {
 		cause = d.Cause
@@ -214,6 +222,9 @@ func (v View) text() string {
 		b.WriteString(" ⚠ fallback")
 	default:
 		fmt.Fprintf(&b, " %.2f", v.Confidence)
+	}
+	if v.ClaudeEffort != "" {
+		fmt.Fprintf(&b, " · real effort: %s (Claude Code shows %s)", v.Effort, v.ClaudeEffort)
 	}
 	if v.Budget != "" {
 		b.WriteString(" ⚠ budget")
