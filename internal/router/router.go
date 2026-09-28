@@ -79,7 +79,11 @@ type Request struct {
 	Signals map[string]any
 	MinTier string
 
-	Warm       bool
+	Warm bool
+	// Label names a workflow stage (its label or phase option), for the ledger.
+	Label string
+	// Timeout overrides the Jev timeout (late decisions get longer).
+	Timeout    time.Duration
 	Current    *state.Decision
 	SwitchCost func(*catalog.Tier) float64
 	Scale      float64
@@ -89,6 +93,9 @@ type Request struct {
 type Outcome struct {
 	Changed bool
 	Reason  string // why a warm decision kept the current tier
+	// TimedOut: Jev didn't answer in time; the decision above is the
+	// fallback (a late decision can still replace it).
+	TimedOut bool
 }
 
 // Decide asks Jev (and the shadow model, if configured) and applies the
@@ -112,7 +119,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	rec := ledger.Decision{
 		TS: start, Kind: "decision", ID: ledger.NewID(), SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
-		AgentType: req.AgentType, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
+		AgentType: req.AgentType, Label: req.Label, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
 		Signals: req.Signals, Repo: req.RepoRoot,
 	}
 	if cur != nil {
@@ -147,6 +154,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if req.Warm && f.WarmTimeout.Duration > 0 {
 		timeout = f.WarmTimeout.Duration
 	}
+	if req.Timeout > 0 {
+		timeout = req.Timeout
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var (
@@ -180,9 +190,12 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	dec := &state.Decision{Scope: req.Scope, Trigger: req.Trigger, DecidedAt: start}
 	if err != nil {
 		rec.Error = err.Error()
+		timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
 		if cur != nil {
 			log.Printf("jev %s/%s: %v (kept %s)", req.Scope, req.Trigger, err, cur.ID)
-			return keep("jev error")
+			d, out := keep("jev error")
+			out.TimedOut = timedOut
+			return d, out
 		}
 		tier := e.capTier(req, policy.Constrain(c, req.Scope, c.DefaultTier(req.Scope), rp, req.Context))
 		dec.Trigger, dec.Cause = "fallback", req.Trigger
@@ -193,7 +206,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		if err := e.Ledger.Append(rec); err != nil {
 			log.Printf("ledger: %v", err)
 		}
-		return dec, Outcome{Changed: true}
+		return dec, Outcome{Changed: true, TimedOut: timedOut}
 	}
 
 	rd := e.Read(ans, ids, req.Scope)

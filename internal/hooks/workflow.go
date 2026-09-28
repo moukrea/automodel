@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -85,8 +86,12 @@ func Workflow(ctx context.Context, env *router.Env, in *Input) (*Output, error) 
 			if sess.Main != nil {
 				st["parent_tier"] = sess.Main.Tier
 			}
+			label := ""
+			if len(s.Args) == 2 {
+				label = stageLabel(s.Args[1])
+			}
 			decisions[i], _ = env.Decide(ctx, router.Request{SessionID: in.SessionID, Scope: catalog.ScopeSubagent,
-				Trigger: "workflow", AgentType: "workflow", State: st, RepoDir: in.Cwd})
+				Trigger: "workflow", AgentType: "workflow", Label: label, State: st, RepoDir: in.Cwd})
 		}(i)
 	}
 	wg.Wait()
@@ -129,4 +134,18 @@ func reverse(xs []string) []string {
 		xs[i], xs[j] = xs[j], xs[i]
 	}
 	return xs
+}
+
+var stageLabelRE = regexp.MustCompile("\\b(label|phase)\\s*:\\s*['\"`]([^'\"`$]{1,60})['\"`]")
+
+// stageLabel returns an agent() call's label (else its phase), for the ledger.
+func stageLabel(opts string) string {
+	var phase string
+	for _, m := range stageLabelRE.FindAllStringSubmatch(opts, -1) {
+		if m[1] == "label" {
+			return m[2]
+		}
+		phase = m[2]
+	}
+	return phase
 }

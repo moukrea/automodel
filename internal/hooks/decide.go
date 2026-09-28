@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/moukrea/automodel/internal/policy"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -39,6 +40,10 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, err
 	}
 	synthetic := transcript.IsSynthetic(in.Prompt) || ownCommand(in.Prompt)
+	lateTrigger, lateAt, late := lateMode()
+	if late && sess.LastPromptAt.UnixNano() != lateAt {
+		return nil, nil // a newer prompt came in: its own decision stands
+	}
 
 	var tr *transcript.Info
 	if sess.Model == "" {
@@ -68,6 +73,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// decide on them.
 	if synthetic {
 		trigger = ""
+	}
+	if late {
+		trigger = lateTrigger // what the prompt's own hook was deciding
 	}
 
 	// A user-chosen effort or model outranks routing: [effort:X] pins the
@@ -120,6 +128,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 
 	var dec *state.Decision
 	var signals *state.RepoSignals
+	spawnTrigger := "" // Jev timed out: decide again in the background
 	if pin != "" && !synthetic {
 		redecide := tagged || trigger == "initial" || trigger == "compact" || trigger == "cold" || sess.Main == nil
 		if pinModel != "" {
@@ -168,17 +177,34 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			req.Warm, req.Current = true, sess.Main
 			req.SwitchCost, req.Scale = switchCost(env, sess), workScale(env, sess)
 		}
+		if late {
+			req.Timeout = LateTimeout
+		}
 		var out router.Outcome
 		dec, out = env.Decide(ctx, req)
-		if !out.Changed {
+		if out.TimedOut && !late {
+			spawnTrigger = trigger
+		}
+		if !out.Changed || (late && out.TimedOut) {
 			dec = nil
 		}
 	}
 
 	var notice string
+	if late && dec == nil {
+		return nil, nil
+	}
 	_, err = env.State.Update(in.SessionID, func(s *state.Session) bool {
-		s.LastPromptAt = now
-		if !synthetic {
+		if late {
+			if s.LastPromptAt.UnixNano() != lateAt {
+				dec = nil // a newer prompt came in while Jev answered
+				return false
+			}
+			log.Printf("late decision %s: %s", in.SessionID, dec.Tier)
+		} else {
+			s.LastPromptAt = now
+		}
+		if !synthetic && !late {
 			s.Prompts++
 		}
 		if s.Repo == nil && signals != nil {
@@ -214,8 +240,8 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				s.ResetEffortEpoch() // top-level effort change: the policy accepted the rebuild
 			}
 		}
-		if s.Main == nil {
-			return true
+		if s.Main == nil || late {
+			return true // a late decision can't inject the ultracode notice: the next prompt does
 		}
 		switch want := s.Main.Workflows; {
 		case want && (!s.UltracodeOn || s.UltracodeEpoch != s.Main.Epoch):
@@ -228,7 +254,10 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !synthetic && in.Prompt != "" {
+	if spawnTrigger != "" {
+		spawnLate(in, spawnTrigger, now)
+	}
+	if !synthetic && in.Prompt != "" && !late {
 		_ = env.State.IndexPrompt(in.Prompt, in.SessionID)
 	}
 	if notice == "" {
@@ -307,6 +336,9 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		signals["asks_more_thinking"] = true
 	}
 	task := tokens.Truncate(in.Prompt, left/3)
+	if task == "" && trigger == "compact" {
+		task = "(no new prompt yet: the work the compaction summary says comes next)"
+	}
 	st["task"] = task
 	left -= tokens.Estimate(task)
 	ctxTokens := sess.ContextTokens
