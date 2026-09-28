@@ -204,7 +204,7 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 			}
 			p.observeClientEffort(cat, rt.sessionID, ce)
 		}
-		dec = p.decisionFor(cat, rt, fields)
+		dec = p.decisionFor(cat, rt, fields, len(body))
 		rt.routed = true
 		if rt.scope == catalog.ScopeMain && !countTokens {
 			p.touch(rt.sessionID, func(s *state.Session) {
@@ -269,7 +269,7 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 }
 
 // decisionFor resolves the tier of a request for the routed model.
-func (p *Proxy) decisionFor(cat *catalog.Catalog, rt *route, fields map[string]json.RawMessage) *state.Decision {
+func (p *Proxy) decisionFor(cat *catalog.Catalog, rt *route, fields map[string]json.RawMessage, size int) *state.Decision {
 	var sess *state.Session
 	if rt.sessionID != "" {
 		sess, _ = p.State.Load(rt.sessionID)
@@ -289,6 +289,19 @@ func (p *Proxy) decisionFor(cat *catalog.Catalog, rt *route, fields map[string]j
 	if sess != nil && sess.Main != nil && cat.Tier(catalog.ScopeMain, sess.Main.Tier) != nil {
 		d := *sess.Main
 		t := cat.Tier(catalog.ScopeMain, d.Tier) // re-resolve: the catalog may have changed
+		// A tier with a small window (max_context) can be outgrown within a
+		// turn, between two routing decisions: the request then goes to
+		// the next tier that fits. The body size (4 bytes a token, JSON
+		// included) overestimates, which is the safe side.
+		if n := max(sess.ContextTokens, size/4); !cat.Fits(t, n) {
+			for _, up := range cat.TiersByRank(catalog.ScopeMain) {
+				if up.Rank > t.Rank && cat.Fits(up, n) {
+					log.Printf("session %s: ~%d tokens outgrow tier %s, sent as %s", short(rt.sessionID), n, t.ID, up.ID)
+					t, d.Tier = up, up.ID
+					break
+				}
+			}
+		}
 		d.Model, d.Effort, d.Workflows = cat.Resolve(t, d.Mode)
 		return &d
 	}

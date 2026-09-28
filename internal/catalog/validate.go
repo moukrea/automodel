@@ -122,8 +122,17 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 			if t.Effort == "" && len(md.Efforts) > 0 {
 				warnf("%s: no effort on %s, which supports %v", where, t.Model, md.Efforts)
 			}
-			if scope == ScopeMain && md.Context < m.MinMainContext() {
-				errf("%s: model %s has a %d-token window; main tiers need at least %d (meta.main_min_context)", where, t.Model, md.Context, m.MinMainContext())
+			if scope == ScopeMain && md.Context < m.MinMainContext() && (t.MaxContext <= 0 || t.MaxContext >= md.Context) {
+				errf("%s: model %s has a %d-token window; main tiers need at least %d (meta.main_min_context), or a max_context below the window", where, t.Model, md.Context, m.MinMainContext())
+			}
+			if t.Asked() && (t.No == "" || t.Threshold <= 0 || t.Threshold >= 1) {
+				errf("%s: an asked tier needs no and a threshold between 0 and 1", where)
+			}
+			if t.Asked() && (scope == ScopeMain && id == m.DefaultMainTier || scope == ScopeSubagent && id == m.DefaultSubagentTier) {
+				errf("%s: the default tier can't be an asked tier", where)
+			}
+			if t.MaxContext > 0 && (scope == ScopeMain && id == m.DefaultMainTier || scope == ScopeSubagent && id == m.DefaultSubagentTier) {
+				errf("%s: the default tier can't have a max_context", where)
 			}
 			if scope == ScopeSubagent && md.Alias == "" {
 				errf("%s: model %s needs an alias (the Agent tool only accepts aliases)", where, t.Model)

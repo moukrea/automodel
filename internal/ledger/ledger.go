@@ -52,6 +52,7 @@ type Decision struct {
 	KeepReason string             `json:"keep_reason,omitempty"`
 	ContinuesP *float64           `json:"continues_p,omitempty"`
 	InformsP   *float64           `json:"informs_p,omitempty"` // warm main: the prompt only informs the work in progress
+	AskedP     map[string]float64 `json:"asked_p,omitempty"`   // asked tiers (e.g. haiku): Jev's yes-probability
 	Loss       map[string]float64 `json:"loss,omitempty"`
 	GainUSD    float64            `json:"gain_usd,omitempty"`
 	SwitchUSD  float64            `json:"switch_cost_usd,omitempty"`

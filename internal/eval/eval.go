@@ -73,6 +73,7 @@ type Result struct {
 	ModeP    map[string]float64 `json:"mode_p,omitempty"`
 	ContP    *float64           `json:"continues_p,omitempty"`
 	InfP     *float64           `json:"informs_p,omitempty"`
+	AskedP   map[string]float64 `json:"asked_p,omitempty"`
 	Cost     float64            `json:"cost_usd"`
 	Err      string             `json:"error,omitempty"`
 }
@@ -170,6 +171,14 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	if a, ok := ans[jev.QInforms]; ok && a.Noul != nil {
 		v := *a.Noul
 		r.InfP = &v
+	}
+	for id, a := range ans {
+		if t, ok := strings.CutPrefix(id, jev.QTierPfx); ok && a.Noul != nil {
+			if r.AskedP == nil {
+				r.AskedP = map[string]float64{}
+			}
+			r.AskedP[t] = *a.Noul
+		}
 	}
 	if format != "choice" {
 		// The router's verdict, with free switches (per-turn effort).
@@ -388,6 +397,9 @@ func Print(w io.Writer, cat *catalog.Catalog, rs []Result, s Summary) {
 				want = map[bool]string{true: "(yes)", false: "(no)"}[v]
 			}
 			modes = append(modes, fmt.Sprintf("%s %.2f%s", m, p, want))
+		}
+		for t, p := range r.AskedP {
+			modes = append(modes, fmt.Sprintf("tier %s %.2f", t, p))
 		}
 		cont := ""
 		if r.ContP != nil {

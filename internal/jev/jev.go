@@ -73,7 +73,7 @@ var instructions = map[string]string{
 // Kept for `automodel eval --format choice`.
 func TierQuestion(c *catalog.Catalog, scope string) Question {
 	crit := map[string]string{}
-	for _, t := range c.TiersByRank(scope) {
+	for _, t := range c.ScoredTiers(scope) {
 		crit[t.ID] = t.Criteria
 	}
 	return Question{Type: "choice", Instructions: instructions[scope], Criteria: crit}
@@ -84,6 +84,7 @@ const (
 	QLevel     = "level"
 	QContinues = "continues"
 	QInforms   = "informs"
+	QTierPfx   = "tier_"
 	QModePfx   = "mode_"
 )
 
@@ -99,10 +100,15 @@ var levelInstructions = map[string]string{
 // work (no new work asked). It returns the tier IDs in level order.
 func Questions(c *catalog.Catalog, scope string, warm bool) (map[string]Question, []string) {
 	var levels, ids []string
-	for _, t := range c.TiersByRank(scope) {
+	for _, t := range c.ScoredTiers(scope) {
 		levels, ids = append(levels, t.Criteria), append(ids, t.ID)
 	}
 	qs := map[string]Question{QLevel: {Type: "score", Instructions: levelInstructions[scope], Criteria: levels}}
+	for _, t := range c.TiersByRank(scope) {
+		if t.Asked() {
+			qs[QTierPfx+t.ID] = Question{Type: "noul", Instructions: t.Question, Criteria: map[string]string{"true": t.Criteria, "false": t.No}}
+		}
+	}
 	for _, m := range c.ModesFor(scope) {
 		qs[QModePfx+m.ID] = Question{Type: "noul", Instructions: m.Question, Criteria: map[string]string{"true": m.Yes, "false": m.No}}
 	}

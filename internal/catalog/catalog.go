@@ -164,6 +164,34 @@ type Tier struct {
 	// Cost is the relative cost per task, used when the benchmark has no
 	// measurement for this model and effort.
 	Cost float64 `toml:"cost" json:"cost,omitempty"`
+	// MaxContext: the tier is only used while the session's context stays
+	// at or below this many tokens. A main tier whose model has a smaller
+	// window than meta.main_min_context must set it (the session then
+	// moves to a bigger model before the window is reached).
+	MaxContext int `toml:"max_context" json:"max_context,omitempty"`
+	// Question makes this an asked tier: it is not a level of Jev's Score
+	// question but a yes/no of its own (Criteria is the yes side, No the
+	// other), and it replaces the scored tier ranked just above it when
+	// Jev's yes-probability reaches Threshold.
+	Question  string  `toml:"question" json:"question,omitempty"`
+	No        string  `toml:"no" json:"no,omitempty"`
+	Threshold float64 `toml:"threshold" json:"threshold,omitempty"`
+}
+
+// Asked reports whether the tier is chosen by its own question.
+func (t *Tier) Asked() bool { return t.Question != "" }
+
+// Fits reports whether the tier can serve a context of n tokens (n <= 0:
+// unknown, it fits).
+func (c *Catalog) Fits(t *Tier, n int) bool {
+	if n <= 0 {
+		return true
+	}
+	if t.MaxContext > 0 && n > t.MaxContext {
+		return false
+	}
+	m := c.Model(t.Model)
+	return m == nil || m.Context >= n
 }
 
 // Mode is a way of working layered on top of a tier, whatever its model:
@@ -268,6 +296,34 @@ func (c *Catalog) TiersByRank(scope string) []*Tier {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Rank < out[j].Rank })
 	return out
+}
+
+// ScoredTiers returns the levels of Jev's Score question: the scope's tiers
+// by rank, without asked tiers.
+func (c *Catalog) ScoredTiers(scope string) []*Tier {
+	var out []*Tier
+	for _, t := range c.TiersByRank(scope) {
+		if !t.Asked() {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// AskedAbove returns the asked tier that stands in for scored tier t (the
+// asked tier ranked just below it), or nil.
+func (c *Catalog) AskedAbove(scope string, t *Tier) *Tier {
+	var prev *Tier
+	for _, x := range c.TiersByRank(scope) {
+		if x.ID == t.ID {
+			if prev != nil && prev.Asked() {
+				return prev
+			}
+			return nil
+		}
+		prev = x
+	}
+	return nil
 }
 
 // ModesFor returns the modes available in a scope, sorted by ID.
