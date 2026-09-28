@@ -173,6 +173,13 @@ func (s Store) Load(id string) (*Session, error) {
 
 func (s Store) read(id string) (*Session, error) {
 	data, err := os.ReadFile(s.sessionPath(id))
+	// On Windows a read racing the atomic replace of the file (another
+	// process's Update) fails with a sharing violation for a moment: a
+	// failed read would route the request to the default tier.
+	for i := 0; i < 20 && err != nil && !errors.Is(err, os.ErrNotExist); i++ {
+		time.Sleep(10 * time.Millisecond)
+		data, err = os.ReadFile(s.sessionPath(id))
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return &Session{SessionID: id}, nil
 	}
