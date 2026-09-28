@@ -85,6 +85,11 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		curModel, curEffort = sess.Main.Model, sess.Main.Effort
 	}
 	pin, pinModel, pinSource := sess.Pin, sess.PinModel, sess.PinSource
+	// An effort on a model without efforts (a session on Haiku) means the
+	// default model at that effort: [effort:high] must not be ignored.
+	if m := env.Catalog.Model(curModel); etag != "" && etag != "auto" && sess.PinModel == "" && m != nil && len(m.Efforts) == 0 {
+		curModel = env.Catalog.DefaultTier(catalog.ScopeMain).Model
+	}
 	switch {
 	case etag == "auto" || mtag == "auto":
 		pin, pinModel, pinSource = "", "", ""
