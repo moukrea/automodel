@@ -32,6 +32,8 @@ type fa struct {
 	conf  float64
 	ultra float64
 	cont  float64
+	inf   float64
+	asked float64 // asked tiers (tier_*)
 }
 
 func answer(tier string, conf float64) fa { return fa{tier: tier, conf: conf, ultra: 0.05, cont: 0.1} }
@@ -67,8 +69,8 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "score":
 			var ids []string
 			for _, sc := range catalog.Scopes {
-				if f.cat.Tier(sc, a.tier) != nil {
-					for _, t := range f.cat.TiersByRank(sc) {
+				if t := f.cat.Tier(sc, a.tier); t != nil && !t.Asked() && ids == nil {
+					for _, t := range f.cat.ScoredTiers(sc) {
 						ids = append(ids, t.ID)
 					}
 				}
@@ -94,6 +96,12 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			v := a.ultra
 			if id == jev.QContinues {
 				v = a.cont
+			}
+			if id == jev.QInforms {
+				v = a.inf
+			}
+			if strings.HasPrefix(id, jev.QTierPfx) {
+				v = a.asked
 			}
 			answers[id] = map[string]any{"type": "noul", "noul": v}
 		case "choice":
@@ -192,7 +200,7 @@ func TestDecideLifecycle(t *testing.T) {
 	if st := fj.last().State.(map[string]any); st["phase"] != "initial" || !strings.Contains(st["task"].(string), "Audit") {
 		t.Errorf("state = %v", st)
 	}
-	if q := fj.last().Questions; q[jev.QLevel].Type != "score" || q[jev.QModePfx+"ultracode"].Type != "noul" || q[jev.QContinues].Type != "" {
+	if q := fj.last().Questions; q[jev.QLevel].Type != "score" || q[jev.QModePfx+"ultracode"].Type != "noul" || q[jev.QContinues].Type != "" || q[jev.QInforms].Type != "" {
 		t.Errorf("initial questions = %+v", q)
 	}
 	sess, _ := env.State.Load(sid)
@@ -326,6 +334,25 @@ func TestWarmDecisions(t *testing.T) {
 		t.Errorf("costly downgrade of continuing work: %+v", s.Main)
 	}
 	env.Cfg.Features.PerTurnEffort = true
+
+	// A prompt that only informs the work in progress keeps the decision,
+	// even where the switch would be free.
+	warmSession(t, env, "w5", "xhigh", 300_000)
+	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.9, inf: 0.9}}
+	decide("w5", "env vars win")
+	if s := main("w5"); s.Main.Tier != "xhigh" || s.PendingEffort != nil {
+		t.Errorf("informing prompt switched: %+v", s.Main)
+	}
+	if q := fj.last().Questions; q[jev.QInforms].Type != "noul" {
+		t.Errorf("warm questions lack informs: %+v", q)
+	}
+	// ...unless it asks for more thinking.
+	warmSession(t, env, "w6", "medium", 300_000)
+	fj.answers = []fa{{tier: "medium", conf: 0.9, cont: 0.9, inf: 0.9}}
+	decide("w6", "FYI it only fails on ARM. Think harder about it.")
+	if s := main("w6"); s.Main.Tier == "medium" {
+		t.Errorf("informing prompt held the tier despite asking for more thinking: %+v", s.Main)
+	}
 
 	// A continuation may upgrade.
 	warmSession(t, env, "w4", "low", 50_000)
@@ -796,5 +823,56 @@ func TestOwnCommandsNotRouted(t *testing.T) {
 	}
 	if fj.calls() != calls {
 		t.Fatalf("automodel's own commands were routed (%d calls)", fj.calls()-calls)
+	}
+}
+
+func TestAskedTier(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	decide := func(sid, p string) {
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": t.TempDir()})
+	}
+	main := func(sid string) *state.Session { s, _ := env.State.Load(sid); return s }
+
+	// A new session: a trivial question goes to Haiku (no cache to lose).
+	markJev(t, env, "a1")
+	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.97}}
+	decide("a1", "What does HTTP 409 mean?")
+	if s := main("a1"); s.Main.Tier != "haiku" || s.Main.Model != "claude-haiku-4-5" || s.Main.Effort != "" {
+		t.Fatalf("initial trivial prompt: %+v", s.Main)
+	}
+	if q := fj.last().Questions[jev.QTierPfx+"haiku"]; q.Type != "noul" {
+		t.Errorf("no asked-tier question: %+v", fj.last().Questions)
+	}
+	if lv, _ := fj.last().Questions[jev.QLevel].Criteria.([]any); len(lv) != 5 {
+		t.Errorf("the asked tier is a Score level: %v", lv)
+	}
+	// Below its threshold, low stays on Opus.
+	markJev(t, env, "a2")
+	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.5}}
+	decide("a2", "Write the commit message")
+	if s := main("a2"); s.Main.Tier != "low" {
+		t.Errorf("asked tier below its threshold: %+v", s.Main)
+	}
+	// Hard work leaves Haiku, even when Jev hesitates (an upgrade).
+	env.State.Update("a1", func(s *state.Session) bool { s.ContextTokens, s.Prompts, s.SpendUSD = 30_000, 1, 0.05; return true })
+	fj.answers = []fa{{tier: "xhigh", conf: 0.7, asked: 0.05}}
+	decide("a1", "Find why we oversell stock in flash sales")
+	if s := main("a1"); s.Main.Tier != "xhigh" || s.Main.Model != "claude-opus-5-5" {
+		t.Errorf("hard work stayed on Haiku: %+v", s.Main)
+	}
+	// A warm Opus session isn't moved to Haiku for an aside...
+	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.97}}
+	decide("a1", "quick question: grep flag for case-insensitive?")
+	if s := main("a1"); s.Main.Tier == "haiku" {
+		t.Errorf("warm Opus session moved to Haiku: %+v", s.Main)
+	}
+	// ...and a session outgrowing Haiku's window moves up.
+	warmSession(t, env, "a3", "haiku", 10_000)
+	env.State.Update("a3", func(s *state.Session) bool { s.Main.Model, s.Main.Effort, s.ContextTokens = "claude-haiku-4-5", "", 160_000; return true })
+	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.97}}
+	decide("a3", "and the other flag?")
+	if s := main("a3"); s.Main.Tier == "haiku" {
+		t.Errorf("session past max_context stayed on Haiku: %+v", s.Main)
 	}
 }

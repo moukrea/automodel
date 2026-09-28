@@ -177,6 +177,12 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	if d.ContinuesP != nil {
 		why = append(why, fmt.Sprintf("continues the work: %.2f", *d.ContinuesP))
 	}
+	for id, p := range d.AskedP {
+		why = append(why, fmt.Sprintf("%s: yes %.2f", id, p))
+	}
+	if d.InformsP != nil {
+		why = append(why, fmt.Sprintf("only informs: %.2f", *d.InformsP))
+	}
 	if p, ok := d.ModeP[d.Mode]; ok && d.Mode != "" {
 		why = append(why, fmt.Sprintf("%s: yes %.2f", d.Mode, p))
 	}

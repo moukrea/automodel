@@ -35,7 +35,7 @@ func TestRepoCatalogIsValid(t *testing.T) {
 	for _, tr := range c.TiersByRank(ScopeMain) {
 		ids = append(ids, tr.ID)
 	}
-	if got := strings.Join(ids, ","); got != "low,medium,high,xhigh,max" {
+	if got := strings.Join(ids, ","); got != "haiku,low,medium,high,xhigh,max" {
 		t.Errorf("main tiers by rank = %s", got)
 	}
 	dom := c.Dominance("v4.3.2")

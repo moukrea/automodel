@@ -414,3 +414,24 @@ func TestPerTurnEffortRefused(t *testing.T) {
 		t.Error("per-turn effort not turned off")
 	}
 }
+
+// A session on a small-window tier (Haiku, max_context) goes to the next tier
+// that fits once the context outgrows it, within the turn.
+func TestSmallWindowTierOutgrown(t *testing.T) {
+	p, up, ps := setup(t)
+	p.State.Update("sess-1", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: "haiku", Model: "claude-haiku-4-5"}
+		s.ContextTokens = 10_000
+		return true
+	})
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-1"}, mainBody)
+	if m := up.last(t); m["model"] != "claude-haiku-4-5-20251001" || m["thinking"] != nil || m["output_config"] != nil {
+		t.Errorf("Haiku request = %v", m)
+	}
+	p.bg.Wait() // the first response's usage lands first
+	p.State.Update("sess-1", func(s *state.Session) bool { s.ContextTokens = 160_000; return true })
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-1"}, mainBody)
+	if m := up.last(t); m["model"] != "claude-opus-5-5" || m["output_config"].(map[string]any)["effort"] != "low" {
+		t.Errorf("outgrown Haiku request = %v", m)
+	}
+}

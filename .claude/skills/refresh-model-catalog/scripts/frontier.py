@@ -151,9 +151,17 @@ def validate(cat: dict, today: dt.date, stale_days: int, dom: dict) -> list[dict
             if not eff and efforts:
                 warn(f"{where}: no effort on {t['model']}, which supports {efforts}")
             min_main = meta.get("main_min_context") or DEFAULT_MAIN_MIN_CONTEXT
-            if scope == "main" and m.get("context", 0) < min_main:
+            if t.get("question") and (not t.get("no") or not 0 < t.get("threshold", 0) < 1):
+                err(f"{where}: an asked tier needs no and a threshold between 0 and 1")
+            if t.get("question") and tid == (meta.get("default_main_tier") if scope == "main" else meta.get("default_subagent_tier")):
+                err(f"{where}: the default tier can't be an asked tier")
+            mx = t.get("max_context", 0)
+            if scope == "main" and m.get("context", 0) < min_main and (mx <= 0 or mx >= m.get("context", 0)):
                 err(f"{where}: model {t['model']} has a {m.get('context', 0)}-token window; "
-                    f"main tiers need at least {min_main} (meta.main_min_context)")
+                    f"main tiers need at least {min_main} (meta.main_min_context), or a max_context below the window")
+            default = meta.get("default_main_tier") if scope == "main" else meta.get("default_subagent_tier")
+            if mx > 0 and tid == default:
+                err(f"{where}: the default tier can't have a max_context")
             if scope == "subagent" and not m.get("alias"):
                 err(f"{where}: model {t['model']} needs an alias (the Agent tool only accepts aliases)")
 

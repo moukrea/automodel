@@ -2,7 +2,8 @@
 
 A small tool for Claude Code: pick **Jev (auto)** in `/model`, and it picks
 the model and effort for each prompt, subagent and workflow step. A quick
-question gets low effort, a race condition extra-high, a file listing Haiku.
+question gets Haiku or low effort, a race condition extra-high, a file listing
+Haiku.
 Decisions come from [TypeSafe Jev](https://docs.typesafe.ai) on OpenRouter
 (under a second, ~$0.00004 each); your Claude traffic stays on your own
 subscription.
@@ -194,6 +195,21 @@ switch must:
 3. and, for such a switch, **not downgrade work in progress**: when Jev says
    the prompt continues the ongoing work, effort can go up, never down.
 
+The confidence gate only holds downgrades: an upgrade under doubt is the safe
+side. A prompt that **only informs** the work in progress (a fact, a
+preference, a correction, an answer to Claude's question: "FYI it only
+happens with 8 workers", "env vars win") keeps the decision in force, even
+where a switch would be free (`meta.informs_threshold`, 0.6).
+
+**Haiku in the main session** is an *asked* tier: Jev answers "could a small,
+fast model handle this as well?" in the same call, and a clear yes (0.92)
+turns `low` into Haiku. It is only taken when there is no conversation cache
+to lose (a new session, after /compact or a pause) or when the session is
+already on it; a warm Opus session never moves there for a side question (a
+Haiku turn on a warm cache costs about Opus low, and coming back rebuilds the
+context). Past `max_context` (150K of Haiku's 200K) the session moves to
+Opus, within the turn if needed.
+
 A free switch (per-turn effort) follows Jev's answer: holding the tier there
 made sessions sticky (`docs/research/2026-09-routing-quality.md`). A bare
 go-ahead ("yes", "continue") keeps the tier without asking Jev, also after a
@@ -203,7 +219,9 @@ then it starts that work and is routed.
 **What Jev is asked** (one call): a *Score* over the scope's tiers (they are
 ordered, and a Score sharpens the distribution: mean confidence 0.92 vs 0.88
 for a Choice on `testdata/eval`), a yes/no *Noul* per mode, and on warm turns
-a Noul on whether the prompt continues the work in progress. The state
+a Noul on whether the prompt continues the work in progress and, in the main
+session, one on whether it only informs that work; plus a Noul per asked
+tier (Haiku). The state
 carries the prompt, the compaction summary, recent prompts, the last
 assistant reply, the tier in force and the session size (context, peak,
 compactions).

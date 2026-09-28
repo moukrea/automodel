@@ -106,6 +106,15 @@ the user's explicit approval.
      on the train split *and* holds on the held-out split.
    - Tiers without a measurement need a `cost` (relative cost per task, same
      unit as `cost_per_task`), otherwise it is interpolated (warning).
+   - An **asked tier** (`question` + `criteria` as its yes side + `no` +
+     `threshold`) is not a Score level: Jev answers its own yes/no in the
+     same call, and it replaces the scored tier ranked just above it when the
+     yes-probability reaches `threshold`. Use it for a tier on another model
+     that only fits clear-cut prompts (main-session Haiku): adding it as a
+     level shifts Jev's whole scale. Its threshold sits in the train gap like
+     a mode's. The router only moves a warm session onto an asked tier of
+     another model when it is already there (a turn on Haiku with a warm
+     cache costs about Opus low, and coming back rebuilds everything).
    - `python3 …/frontier.py catalog.proposed.toml` must exit 0, and
      `automodel catalog check --catalog catalog.proposed.toml` must report no
      error.
@@ -138,7 +147,8 @@ the user's explicit approval.
      the gate stops meaning anything. New cases go to train unless you add a
      batch big enough to split (alternate train/test within each label).
    - Thresholds come from the eval, never from intuition: a mode's
-     `threshold` and `meta.continues_threshold` sit in the gap between the
+     `threshold`, an asked tier's `threshold`, `meta.continues_threshold` and
+     `meta.informs_threshold` (default 0.6) sit in the gap between the
      yes-cases' and no-cases' probabilities on the train split (print them
      with `--json`); if there is no gap, pick the value with the fewest
      false no's and rewrite the yes/no criteria. `features.warm_min_confidence`
@@ -240,8 +250,11 @@ right and the policy (penalty 3.0, gates on free switches) was not.
 must sit on models with at least `meta.main_min_context` (1M): routing a long
 session onto a smaller window forces compaction loops and breaks it. Never
 lower `context`, `main_min_context` or drop `long_context_beta` to make a
-cheaper model eligible for the main scope; validation rejects main tiers
-below the minimum. A 200K model (Haiku) belongs in the subagent scope only.
+cheaper model eligible for the main scope. The one exception is a tier with
+`max_context` below its model's window (validation requires it, and the
+default tier can't have one): routing leaves it once the context passes
+`max_context`, and the proxy sends a request that outgrows it to the next
+tier that fits, within the turn. Keep a margin (150K on Haiku's 200K).
 
 Read `references/sources.md` before collecting data. In short: aggregators
 carry stale prices; compare (model, effort) pairs, not models at equal effort;

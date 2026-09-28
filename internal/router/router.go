@@ -197,7 +197,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 
 	rd := e.Read(ans, ids, req.Scope)
-	rec.Probs, rec.Confidence, rec.JevChoice, rec.ModeP, rec.ContinuesP = rd.probs, rd.conf, rd.top, rd.modeP, rd.continues
+	rec.Probs, rec.Confidence, rec.JevChoice, rec.ModeP, rec.ContinuesP, rec.InformsP, rec.AskedP = rd.probs, rd.conf, rd.top, rd.modeP, rd.continues, rd.informs, rd.asked
 	dec.JevChoice, dec.Confidence, dec.Probs = rd.top, rd.conf, rd.probs
 
 	v := e.Judge(req, rd, cur, rp, params)
@@ -280,11 +280,25 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	}
 	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context) // ...within the repo's bounds
 	mode := e.mode(req, rd, tier, rp)
+	if !floor && mode == "" {
+		if a := e.asked(req, rd, cur, tier, rp); a != nil {
+			tier = a
+		}
+	}
 	v := Verdict{Tier: tier, Mode: mode, Pick: pk}
 	if cur == nil || floor {
 		return v // the user asked for it: no warm gate
 	}
 	curMode := req.Current.Mode
+	// A prompt that only informs the work in progress (a fact, a
+	// preference, an answer) asks for no new work: what was decided for
+	// that work stays, even where a switch would be free. Jev otherwise
+	// rates its few words ("env vars win") as a small task.
+	if req.Scope == catalog.ScopeMain && rd.informs != nil && *rd.informs >= c.Meta.InformsThreshold() {
+		if t := policy.Constrain(c, req.Scope, cur, rp, req.Context); t.ID == cur.ID {
+			return Verdict{Tier: cur, Mode: curMode, Pick: pk, Keep: "only informs the work in progress"}
+		}
+	}
 	cont := rd.continues != nil && *rd.continues >= c.Meta.ContinuesThreshold()
 	// The gates below guard switches that cost something (a cache rebuild).
 	// A free switch (per-turn effort) follows Jev's answer: holding the
@@ -296,7 +310,11 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	case tier.ID == cur.ID && mode == curMode:
 		v.Keep = "same tier"
 	case free:
-	case tier.ID != cur.ID && rd.conf < f.WarmMinConfidence:
+	// An unsure answer doesn't pay for a downgrade that rebuilds the cache;
+	// an upgrade under doubt is the safe side (the policy already weighed
+	// its cost), so it goes through: a session on Haiku must not stay there
+	// on hard work because Jev hesitates between high and xhigh.
+	case tier.Rank < cur.Rank && rd.conf < f.WarmMinConfidence:
 		v.Tier = cur
 		if mode == curMode {
 			v.Keep = fmt.Sprintf("confidence %.2f below %.2f", rd.conf, f.WarmMinConfidence)
@@ -310,6 +328,25 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	return v
 }
 
+// asked returns the asked tier that replaces tier, if Jev says yes to its
+// question and it fits the context and the repo's bounds. An asked tier on
+// another model is taken when there is no cache to lose (a new session,
+// after /compact or a pause) or when the session is already on it; a warm
+// session is never moved there: with the cache warm, a turn on Haiku costs
+// about what a turn on Opus low does (cache reads dominate), and coming
+// back rebuilds the whole context.
+func (e *Env) asked(req Request, rd Reading, cur, tier *catalog.Tier, rp policy.RepoPolicy) *catalog.Tier {
+	c := e.Catalog
+	a := c.AskedAbove(req.Scope, tier)
+	if a == nil || rd.asked[a.ID] < a.Threshold || !c.Fits(a, req.Context) || policy.Constrain(c, req.Scope, a, rp, req.Context).ID != a.ID {
+		return nil
+	}
+	if req.Warm && cur != nil && cur.ID != a.ID && cur.Model != a.Model {
+		return nil
+	}
+	return a
+}
+
 // Reading is Jev's answer mapped onto the catalog.
 type Reading struct {
 	probs     map[string]float64
@@ -317,6 +354,8 @@ type Reading struct {
 	top       string
 	modeP     map[string]float64
 	continues *float64
+	informs   *float64
+	asked     map[string]float64 // asked tiers: Jev's yes-probability
 }
 
 func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Reading {
@@ -339,6 +378,18 @@ func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Readin
 	if a, ok := ans[jev.QContinues]; ok && a.Noul != nil {
 		v := *a.Noul
 		rd.continues = &v
+	}
+	if a, ok := ans[jev.QInforms]; ok && a.Noul != nil {
+		v := *a.Noul
+		rd.informs = &v
+	}
+	for id, a := range ans {
+		if t, ok := strings.CutPrefix(id, jev.QTierPfx); ok && a.Noul != nil {
+			if rd.asked == nil {
+				rd.asked = map[string]float64{}
+			}
+			rd.asked[t] = *a.Noul
+		}
 	}
 	return rd
 }

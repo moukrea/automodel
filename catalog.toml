@@ -5,7 +5,7 @@
 
 [meta]
 schema = 1
-last_refresh = "2026-09-27"
+last_refresh = "2026-09-28"
 benchmark = "artificial-analysis-intelligence-index"
 benchmark_version = "v4.3.2"
 jev_model = "typesafe/jev-1.13"
@@ -65,7 +65,7 @@ context = 200_000
 max_output = 64_000
 efforts = []
 price = { input = 1.0, output = 5.0, cache_read = 0.10, cache_write_5m = 1.25, cache_write_1h = 2.0 }
-scopes = ["subagent"]
+scopes = ["main", "subagent"]
 verified_at = "2026-09-27"
 sources = [
   "https://platform.claude.com/docs/en/about-claude/pricing",
@@ -578,9 +578,30 @@ measured_at = "2026-09-27"
 source = "https://artificialanalysis.ai/agents/coding-agents"
 
 # ------------------------------------------------------------ main tiers
-# The main session stays on one model; only effort varies (per-turn effort
-# keeps the prompt cache across effort changes). Tier criteria are the levels
-# of Jev's Score question, lowest first: describe situations, not degrees.
+# Opus tiers vary only the effort (per-turn effort keeps the prompt cache
+# across effort changes). Their criteria are the levels of Jev's Score
+# question, lowest first: describe situations, not degrees.
+#
+# Haiku is an asked tier: its own yes/no question, asked in the same call,
+# and it replaces low when Jev says yes (threshold from `automodel eval`,
+# train split: Haiku cases >= 0.95, other low cases <= 0.90). It changes the
+# model, which rebuilds the prompt cache, so it is taken on a new session,
+# after /compact or a pause (no cache to lose) or when already on it; a warm
+# Opus session never moves there (a Haiku turn on a warm cache costs about
+# Opus low, and coming back rebuilds the context).
+[tiers.main.haiku]
+rank = 0
+model = "claude-haiku-4-5"
+# Priced as it runs (no thinking), like the Haiku subagent tier.
+cost = 0.14
+# Haiku's window is 200k: past this the session moves up to Opus (routing
+# constrains to the next tier that fits; the proxy does it within a turn).
+max_context = 150_000
+question = "Could a small, fast model handle this prompt just as well: no reasoning, and no need to look at the code or the work so far?"
+criteria = "A general knowledge question, a command or a flag, what an error code or a regex means, or a trivial edit spelled out in full (a typo, one rename in one file)."
+no = "Anything that needs this project's code, the conversation or some thought: a question about the project or the work done, a bug to investigate, a change with choices, a review, a summary or a commit message."
+threshold = 0.92
+
 
 [tiers.main.low]
 rank = 1

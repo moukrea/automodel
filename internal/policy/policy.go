@@ -103,10 +103,7 @@ func Constrain(c *catalog.Catalog, scope string, t *catalog.Tier, rp RepoPolicy,
 	if hi := c.Tier(scope, max); hi != nil && t.Rank > hi.Rank {
 		t = hi
 	}
-	fits := func(t *catalog.Tier) bool {
-		m := c.Model(t.Model)
-		return m == nil || contextTokens <= 0 || m.Context >= contextTokens
-	}
+	fits := func(t *catalog.Tier) bool { return c.Fits(t, contextTokens) }
 	if !fits(t) {
 		if up := nextUp(c, scope, t, fits); up != nil {
 			return up
