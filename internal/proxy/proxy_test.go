@@ -435,3 +435,17 @@ func TestSmallWindowTierOutgrown(t *testing.T) {
 		t.Errorf("outgrown Haiku request = %v", m)
 	}
 }
+
+// A message's anchor follows what it says, not markers or fields that
+// aren't rendered.
+func TestAnchor(t *testing.T) {
+	a := anchor(json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}]}`))
+	b := anchor(json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hello","citations":null}],"id":"x"}`))
+	c := anchor(json.RawMessage(`{"role":"user","content":[{"type":"text","text":"hello!"}]}`))
+	if a == "" || a != b {
+		t.Errorf("same message, different anchors: %s %s", a, b)
+	}
+	if a == c {
+		t.Error("a changed text kept its anchor")
+	}
+}
