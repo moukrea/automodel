@@ -27,8 +27,6 @@ const UltracodeOn = `Ultracode is on for this session. The user enabled automati
 
 const UltracodeOff = `Ultracode is now off for this session (the automatic router moved back to single-thread work). Revert to the opt-in rule in the Workflow tool description.`
 
-const recentPrompts = 5
-
 // Decide is the UserPromptSubmit hook. It decides the main-session tier at
 // the moments the prompt cache is already lost (first prompt, compaction,
 // cold cache) and, with features.warm_decisions, on warm turns too, where a
@@ -360,19 +358,19 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		if tr.Interrupted && tr.InterruptedAt >= len(prev) {
 			signals["previous_turn_interrupted"] = true
 		}
-		if len(prev) > recentPrompts {
-			prev = prev[len(prev)-recentPrompts:]
+		if len(prev) > env.Catalog.State.RecentPromptsN() {
+			prev = prev[len(prev)-env.Catalog.State.RecentPromptsN():]
 		}
 		if len(prev) > 0 {
 			var rp []string
 			for _, p := range prev {
-				rp = append(rp, tokens.Truncate(p, left/(4*recentPrompts)))
+				rp = append(rp, tokens.Truncate(p, left/(4*env.Catalog.State.RecentPromptsN())))
 			}
 			st["recent_prompts"] = rp
 			left -= tokens.Estimate(mustJSON(rp))
 		}
 		if trigger != "compact" && tr.LastAssistant != "" {
-			la := tokens.Truncate(tr.LastAssistant, min(1500, left/3))
+			la := tokens.Truncate(tr.LastAssistant, min(env.Catalog.State.LastAssistantN(), left/3))
 			st["last_assistant"] = la
 			left -= tokens.Estimate(la)
 		}

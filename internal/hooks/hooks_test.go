@@ -532,7 +532,7 @@ func TestAgentHook(t *testing.T) {
 	if len(sess.PendingAgents) != 1 || sess.PendingAgents[0].Prompt != "List all Go files" || sess.PendingAgents[0].Decision.Tier != "haiku" {
 		t.Errorf("pending = %+v", sess.PendingAgents)
 	}
-	if q := fj.last().Questions[jev.QLevel]; q.Type != "score" || len(q.Criteria.([]any)) != 6 {
+	if q := fj.last().Questions[jev.QLevel]; q.Type != "score" || len(q.Criteria.([]any)) != 7 {
 		t.Errorf("subagent question = %+v", q)
 	}
 
@@ -802,15 +802,15 @@ func TestModelTagPins(t *testing.T) {
 	calls := fj.calls()
 	prompt("[model:sonnet] summarize the README")
 	s, _ := env.State.Load("s1")
-	if s.PinModel != "claude-sonnet-5" || s.Main.Model != "claude-sonnet-5" || s.Main.Tier != state.PinnedTier || s.Main.Effort != "low" || fj.calls() != calls {
+	if s.PinModel != "claude-sonnet-5-5" || s.Main.Model != "claude-sonnet-5-5" || s.Main.Tier != state.PinnedTier || s.Main.Effort != "low" || fj.calls() != calls {
 		t.Fatalf("model pin: pin %q/%q, main %+v, calls %d", s.PinModel, s.Pin, s.Main, fj.calls()-calls)
 	}
 	prompt("[effort:high] and explain the tricky part")
-	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5" || s.Main.Effort != "high" {
+	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5-5" || s.Main.Effort != "high" {
 		t.Fatalf("effort on a pinned model: %+v", s.Main)
 	}
 	prompt("[model:haiku] quick one") // 200K window: can't run a main session
-	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5" {
+	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5-5" {
 		t.Fatalf("haiku pinned for the main session: %+v", s.Main)
 	}
 	prompt("[model:opus] [effort:xhigh] back to opus") // a model and effort a tier runs: pinned as that tier

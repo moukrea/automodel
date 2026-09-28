@@ -81,6 +81,15 @@ Verified 2026-09-26 on Claude Code 2.1.283 (see docs/spikes.md):
   after `system/compact_boundary` in the transcript.
 - `--resume` keeps the session ID; SessionStart(resume) reports
   `prompt_cache_likely_expired`.
+- SessionStart(compact) runs before the compaction summary is in the
+  transcript: the hook decides from a detached copy that waits for it.
+- Claude Code 2.1.284: the `sonnet` alias is Sonnet 5.5 (first-party), and
+  the Explore subagent now inherits an unknown session model (the routed
+  "jev") instead of switching to Opus; the agent hook's alias still wins.
+- Sonnet 5.5 rejects `thinking: disabled` (400), can't read other models'
+  thinking blocks (dropped silently), and returns 400 when anything before a
+  replayed Sonnet 5.5 thinking block changed (prefix binding): the proxy's
+  effort-only messages must stay byte-identical once placed.
 
 If any of these change, the proxy or hooks need updating: say so in the report.
 

@@ -2,8 +2,8 @@
 
 A small tool for Claude Code: pick **Jev (auto)** in `/model`, and it picks
 the model and effort for each prompt, subagent and workflow step. A quick
-question gets Haiku or low effort, a race condition extra-high, a file listing
-Haiku.
+question gets Haiku or low effort, a race condition extra-high; subagents get
+their own pick (Haiku for a file listing, Sonnet 5.5 for a summary).
 Decisions come from [TypeSafe Jev](https://docs.typesafe.ai) on OpenRouter
 (under a second, ~$0.00004 each); your Claude traffic stays on your own
 subscription.
@@ -308,17 +308,67 @@ your call.
   OpenRouter. No telemetry: the ledger (`~/.local/state/automodel/`) stays
   local.
 
-## Catalog
+## Tuning: automodel's defaults, or yours
 
-`catalog.toml` holds models, prices, measurements, tiers and Jev criteria
-(no model ID in the code). It is hot-reloaded. An invalid catalog is rejected
-and the last valid one is kept. Updates go through the
-`refresh-model-catalog` skill (`.claude/skills/`), which proposes, justifies
-(`scripts/frontier.py`) and applies only with your approval, logging each
-change in `catalog-history.md`.
+Everything that drives a decision lives in the **catalog**: models and prices,
+the tiers and the criteria Jev reads for each, the modes (ultracode), the
+questions Jev answers and their thresholds, the policy (how much worse
+under-provisioning is than over-provisioning), and how much of the
+conversation Jev sees. There is no model ID in the code.
+
+- **Default tuning** (`tuning = "default"`, the default): automodel's catalog,
+  shipped in the binary, measured on the labeled cases before each release and
+  updated with every release. Nothing to maintain.
+- **Custom tuning** (`tuning = "custom"`): your file (`catalog` in the config,
+  `~/.config/automodel/catalog.toml` by default). A partial file, with only
+  the keys you change, is layered over the default: you keep automodel's
+  improvements for the rest. A whole catalog (`automodel tuning init --full`)
+  is used as it is and no longer follows automodel's updates. A broken file
+  never stops routing: the default takes over, and `automodel doctor` says so.
 
 ```sh
-automodel catalog check [--json]                       # validation (non-zero exit on error, for CI)
+automodel tuning                    # which tuning routes, and what your file changes
+automodel tuning init [--full]      # create your file: a template of the usual knobs, or a whole copy
+automodel tuning diff               # your changes, next to automodel's defaults
+automodel tuning show [--default]   # the catalog routing uses (or the default one)
+automodel tuning use custom         # route with your file; `use default` goes back
+automodel eval --catalog <file>     # measure a file (partial or whole) on the labeled cases
+```
+
+A partial file looks like this:
+
+```toml
+[meta]
+underprovision_penalty = 2.0          # lean higher when unsure
+
+[tiers.main.medium]
+criteria = "A routine change with a clear recipe in one area, including our Terraform modules."
+
+[tiers.main.haiku]
+threshold = 0.95                      # Haiku only when Jev is really sure
+
+[questions.informs]
+question = "Does the new prompt only add information for the work in progress?"
+yes = "..."
+no = "..."
+
+[state]
+recent_prompts = 3                    # show Jev fewer past prompts
+```
+
+A partial file's tables merge key by key; its arrays (such as
+`[[measurements]]`) replace the default's whole. Behaviour switches (warm decisions, the spending cap, privacy) stay in
+the config file.
+
+**Refreshing it**: the `refresh-model-catalog` skill (`.claude/skills/`)
+researches models, prices and benchmarks, proposes a catalog with evidence
+(`scripts/frontier.py`, `automodel eval`) and applies it only with your
+approval. Run from the automodel repository it updates the default tuning
+(logged in `catalog-history.md`); run anywhere else it writes *your* custom
+file and switches you to it.
+
+```sh
+automodel catalog check [--json]    # validation of the catalog in use (non-zero exit on error, for CI)
 .claude/skills/refresh-model-catalog/scripts/frontier.py catalog.toml [--json]
 ```
 

@@ -17,6 +17,7 @@ import (
 	"github.com/moukrea/automodel/internal/config"
 	"github.com/moukrea/automodel/internal/install"
 	"github.com/moukrea/automodel/internal/proxy"
+	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/update"
 )
 
@@ -120,16 +121,38 @@ func (e Env) key() Result {
 }
 
 func (e Env) catalog() Result {
-	_, issues, err := catalog.Load(e.Cfg.Catalog, time.Now(), e.Cfg.StaleDays)
-	switch {
-	case err != nil:
+	store := router.NewStore(e.Cfg)
+	c, err := store.Get()
+	if err != nil {
 		return Result{Fail, "catalog", err.Error(), "automodel install"}
-	case len(issues.Errors()) > 0:
-		return Result{Fail, "catalog", fmt.Sprintf("%s: %d error(s)", e.Cfg.Catalog, len(issues.Errors())), "automodel catalog check"}
 	}
-	d := e.Cfg.Catalog + " valid"
+	issues := c.Validate(time.Now(), e.Cfg.StaleDays)
+	if len(issues.Errors()) > 0 {
+		return Result{Fail, "catalog", fmt.Sprintf("%s: %d error(s)", store.Source(), len(issues.Errors())), "automodel catalog check"}
+	}
+	d := "tuning " + store.Source()
+	if router.CustomTuning(e.Cfg) {
+		// A custom file that doesn't load leaves routing on the default: say so.
+		data, rerr := os.ReadFile(e.Cfg.Catalog)
+		if rerr != nil {
+			return Result{Warn, "catalog", "tuning custom, but " + e.Cfg.Catalog + " is missing: routing uses the default", "automodel tuning init, or automodel tuning use default"}
+		}
+		merged, merr := catalog.Merge(catalog.Shipped, data)
+		if catalog.Shipped == nil || catalog.IsWhole(data) {
+			merged, merr = data, nil
+		}
+		cc, perr := catalog.Parse(merged)
+		if merr != nil || perr != nil || len(cc.Validate(time.Now(), e.Cfg.StaleDays).Errors()) > 0 {
+			return Result{Warn, "catalog", "tuning custom, but " + e.Cfg.Catalog + " is invalid: routing uses the default", "automodel catalog check"}
+		}
+		if ov, err := catalog.Overrides(catalog.Shipped, data); err == nil && catalog.Shipped != nil {
+			d = fmt.Sprintf("tuning custom: %s (%d change(s) from the default)", e.Cfg.Catalog, len(ov))
+		}
+	} else {
+		d = "tuning default (automodel's, updated with every release)"
+	}
 	if n := len(issues.Warnings()); n > 0 {
-		d += fmt.Sprintf(" (%d warning(s): automodel catalog check)", n)
+		d += fmt.Sprintf("; %d warning(s): automodel catalog check", n)
 	}
 	return Result{OK, "catalog", d, ""}
 }

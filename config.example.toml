@@ -2,7 +2,11 @@
 listen = "127.0.0.1:8788"
 upstream = "https://api.anthropic.com"
 custom_model_id = "jev"
-catalog = "/path/to/automodel/catalog.toml"   # hot-reloaded; relative paths resolve from this file
+# Routing tuning (see `automodel tuning`):
+#   "default": automodel's catalog, shipped in the binary and updated with every release;
+#   "custom":  the file at `catalog` below, layered over the default (your keys win).
+tuning = "default"
+catalog = "catalog.toml"   # your custom tuning file; hot-reloaded; relative paths resolve from this file
 # state_dir = "~/.local/state/automodel"      # sessions, prompt index, hooks.log, catalog.lastgood.toml
 # ledger = "~/.local/state/automodel/ledger.jsonl"
 cache_ttl = "1h"
