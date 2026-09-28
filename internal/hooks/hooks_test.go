@@ -821,6 +821,32 @@ func TestModelTagPins(t *testing.T) {
 	if s, _ = env.State.Load("s1"); s.Pin != "" || s.PinModel != "" || fj.calls() != calls+1 {
 		t.Fatalf("model:auto didn't release: %q %q, calls %d", s.Pin, s.PinModel, fj.calls()-calls)
 	}
+	if sig, _ := fj.last().State.(map[string]any)["user_signals"].(map[string]any); sig["released_pin"] != true {
+		t.Errorf("Jev not told the pin was released: %v", fj.last().State)
+	}
+}
+
+// Leaving a pinned model that no tier runs (Sonnet in the main session)
+// costs a cache rebuild: the ledger records it.
+func TestReleasedModelPinCost(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	env := setup(t, fj)
+	warmSession(t, env, "s2", "high", 60_000)
+	cwd := t.TempDir()
+	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s2", "prompt": p, "cwd": cwd}) }
+	prompt("[model:sonnet] summarize the README")
+	fj.answers = []fa{{tier: "xhigh", conf: 0.9, cont: 0.1}}
+	prompt("[model:auto] think harder about the race")
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	var last *ledger.Decision
+	for i := range all {
+		if all[i].SessionID == "s2" {
+			last = &all[i]
+		}
+	}
+	if last == nil || last.Chosen != "xhigh" || last.SwitchUSD <= 0 || last.Signals["released_pin"] != true {
+		t.Fatalf("release decision = %+v", last)
+	}
 }
 
 func TestOwnCommandsNotRouted(t *testing.T) {
