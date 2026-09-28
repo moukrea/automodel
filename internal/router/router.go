@@ -39,8 +39,7 @@ func New(cfg *config.Config) (*Env, error) {
 	if cfg.KeyFileTooOpen() {
 		log.Printf("warning: %s holds openrouter_api_key but is readable by others (chmod 600)", cfg.Path())
 	}
-	store := &catalog.Store{Path: cfg.Catalog, LastGood: cfg.LastGoodCatalog(), StaleDays: cfg.StaleDays}
-	cat, err := store.Get()
+	cat, err := NewStore(cfg).Get()
 	if err != nil {
 		return nil, err
 	}

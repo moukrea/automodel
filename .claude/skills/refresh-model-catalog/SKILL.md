@@ -11,8 +11,24 @@ the user's explicit approval.
 
 ## Absolute rule
 
-**Never write `catalog.toml` without the user's explicit approval.** Work on
-`catalog.proposed.toml`. In a scheduled/unattended run, stop at the report.
+**Never write the catalog without the user's explicit approval.** Work on a
+proposed copy. In a scheduled/unattended run, stop at the report.
+
+## Whose catalog: maintainer or user
+
+- **In the automodel repository** (you're working on automodel itself):
+  `catalog.toml` is the **default tuning**, shipped in every release. Propose
+  in `catalog.proposed.toml`; on approval it replaces `catalog.toml`.
+- **Anywhere else** (a user of automodel tuning their own routing): the result
+  is the user's **custom tuning**, never the default. `automodel tuning path`
+  gives its file (`automodel tuning init` creates one: a template, or
+  `--full` for a whole copy). Keep it **partial when you can**: only the keys
+  that change, layered over the default, so the user still gets automodel's
+  future improvements for everything else. Propose in `<path>.proposed`
+  (`automodel tuning diff` and `automodel eval --catalog <path>.proposed`
+  work on a partial file too). On approval write it, then
+  `automodel tuning use custom`; `automodel tuning use default` goes back.
+  Tell the user which tuning is in use at the end (`automodel tuning`).
 
 ## Procedure
 

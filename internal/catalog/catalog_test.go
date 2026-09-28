@@ -47,8 +47,13 @@ func TestRepoCatalogIsValid(t *testing.T) {
 	if by := dom.Dominators["claude-sonnet-5@medium"]; len(by) == 0 {
 		t.Error("sonnet medium should be dominated")
 	}
-	if by := dom.Dominators["claude-sonnet-5@low"]; len(by) > 0 {
-		t.Error("sonnet low is only quasi-dominated")
+	for _, e := range []string{"low", "high"} {
+		if by := dom.Dominators["claude-sonnet-5-5@"+e]; len(by) > 0 {
+			t.Errorf("sonnet 5.5 %s should be on the frontier, dominated by %v", e, by)
+		}
+	}
+	if by := dom.Dominators["claude-sonnet-5-5@medium"]; len(by) == 0 {
+		t.Error("sonnet 5.5 medium should be dominated (by opus low)")
 	}
 }
 

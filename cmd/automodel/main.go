@@ -7,6 +7,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -56,6 +58,8 @@ Usage:
   automodel report [--json] [--since 7d] [--baseline xhigh]
   automodel why [--session id] [-n 5] [--scope main] [--follow]   explain the latest routing decisions
   automodel flag [--session id] [--n 1] --want tier [--note "..."]   label a wrong decision (local eval case)
+  automodel tuning [use default|custom | init [--full] | diff | show [--default] | path]
+                                       the routing tuning: automodel's default, or your custom file over it
   automodel catalog check [--json] [--catalog path]
   automodel eval [--catalog path] [--cases file] [--format score|choice] [--json]
                                        measure Jev's routing answers on labeled cases
@@ -73,6 +77,7 @@ Global flag: --config path (default $AUTOMODEL_CONFIG or ~/.config/automodel/con
 `
 
 func main() {
+	catalog.Shipped = automodel.Catalog
 	args := os.Args[1:]
 	cfgPath := ""
 	if len(args) >= 2 && args[0] == "--config" {
@@ -149,6 +154,8 @@ func run(cfgPath, cmd string, args []string) error {
 		return why(cfg, args)
 	case "flag":
 		return flagCmd(cfg, args)
+	case "tuning":
+		return tuningCmd(cfg, args)
 	case "catalog":
 		return catalogCmd(cfg, args)
 	case "eval":
@@ -192,7 +199,7 @@ func serve(cfg *config.Config, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	debug := fs.Bool("debug", os.Getenv("AUTOMODEL_DEBUG") != "", "log every rewrite")
 	fs.Parse(args)
-	store := &catalog.Store{Path: cfg.Catalog, LastGood: cfg.LastGoodCatalog(), StaleDays: cfg.StaleDays}
+	store := router.NewStore(cfg)
 	cat, err := store.Get()
 	if err != nil {
 		return fmt.Errorf("catalog: %w", err)
@@ -206,7 +213,7 @@ func serve(cfg *config.Config, args []string) error {
 	}
 	p.Debug = *debug
 	p.Version = version
-	log.Printf("automodel %s listening on %s → %s (model %q, catalog %s)", version, cfg.Listen, cfg.Upstream, cfg.CustomModelID, cfg.Catalog)
+	log.Printf("automodel %s listening on %s → %s (model %q, catalog %s)", version, cfg.Listen, cfg.Upstream, cfg.CustomModelID, store.Source())
 	afterUpdate(cfg)
 	exe := install.Self()
 	update.RemoveOld(exe)
@@ -251,8 +258,15 @@ func evalCmd(cfg *config.Config, args []string) error {
 	check := fs.Bool("check", false, "fail unless the main scope passes the regression gate (exact accuracy, recall per tier, tier share vs label share, rank error)")
 	fs.Parse(args)
 	if *catPath != "" {
+		// A whole catalog is evaluated alone; a partial file (a custom
+		// tuning, no meta.schema) is evaluated over the default.
+		path, done, err := wholeCatalog(*catPath)
+		if err != nil {
+			return err
+		}
+		defer done()
 		c := *cfg
-		c.Catalog = *catPath
+		c.Catalog, c.CatalogExact = path, true
 		cfg = &c
 	}
 	env, err := router.New(cfg)
@@ -311,7 +325,7 @@ func report(cfg *config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
+	if c, _, err := router.LoadCatalog(cfg); err == nil {
 		if sv, err := ledger.EstimateSavingsFile(*ledgerPath, from, c, c.DefaultTier(catalog.ScopeMain).Model, *baseline); err == nil && sv.Requests > 0 {
 			rep.Savings = sv
 		}
@@ -377,7 +391,7 @@ func why(cfg *config.Config, args []string) error {
 	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
 	fs.Parse(args)
 	o := ledger.WhyOptions{Session: *session, N: *n}
-	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil {
+	if c, _, err := router.LoadCatalog(cfg); err == nil {
 		o.Rank = rankFn(c)
 	}
 	all, err := ledger.Decisions(*ledgerPath)
@@ -441,7 +455,7 @@ func flagCmd(cfg *config.Config, args []string) error {
 	if !ok {
 		return errors.New("no such decision (see automodel why)")
 	}
-	if c, _, err := catalog.Load(cfg.Catalog, time.Now(), 3650); err == nil && c.Tier(d.Scope, *want) == nil {
+	if c, _, err := router.LoadCatalog(cfg); err == nil && c.Tier(d.Scope, *want) == nil {
 		return fmt.Errorf("%q is not a %s tier", *want, d.Scope)
 	}
 	st, err := ledger.States{Dir: cfg.StateDir}.Get(d.SessionID, d.ID)
@@ -475,10 +489,24 @@ func catalogCmd(cfg *config.Config, args []string) error {
 	}
 	fs := flag.NewFlagSet("catalog check", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "JSON output")
-	path := fs.String("catalog", cfg.Catalog, "catalog path")
+	path := fs.String("catalog", "", "a whole catalog file to check (default: the catalog automodel routes with)")
 	staleDays := fs.Int("stale-days", cfg.StaleDays, "warn about data older than this")
 	fs.Parse(args[1:])
-	_, issues, err := catalog.Load(*path, time.Now(), *staleDays)
+	var issues catalog.Issues
+	var err error
+	if *path != "" {
+		whole, done, werr := wholeCatalog(*path)
+		if werr != nil {
+			return werr
+		}
+		defer done()
+		_, issues, err = catalog.Load(whole, time.Now(), *staleDays)
+	} else {
+		c := *cfg
+		c.StaleDays = *staleDays
+		_, issues, err = router.LoadCatalog(&c)
+		*path = router.NewStore(&c).Source()
+	}
 	if err != nil {
 		return err
 	}
@@ -543,11 +571,7 @@ func installCmd(cfg *config.Config, args []string) error {
 	if o.Log == nil {
 		return printInstall(o, cfg)
 	}
-	if seeded, err := install.SeedCatalog(o.CatalogPath, automodel.Catalog, cfg.StateDir); err != nil {
-		return fmt.Errorf("catalog %s: %w", o.CatalogPath, err)
-	} else if seeded {
-		fmt.Printf("catalog written: %s\n", o.CatalogPath)
-	}
+	retireSeededCatalog(cfg)
 	if err := install.Apply(o); err != nil {
 		return err
 	}
@@ -649,11 +673,7 @@ func afterUpdate(cfg *config.Config) {
 		return
 	}
 	o.Log = func(f string, a ...any) { log.Printf(f, a...) }
-	if seeded, err := install.SeedCatalog(cfg.Catalog, automodel.Catalog, cfg.StateDir); err != nil {
-		log.Printf("update refresh: catalog: %v", err)
-	} else if seeded {
-		log.Printf("catalog updated to the one shipped with %s", version)
-	}
+	retireSeededCatalog(cfg)
 	if err := install.Refresh(o, cfg); err != nil {
 		log.Printf("update refresh: settings: %v", err)
 	}
@@ -806,4 +826,52 @@ func keyCmd(cfg *config.Config, args []string) error {
 	os.Chmod(path, 0o600)
 	fmt.Printf("key saved in %s\n", path)
 	return nil
+}
+
+// retireSeededCatalog removes the catalog copy older installs seeded next
+// to the config while the user never edited it: with the default tuning the
+// binary's own catalog is used, and a stale copy would only mislead. An
+// edited copy is the user's custom tuning and stays.
+func retireSeededCatalog(cfg *config.Config) {
+	if cfg.Tuning != "" || router.CustomTuning(cfg) {
+		return
+	}
+	// Only the copy we wrote: next to the config, and still hashing to the
+	// seeded mark (never a catalog elsewhere, such as a checkout).
+	data, err := os.ReadFile(cfg.Catalog)
+	mark, _ := os.ReadFile(router.SeededMark(cfg))
+	if err != nil || filepath.Dir(cfg.Catalog) != filepath.Dir(cfg.Path()) || len(mark) == 0 {
+		return
+	}
+	if h := sha256.Sum256(data); hex.EncodeToString(h[:]) != strings.TrimSpace(string(mark)) {
+		return
+	}
+	if os.Remove(cfg.Catalog) == nil {
+		os.Remove(router.SeededMark(cfg))
+		log.Printf("catalog: removed the unedited copy %s (the default tuning ships in the binary)", cfg.Catalog)
+	}
+}
+
+// wholeCatalog returns a whole catalog for a --catalog flag: the file itself,
+// or, for a partial file (a custom tuning, without meta.schema), a temporary
+// file with it layered over the default. done removes the temporary file.
+func wholeCatalog(path string) (string, func(), error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, err
+	}
+	if _, err := catalog.Parse(data); err != nil || catalog.IsWhole(data) {
+		return path, func() {}, nil
+	}
+	merged, err := catalog.Merge(catalog.Shipped, data)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s: %w", path, err)
+	}
+	f, err := os.CreateTemp("", "automodel-catalog-*.toml")
+	if err != nil {
+		return "", nil, err
+	}
+	f.Write(merged)
+	f.Close()
+	return f.Name(), func() { os.Remove(f.Name()) }, nil
 }

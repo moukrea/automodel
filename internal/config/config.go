@@ -23,10 +23,17 @@ func (d *Duration) UnmarshalText(b []byte) error {
 func (d Duration) MarshalText() ([]byte, error) { return []byte(d.String()), nil }
 
 type Config struct {
-	Listen                       string   `toml:"listen"`
-	Upstream                     string   `toml:"upstream"`
-	CustomModelID                string   `toml:"custom_model_id"`
-	Catalog                      string   `toml:"catalog"`
+	Listen        string `toml:"listen"`
+	Upstream      string `toml:"upstream"`
+	CustomModelID string `toml:"custom_model_id"`
+	Catalog       string `toml:"catalog"`
+	// Tuning picks the catalog automodel routes with: "default" (shipped
+	// in the binary, updated with every release) or "custom" (the file at
+	// Catalog, layered over the default). Unset (configs from before
+	// 0.12): custom if that file was edited, else default.
+	Tuning string `toml:"tuning"`
+	// CatalogExact (flags only): Catalog is a whole catalog, used alone.
+	CatalogExact                 bool     `toml:"-"`
 	StateDir                     string   `toml:"state_dir"`
 	Ledger                       string   `toml:"ledger"` // default: <state_dir>/ledger.jsonl
 	CacheTTL                     Duration `toml:"cache_ttl"`
@@ -227,6 +234,8 @@ func (c *Config) check() error {
 		return fmt.Errorf("features.switch_horizon_prompts must be > 0")
 	case c.Budget.USDPerDay < 0 || c.Budget.USDPerSession < 0:
 		return fmt.Errorf("budget caps must be >= 0 (0 = off)")
+	case c.Tuning != "" && c.Tuning != "default" && c.Tuning != "custom":
+		return fmt.Errorf("tuning must be \"default\" or \"custom\", not %q", c.Tuning)
 	case c.StateBudgetTokens <= 0 || c.StateBudgetTokens > 30000:
 		return fmt.Errorf("state_budget_tokens must be in (0, 30000] (Jev limit is 32k for state + question)")
 	}

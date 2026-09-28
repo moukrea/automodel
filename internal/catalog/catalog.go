@@ -28,6 +28,48 @@ type Catalog struct {
 	Measurements []Measurement               `toml:"measurements" json:"measurements"`
 	Tiers        map[string]map[string]*Tier `toml:"tiers" json:"tiers"`
 	Modes        map[string]*Mode            `toml:"modes" json:"modes,omitempty"`
+	// Questions and State tune what Jev is asked and what it is shown;
+	// anything left out uses automodel's built-in wording and sizes.
+	Questions Questions   `toml:"questions" json:"questions,omitempty"`
+	State     StateTuning `toml:"state" json:"state,omitempty"`
+}
+
+// Questions overrides the wording of the routing questions.
+type Questions struct {
+	// Level is the Score question's instructions, per scope.
+	Level map[string]string `toml:"level" json:"level,omitempty"`
+	// Continues (warm turns) and Informs (warm main turns) are yes/no questions.
+	Continues *Noul `toml:"continues" json:"continues,omitempty"`
+	Informs   *Noul `toml:"informs" json:"informs,omitempty"`
+}
+
+// Noul is a yes/no question: the question and each side's description.
+type Noul struct {
+	Question string `toml:"question" json:"question"`
+	Yes      string `toml:"yes" json:"yes"`
+	No       string `toml:"no" json:"no"`
+}
+
+// StateTuning sizes what the main session's state shows Jev.
+type StateTuning struct {
+	RecentPrompts       int `toml:"recent_prompts" json:"recent_prompts,omitempty"`               // default 5
+	LastAssistantTokens int `toml:"last_assistant_tokens" json:"last_assistant_tokens,omitempty"` // default 1500
+}
+
+// RecentPromptsN is state.recent_prompts or 5.
+func (s StateTuning) RecentPromptsN() int {
+	if s.RecentPrompts > 0 {
+		return s.RecentPrompts
+	}
+	return 5
+}
+
+// LastAssistantN is state.last_assistant_tokens or 1500.
+func (s StateTuning) LastAssistantN() int {
+	if s.LastAssistantTokens > 0 {
+		return s.LastAssistantTokens
+	}
+	return 1500
 }
 
 type Meta struct {

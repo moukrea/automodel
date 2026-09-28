@@ -397,6 +397,9 @@ func writeConfig(o Options, prevStatusline string) error {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# automodel runtime config (models live in the catalog). See config.example.toml.\n")
+	fmt.Fprintf(&b, "# Routing tuning: \"default\" (automodel's, updated with every release) or\n")
+	fmt.Fprintf(&b, "# \"custom\" (your file below, layered over the default). See `automodel tuning`.\n")
+	fmt.Fprintf(&b, "tuning = \"default\"\n")
 	fmt.Fprintf(&b, "catalog = %q\n", o.CatalogPath)
 	if prevStatusline != "" {
 		fmt.Fprintf(&b, "# your previous statusline, rendered before the automodel segment\n")

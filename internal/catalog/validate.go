@@ -140,6 +140,20 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 		}
 	}
 
+	for name, q := range map[string]*Noul{"questions.continues": c.Questions.Continues, "questions.informs": c.Questions.Informs} {
+		if q != nil && (q.Question == "" || q.Yes == "" || q.No == "") {
+			errf("%s: question, yes and no are all required", name)
+		}
+	}
+	for sc := range c.Questions.Level {
+		if sc != ScopeMain && sc != ScopeSubagent {
+			errf("questions.level.%s: unknown scope", sc)
+		}
+	}
+	if c.State.RecentPrompts < 0 || c.State.RecentPrompts > 20 || c.State.LastAssistantTokens < 0 || c.State.LastAssistantTokens > 8000 {
+		errf("state: recent_prompts must be in [0, 20] and last_assistant_tokens in [0, 8000]")
+	}
+
 	for _, id := range sortedKeys(c.Modes) {
 		md := c.Modes[id]
 		where := "mode " + id

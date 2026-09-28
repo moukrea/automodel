@@ -88,7 +88,9 @@ const (
 	QModePfx   = "mode_"
 )
 
-var levelInstructions = map[string]string{
+// DefaultLevel is the Score question's built-in instructions, per scope
+// (the catalog's questions.level overrides them).
+var DefaultLevel = map[string]string{
 	catalog.ScopeMain:     "How much reasoning does the work that the new prompt starts need, judging by what that work actually involves (a short prompt can approve a large job)? When the prompt hands work to subagents, judge only what this session does itself (launching them, then relaying or merging their reports): each subagent gets its own level.",
 	catalog.ScopeSubagent: "How much capability and reasoning does this subagent task need?",
 }
@@ -103,7 +105,11 @@ func Questions(c *catalog.Catalog, scope string, warm bool) (map[string]Question
 	for _, t := range c.ScoredTiers(scope) {
 		levels, ids = append(levels, t.Criteria), append(ids, t.ID)
 	}
-	qs := map[string]Question{QLevel: {Type: "score", Instructions: levelInstructions[scope], Criteria: levels}}
+	level := DefaultLevel[scope]
+	if v := c.Questions.Level[scope]; v != "" {
+		level = v
+	}
+	qs := map[string]Question{QLevel: {Type: "score", Instructions: level, Criteria: levels}}
 	for _, t := range c.TiersByRank(scope) {
 		if t.Asked() {
 			qs[QTierPfx+t.ID] = Question{Type: "noul", Instructions: t.Question, Criteria: map[string]string{"true": t.Criteria, "false": t.No}}
@@ -112,22 +118,35 @@ func Questions(c *catalog.Catalog, scope string, warm bool) (map[string]Question
 	for _, m := range c.ModesFor(scope) {
 		qs[QModePfx+m.ID] = Question{Type: "noul", Instructions: m.Question, Criteria: map[string]string{"true": m.Yes, "false": m.No}}
 	}
+	noul := func(q *catalog.Noul, def catalog.Noul) Question {
+		if q == nil {
+			q = &def
+		}
+		return Question{Type: "noul", Instructions: q.Question, Criteria: map[string]string{"true": q.Yes, "false": q.No}}
+	}
 	if warm {
-		qs[QContinues] = Question{Type: "noul", Instructions: "Does the new prompt keep the assistant on the work already in progress, at the same depth?",
-			Criteria: map[string]string{
-				"true":  "Go-ahead or continuation of the ongoing task: 'yes, do it', 'continue', answering the assistant's question, adding a constraint or a fix to what is being built.",
-				"false": "A separate or smaller step: a new question or feature, a summary, a commit message or PR description, an explanation of what was done.",
-			}}
+		qs[QContinues] = noul(c.Questions.Continues, DefaultContinues)
 		if scope == catalog.ScopeMain {
-			qs[QInforms] = Question{Type: "noul", Instructions: "Does the new prompt only give information for the work already in progress, without asking for any new work?",
-				Criteria: map[string]string{
-					"true":  "Context, a preference, a correction or an answer for the ongoing task, which then goes on as it was: 'FYI it only happens with more than 8 workers', 'env vars win' or 'camelCase' (answering the assistant's question), 'prefer plain SQL for that query', 'don't touch that table', 'the endpoint is /v2/books'.",
-					"false": "Asks for something to be done, even small or related: a new task or question, a fix, a test, a change, a review, a summary or a commit message, or a go-ahead ('yes, do it', 'continue') that starts the proposed work.",
-				}}
+			qs[QInforms] = noul(c.Questions.Informs, DefaultInforms)
 		}
 	}
 	return qs, ids
 }
+
+// DefaultContinues and DefaultInforms are the built-in warm-turn questions
+// (the catalog's questions.continues and questions.informs override them).
+var (
+	DefaultContinues = catalog.Noul{
+		Question: "Does the new prompt keep the assistant on the work already in progress, at the same depth?",
+		Yes:      "Go-ahead or continuation of the ongoing task: 'yes, do it', 'continue', answering the assistant's question, adding a constraint or a fix to what is being built.",
+		No:       "A separate or smaller step: a new question or feature, a summary, a commit message or PR description, an explanation of what was done.",
+	}
+	DefaultInforms = catalog.Noul{
+		Question: "Does the new prompt only give information for the work already in progress, without asking for any new work?",
+		Yes:      "Context, a preference, a correction or an answer for the ongoing task, which then goes on as it was: 'FYI it only happens with more than 8 workers', 'env vars win' or 'camelCase' (answering the assistant's question), 'prefer plain SQL for that query', 'don't touch that table', 'the endpoint is /v2/books'.",
+		No:       "Asks for something to be done, even small or related: a new task or question, a fix, a test, a change, a review, a summary or a commit message, or a go-ahead ('yes, do it', 'continue') that starts the proposed work.",
+	}
+)
 
 // LevelProbs maps a Score answer onto tier IDs (in level order).
 func LevelProbs(a Answer, ids []string) map[string]float64 {

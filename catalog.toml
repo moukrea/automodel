@@ -77,7 +77,7 @@ label = "Sonnet 5"
 status = "dominated"
 reason = "Dominated by Opus 5.5 for coding work. Index v4.3.2: medium to max (28 to 38, $1.00 to $5.09) dominated by Opus 5.5 low/medium/high; high costs $1.79, the same as Opus 5.5 high ($1.82), for 32 vs 54. Low (24, $0.51, 157 s) is only 7% cheaper than Opus 5.5 low (42, $0.55, 81 s) for -18 points and 1.9x the time. CursorBench 4.0 (agentic coding): every effort dominated; low costs more than Opus 5.5 low ($1.39 vs $1.17 for 24.1% vs 43.7%, 1.5x the tokens, 1.6x the steps). Emits 1.25-1.68x Opus 5.5's output tokens at equal effort; cache read costs the same ($0.20/M); no per-turn effort in Claude Code."
 api_id = "claude-sonnet-5"
-alias = "sonnet"
+# The "sonnet" alias is Sonnet 5.5 since Claude Code 2.1.284.
 context = 1_000_000
 long_context = "native"
 max_output = 128_000
@@ -89,6 +89,30 @@ sources = [
   "https://platform.claude.com/docs/en/about-claude/pricing",
   "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5",
   "https://cursor.com/cursorbench",
+]
+
+[models.claude-sonnet-5-5]
+label = "Sonnet 5.5"
+status = "active"
+reason = "The first Sonnet on the frontier against Opus 5.5 (index v4.3.2 and CursorBench 4.0), at low and high. Low: 36 at $0.41 vs Opus low 42 at $0.55 (CursorBench 35.8% at $0.50 vs 43.7% at $1.17, 0.64x the steps), and above the Haiku-Opus low line; used as the subagent tier for reading and reporting. High (47 at $1.08) sits below the Opus low-medium line (48 at that cost), so it earns no tier; medium (41, $0.59) is dominated by Opus low; xhigh (52, $2.74) and max (56, $7.60) by Opus high and xhigh. No main tier: the main session stays on Opus (Sonnet 5.5 can't read Opus thinking blocks and a switch rewrites the cache; cache reads cost the same $0.20/M)."
+api_id = "claude-sonnet-5-5"
+alias = "sonnet"
+context = 1_000_000
+long_context = "native"
+max_output = 128_000
+efforts = ["low", "medium", "high", "xhigh", "max"]
+default_effort = "medium"
+per_turn_effort = true
+price = { input = 2.0, output = 10.0, cache_read = 0.20, cache_write_5m = 2.50, cache_write_1h = 4.0 }
+scopes = ["subagent"]
+verified_at = "2026-09-28"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://platform.claude.com/docs/en/models/sonnet-5-5/overview",
+  "https://platform.claude.com/docs/en/models/sonnet-5-5/whats-new-sonnet-5-5",
+  "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5-5",
+  "https://cursor.com/cursorbench",
+  "Claude Code 2.1.284 embedded model catalog (native_1m, per_turn_effort, alias sonnet)",
 ]
 
 [models.claude-fable-5-1]
@@ -577,6 +601,111 @@ benchmark_version = "aa-coding-agent-index-v1.5"
 measured_at = "2026-09-27"
 source = "https://artificialanalysis.ai/agents/coding-agents"
 
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "low"
+index = 36
+cost_per_task = 0.41
+output_tokens_per_task = 13894
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-28"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5-5"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "medium"
+index = 41
+cost_per_task = 0.59
+output_tokens_per_task = 19488
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-28"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5-5"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "high"
+index = 47
+cost_per_task = 1.08
+output_tokens_per_task = 34467
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-28"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5-5"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "xhigh"
+index = 52
+cost_per_task = 2.74
+output_tokens_per_task = 73724
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-28"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5-5"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "max"
+index = 56
+cost_per_task = 7.60
+output_tokens_per_task = 192838
+benchmark_version = "v4.3.2"
+measured_at = "2026-09-28"
+source = "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5-5"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "low"
+index = 35.8
+cost_per_task = 0.50
+output_tokens_per_task = 11668
+# steps per task: 18
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-28"
+source = "https://cursor.com/cursorbench (costs: Anthropic's estimates, Sonnet 5.5 system card 8.8)"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "medium"
+index = 39.2
+cost_per_task = 0.70
+output_tokens_per_task = 16036
+# steps per task: 22
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-28"
+source = "https://cursor.com/cursorbench (costs: Anthropic's estimates, Sonnet 5.5 system card 8.8)"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "high"
+index = 47.8
+cost_per_task = 1.67
+output_tokens_per_task = 37391
+# steps per task: 41
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-28"
+source = "https://cursor.com/cursorbench (costs: Anthropic's estimates, Sonnet 5.5 system card 8.8)"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "xhigh"
+index = 53.1
+cost_per_task = 3.88
+output_tokens_per_task = 100158
+# steps per task: 78
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-28"
+source = "https://cursor.com/cursorbench (costs: Anthropic's estimates, Sonnet 5.5 system card 8.8)"
+
+[[measurements]]
+model = "claude-sonnet-5-5"
+effort = "max"
+index = 55.5
+cost_per_task = 9.67
+output_tokens_per_task = 271920
+# steps per task: 170
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-09-28"
+source = "https://cursor.com/cursorbench (costs: Anthropic's estimates, Sonnet 5.5 system card 8.8)"
+
 # ------------------------------------------------------------ main tiers
 # Opus tiers vary only the effort (per-turn effort keeps the prompt cache
 # across effort changes). Their criteria are the levels of Jev's Score
@@ -659,32 +788,67 @@ model = "claude-haiku-4-5"
 cost = 0.14
 criteria = "Mechanical, fully specified work: finding files, listing or extracting facts, grepping, applying an explicit edit, one-line answers."
 
-[tiers.subagent.opus-low]
+[tiers.subagent.sonnet-low]
 rank = 2
+model = "claude-sonnet-5-5"
+effort = "low"
+criteria = "Reading and reporting that needs some understanding but little reasoning: summarizing a file, a diff or a log, explaining what a piece of code does, answering a question about the code from a few files."
+
+[tiers.subagent.opus-low]
+rank = 3
 model = "claude-opus-5-5"
 effort = "low"
-criteria = "Simple self-contained tasks that need a little judgment: short summaries, quick lookups that must interpret code, small focused edits."
+criteria = "Small self-contained changes or checks that need a little judgment: a focused edit or fix, updating a few call sites, checking how something behaves."
 
 [tiers.subagent.opus-medium]
-rank = 3
+rank = 4
 model = "claude-opus-5-5"
 effort = "medium"
 criteria = "Routine research or implementation with clear requirements and limited scope."
 
 [tiers.subagent.opus-high]
-rank = 4
+rank = 5
 model = "claude-opus-5-5"
 effort = "high"
 criteria = "Multi-file investigation or implementation with real edge cases and some design decisions."
 
 [tiers.subagent.opus-xhigh]
-rank = 5
+rank = 6
 model = "claude-opus-5-5"
 effort = "xhigh"
 criteria = "Hard debugging, reviews for subtle bugs, security or concurrency analysis, proofs; a wrong answer is expensive."
 
 [tiers.subagent.opus-max]
-rank = 6
+rank = 7
 model = "claude-opus-5-5"
 effort = "max"
 criteria = "Open-ended hardest problems needing the deepest reasoning, where cost is secondary."
+
+# ------------------------------------------------------------- questions
+# What Jev is asked besides the tier criteria and the modes' and asked
+# tiers' own questions: the Score question's instructions per scope, and
+# the two warm-turn yes/no questions. A wording change is kept only if it
+# wins on the train split and holds on the held-out split
+# (.claude/skills/refresh-model-catalog/references/routing-eval.md).
+
+[questions.level]
+main = "How much reasoning does the work that the new prompt starts need, judging by what that work actually involves (a short prompt can approve a large job)? When the prompt hands work to subagents, judge only what this session does itself (launching them, then relaying or merging their reports): each subagent gets its own level."
+subagent = "How much capability and reasoning does this subagent task need?"
+
+[questions.continues]
+question = "Does the new prompt keep the assistant on the work already in progress, at the same depth?"
+yes = "Go-ahead or continuation of the ongoing task: 'yes, do it', 'continue', answering the assistant's question, adding a constraint or a fix to what is being built."
+no = "A separate or smaller step: a new question or feature, a summary, a commit message or PR description, an explanation of what was done."
+
+[questions.informs]
+question = "Does the new prompt only give information for the work already in progress, without asking for any new work?"
+yes = "Context, a preference, a correction or an answer for the ongoing task, which then goes on as it was: 'FYI it only happens with more than 8 workers', 'env vars win' or 'camelCase' (answering the assistant's question), 'prefer plain SQL for that query', 'don't touch that table', 'the endpoint is /v2/books'."
+no = "Asks for something to be done, even small or related: a new task or question, a fix, a test, a change, a review, a summary or a commit message, or a go-ahead ('yes, do it', 'continue') that starts the proposed work."
+
+# ----------------------------------------------------------------- state
+# How much of the conversation the main session's state shows Jev (within
+# the config's state_budget_tokens).
+
+[state]
+recent_prompts = 5
+last_assistant_tokens = 1500
