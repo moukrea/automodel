@@ -1,7 +1,6 @@
 package hooks
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,6 +16,10 @@ import (
 // detached copy of the hook asks again with a longer timeout. If no newer
 // prompt arrived meanwhile, its decision replaces the fallback: the proxy
 // applies it from the turn's next request.
+
+// InputFileEnv names the file holding a detached hook's input (read, then
+// removed, in place of stdin).
+const InputFileEnv = "AUTOMODEL_HOOK_INPUT"
 
 // LateEnv carries "<trigger>:<prompt time in ns>" to the late process.
 const LateEnv = "AUTOMODEL_LATE_DECISION"
@@ -40,9 +43,20 @@ func spawnSelf(in *Input, envVar string) {
 	if err != nil {
 		return
 	}
+	// The input goes through a file: a pipe fed by this process would be
+	// cut when it exits, which is right away.
+	f, err := os.CreateTemp("", "automodel-hook-*.json")
+	if err != nil {
+		return
+	}
+	_, werr := f.Write(body)
+	f.Close()
+	if werr != nil {
+		os.Remove(f.Name())
+		return
+	}
 	cmd := exec.Command(exe, os.Args[1:]...)
-	cmd.Stdin = bytes.NewReader(body)
-	cmd.Env = append(os.Environ(), envVar)
+	cmd.Env = append(os.Environ(), envVar, InputFileEnv+"="+f.Name())
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		log.Printf("detached hook %s: %v", in.SessionID, err)

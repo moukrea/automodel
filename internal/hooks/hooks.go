@@ -77,6 +77,12 @@ func Run(name string, env *router.Env, stdin io.Reader, stdout io.Writer) error 
 		return fmt.Errorf("unknown hook %q (want one of %v)", name, Names())
 	}
 	var in Input
+	if path := os.Getenv(InputFileEnv); path != "" {
+		if f, err := os.Open(path); err == nil {
+			stdin = f
+			defer func() { f.Close(); os.Remove(path) }()
+		}
+	}
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
 		log.Printf("hook %s: bad input: %v", name, err)
 		return nil

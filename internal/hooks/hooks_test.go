@@ -974,3 +974,20 @@ func TestStageLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestDetachedInputFile(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	f := filepath.Join(t.TempDir(), "in.json")
+	os.WriteFile(f, []byte(`{"session_id":"x1","source":"startup","model":"jev"}`), 0o600)
+	t.Setenv(InputFileEnv, f)
+	if err := Run("session-start", env, strings.NewReader(""), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := env.State.Load("x1"); s.Model != "jev" {
+		t.Errorf("input file not read: %+v", s)
+	}
+	if _, err := os.Stat(f); !os.IsNotExist(err) {
+		t.Errorf("input file left behind")
+	}
+}
