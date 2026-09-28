@@ -418,25 +418,7 @@ func TestPerTurnEffortRefused(t *testing.T) {
 // A session on a small-window tier (Haiku, max_context) goes to the next tier
 // that fits once the context outgrows it, within the turn.
 func TestSmallWindowTierOutgrown(t *testing.T) {
-	src, err := os.ReadFile("../../catalog.toml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cat := strings.Replace(string(src), `scopes = ["subagent"]`, `scopes = ["main", "subagent"]`, 1) + `
-[tiers.main.haiku]
-rank = 0
-model = "claude-haiku-4-5"
-cost = 0.14
-max_context = 150_000
-question = "small model?"
-criteria = "trivial"
-no = "not trivial"
-threshold = 0.9
-`
-	path := filepath.Join(t.TempDir(), "catalog.toml")
-	os.WriteFile(path, []byte(cat), 0o600)
 	p, up, ps := setup(t)
-	p.Catalog = &catalog.Store{Path: path, StaleDays: 3650}
 	p.State.Update("sess-1", func(s *state.Session) bool {
 		s.Main = &state.Decision{Tier: "haiku", Model: "claude-haiku-4-5"}
 		s.ContextTokens = 10_000

@@ -69,7 +69,7 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "score":
 			var ids []string
 			for _, sc := range catalog.Scopes {
-				if f.cat.Tier(sc, a.tier) != nil {
+				if t := f.cat.Tier(sc, a.tier); t != nil && !t.Asked() && ids == nil {
 					for _, t := range f.cat.ScoredTiers(sc) {
 						ids = append(ids, t.ID)
 					}
@@ -826,22 +826,9 @@ func TestOwnCommandsNotRouted(t *testing.T) {
 	}
 }
 
-// withHaiku adds a Haiku asked tier below main low, as a catalog could.
-func withHaiku(t *testing.T, env *router.Env) {
-	t.Helper()
-	c := env.Catalog
-	c.Models["claude-haiku-4-5"].Scopes = []string{"main", "subagent"}
-	c.Tiers[catalog.ScopeMain]["haiku"] = &catalog.Tier{ID: "haiku", Scope: catalog.ScopeMain, Rank: 0, Model: "claude-haiku-4-5",
-		Cost: 0.14, MaxContext: 150_000, Question: "small model?", Criteria: "trivial", No: "not trivial", Threshold: 0.9}
-	if is := c.Validate(time.Now(), 3650); len(is.Errors()) > 0 {
-		t.Fatal(is)
-	}
-}
-
 func TestAskedTier(t *testing.T) {
 	fj := &fakeJev{}
 	env := setup(t, fj)
-	withHaiku(t, env)
 	decide := func(sid, p string) {
 		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": t.TempDir()})
 	}
