@@ -42,7 +42,7 @@ per_turn_effort = true
 # it). When no switch could pay back, Jev is not even asked.
 cost_aware = true
 warm_min_confidence = 0.8
-warm_timeout = "3s"
+warm_timeout = "4s"
 # Prompts a switch is expected to serve, when weighed against a cache rebuild.
 switch_horizon_prompts = 3
 

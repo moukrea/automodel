@@ -98,6 +98,9 @@ type Features struct {
 	// (a cache rebuild) needs; a free per-turn effort change follows Jev.
 	WarmMinConfidence float64 `toml:"warm_min_confidence"`
 	// WarmTimeout bounds the Jev call on warm turns (on timeout nothing changes).
+	// 4s like the initial call: on 2026-09-28 Jev's latency on OpenRouter went
+	// from ~0.5s to 1.6-3.4s for hours, and 3s turned routine prompts into
+	// fallbacks that keep the wrong effort for the whole turn.
 	WarmTimeout Duration `toml:"warm_timeout"`
 	// SwitchHorizonPrompts is how many prompts a switch is expected to serve
 	// when weighing it against a cache rebuild.
@@ -128,7 +131,7 @@ func Default() *Config {
 		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "opus-medium"},
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
-			WarmMinConfidence: 0.8, WarmTimeout: Duration{3 * time.Second}, SwitchHorizonPrompts: 3,
+			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,
 		},
 	}
 }
