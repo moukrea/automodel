@@ -175,7 +175,7 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 					j++
 				}
 				if j == len(kept) {
-					log.Printf("per-turn effort %s: history changed (mark %d not found), new epoch at %s", short(sessionID), k, want)
+					log.Printf("per-turn effort %s: history changed (mark %d of %d not found in %d messages, thread %q), new epoch at %s", short(sessionID), k, len(s.EffortMarks), len(kept), th.Type, want)
 					s.EffortBase, s.EffortMarks, s.PendingEffort, changed = want, nil, nil, true
 					break
 				}
