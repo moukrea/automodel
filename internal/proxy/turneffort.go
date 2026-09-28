@@ -130,6 +130,18 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 		kept, msgs = append(kept, r), append(msgs, m)
 	}
 
+	// Claude Code 2.1.284 may send a conversation as a message thread: a
+	// "create" request carries the whole history, a "continue" request only
+	// what follows the thread's last message (the rest lives server side),
+	// and output_config must stay the same across the thread. On a continue
+	// the earlier marks are already in the thread: only a new one, after
+	// the new prompt, is added, and the top-level effort never moves.
+	var th struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(fields["thread"], &th)
+	continuing := th.Type == "continue"
+
 	var base string
 	var marks []state.EffortMark
 	apply := func(s *state.Session) bool {
@@ -140,23 +152,46 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 		}
 		if s.EffortBase == "" {
 			s.EffortBase, s.EffortMarks, changed = want, nil, true
-		}
-		for _, mk := range s.EffortMarks {
-			if mk.Index >= len(kept) || anchor(kept[mk.Index]) != mk.Anchor {
-				// History rewritten (compaction, rewind): the cache is gone
-				// anyway, start a new epoch at the current effort.
-				log.Printf("per-turn effort %s: history changed at message %d, new epoch at %s", short(sessionID), mk.Index, want)
-				s.EffortBase, s.EffortMarks, s.PendingEffort, changed = want, nil, nil, true
-				break
+			if continuing {
+				// A thread we didn't see start: keep the effort it was created with.
+				if e := clientEffort(fields); e != "" {
+					s.EffortBase = e
+				}
 			}
 		}
-		// The conversation always opens with an explicit statement: with the
-		// beta on, an unstated effort is rendered at the newest turn, which
-		// moves on every prompt and would defeat the cache (Claude Code does
-		// the same).
-		if len(s.EffortMarks) == 0 && !readOnly {
-			if i := firstUser(msgs); i >= 0 {
-				s.EffortMarks, changed = []state.EffortMark{{Index: i, Anchor: anchor(kept[i]), Effort: s.EffortBase}}, true
+		if continuing {
+			for k := range s.EffortMarks {
+				s.EffortMarks[k].Index = -1 // in the thread already, not in this request
+			}
+		} else {
+			// Place each mark after the message it follows, found by what that
+			// message says (in order); a missing one means the history was
+			// rewritten (compaction, rewind): the cache is gone anyway, start a
+			// new epoch at the current effort.
+			pos := 0
+			for k, mk := range s.EffortMarks {
+				j := pos
+				for j < len(kept) && anchor(kept[j]) != mk.Anchor {
+					j++
+				}
+				if j == len(kept) {
+					log.Printf("per-turn effort %s: history changed (mark %d not found), new epoch at %s", short(sessionID), k, want)
+					s.EffortBase, s.EffortMarks, s.PendingEffort, changed = want, nil, nil, true
+					break
+				}
+				if s.EffortMarks[k].Index != j {
+					s.EffortMarks[k].Index, changed = j, true
+				}
+				pos = j + 1
+			}
+			// The conversation always opens with an explicit statement: with the
+			// beta on, an unstated effort is rendered at the newest turn, which
+			// moves on every prompt and would defeat the cache (Claude Code does
+			// the same).
+			if len(s.EffortMarks) == 0 && !readOnly {
+				if i := firstUser(msgs); i >= 0 {
+					s.EffortMarks, changed = []state.EffortMark{{Index: i, Anchor: anchor(kept[i]), Effort: s.EffortBase}}, true
+				}
 			}
 		}
 		if pe := s.PendingEffort; pe != nil && !readOnly {
@@ -164,7 +199,7 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 				effective := s.EffortBase
 				var keep []state.EffortMark
 				for _, mk := range s.EffortMarks {
-					if mk.Index < i {
+					if continuing || mk.Index < i {
 						effective = mk.Effort
 						keep = append(keep, mk)
 					}
@@ -195,16 +230,16 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 	// Each statement follows the user message it applies to, before the
 	// response (Claude Code's placement); the newest one may end the list.
 	out := make([]json.RawMessage, 0, len(kept)+len(marks))
-	next := 0
 	for i, r := range kept {
 		out = append(out, r)
-		for next < len(marks) && marks[next].Index == i {
-			sys, _ := json.Marshal(map[string]any{
-				"role": "system", "content": []any{},
-				"output_config": map[string]string{"effort": marks[next].Effort},
-			})
-			out = append(out, sys)
-			next++
+		for _, mk := range marks {
+			if mk.Index == i {
+				sys, _ := json.Marshal(map[string]any{
+					"role": "system", "content": []any{},
+					"output_config": map[string]string{"effort": mk.Effort},
+				})
+				out = append(out, sys)
+			}
 		}
 	}
 	fields["messages"], _ = json.Marshal(out)
@@ -228,7 +263,9 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	resp.Body.Close()
 	low := strings.ToLower(string(body))
-	if !strings.Contains(low, "output_config") && !strings.Contains(low, "system") && !strings.Contains(low, "per-turn") && !strings.Contains(low, "per_turn") {
+	// A thread fingerprint mismatch isn't a refusal of per-turn effort:
+	// Claude Code recovers from it by starting a new thread.
+	if strings.Contains(low, "thread_fingerprint_mismatch") || (!strings.Contains(low, "output_config") && !strings.Contains(low, "system") && !strings.Contains(low, "per-turn") && !strings.Contains(low, "per_turn")) {
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return resp, nil
 	}
