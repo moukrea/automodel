@@ -32,6 +32,7 @@ type fa struct {
 	conf  float64
 	ultra float64
 	cont  float64
+	inf   float64
 }
 
 func answer(tier string, conf float64) fa { return fa{tier: tier, conf: conf, ultra: 0.05, cont: 0.1} }
@@ -94,6 +95,9 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			v := a.ultra
 			if id == jev.QContinues {
 				v = a.cont
+			}
+			if id == jev.QInforms {
+				v = a.inf
 			}
 			answers[id] = map[string]any{"type": "noul", "noul": v}
 		case "choice":
@@ -192,7 +196,7 @@ func TestDecideLifecycle(t *testing.T) {
 	if st := fj.last().State.(map[string]any); st["phase"] != "initial" || !strings.Contains(st["task"].(string), "Audit") {
 		t.Errorf("state = %v", st)
 	}
-	if q := fj.last().Questions; q[jev.QLevel].Type != "score" || q[jev.QModePfx+"ultracode"].Type != "noul" || q[jev.QContinues].Type != "" {
+	if q := fj.last().Questions; q[jev.QLevel].Type != "score" || q[jev.QModePfx+"ultracode"].Type != "noul" || q[jev.QContinues].Type != "" || q[jev.QInforms].Type != "" {
 		t.Errorf("initial questions = %+v", q)
 	}
 	sess, _ := env.State.Load(sid)
@@ -326,6 +330,25 @@ func TestWarmDecisions(t *testing.T) {
 		t.Errorf("costly downgrade of continuing work: %+v", s.Main)
 	}
 	env.Cfg.Features.PerTurnEffort = true
+
+	// A prompt that only informs the work in progress keeps the decision,
+	// even where the switch would be free.
+	warmSession(t, env, "w5", "xhigh", 300_000)
+	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.9, inf: 0.9}}
+	decide("w5", "env vars win")
+	if s := main("w5"); s.Main.Tier != "xhigh" || s.PendingEffort != nil {
+		t.Errorf("informing prompt switched: %+v", s.Main)
+	}
+	if q := fj.last().Questions; q[jev.QInforms].Type != "noul" {
+		t.Errorf("warm questions lack informs: %+v", q)
+	}
+	// ...unless it asks for more thinking.
+	warmSession(t, env, "w6", "medium", 300_000)
+	fj.answers = []fa{{tier: "medium", conf: 0.9, cont: 0.9, inf: 0.9}}
+	decide("w6", "FYI it only fails on ARM. Think harder about it.")
+	if s := main("w6"); s.Main.Tier == "medium" {
+		t.Errorf("informing prompt held the tier despite asking for more thinking: %+v", s.Main)
+	}
 
 	// A continuation may upgrade.
 	warmSession(t, env, "w4", "low", 50_000)

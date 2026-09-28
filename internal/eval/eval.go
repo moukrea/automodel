@@ -33,6 +33,7 @@ type Case struct {
 	Accept    []string        `json:"accept"`
 	Modes     map[string]bool `json:"modes"`
 	Continues *bool           `json:"continues"`
+	Informs   *bool           `json:"informs,omitempty"`
 	// Split is "train" (criteria and rules may be tuned on it) or "test"
 	// (held out: only measured). Note says why the label is right.
 	Split string `json:"split,omitempty"`
@@ -71,6 +72,7 @@ type Result struct {
 	Conf     float64            `json:"confidence"`
 	ModeP    map[string]float64 `json:"mode_p,omitempty"`
 	ContP    *float64           `json:"continues_p,omitempty"`
+	InfP     *float64           `json:"informs_p,omitempty"`
 	Cost     float64            `json:"cost_usd"`
 	Err      string             `json:"error,omitempty"`
 }
@@ -165,6 +167,10 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 		v := *a.Noul
 		r.ContP = &v
 	}
+	if a, ok := ans[jev.QInforms]; ok && a.Noul != nil {
+		v := *a.Noul
+		r.InfP = &v
+	}
 	if format != "choice" {
 		// The router's verdict, with free switches (per-turn effort).
 		req := router.Request{Scope: c.Scope, Warm: c.Warm}
@@ -212,7 +218,7 @@ type Summary struct {
 	MeanConf, ConfRight, ConfBad float64
 	Buckets                      []Bucket
 	Modes                        map[string]*Binary
-	Continues                    Binary
+	Continues, Informs           Binary
 	CostUSD                      float64
 	// Scopes holds the per-scope tier metrics: exact accuracy, recall per
 	// tier, confusion matrices, tier share against label share, rank
@@ -265,7 +271,7 @@ func (b *Binary) finish() {
 }
 
 func Summarize(cat *catalog.Catalog, rs []Result) Summary {
-	s := Summary{Modes: map[string]*Binary{}, Continues: Binary{Threshold: cat.Meta.ContinuesThreshold()}}
+	s := Summary{Modes: map[string]*Binary{}, Continues: Binary{Threshold: cat.Meta.ContinuesThreshold()}, Informs: Binary{Threshold: cat.Meta.InformsThreshold()}}
 	bounds := []float64{0, 0.35, 0.6, 0.8, 1.01}
 	for i := 0; i+1 < len(bounds); i++ {
 		s.Buckets = append(s.Buckets, Bucket{Lo: bounds[i], Hi: bounds[i+1]})
@@ -325,6 +331,9 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 		if r.Continues != nil && r.ContP != nil {
 			s.Continues.add(*r.ContP, *r.Continues)
 		}
+		if r.Informs != nil && r.InfP != nil {
+			s.Informs.add(*r.InfP, *r.Informs)
+		}
 	}
 	if s.Cases > 0 {
 		s.Exact = float64(right) / float64(s.Cases)
@@ -349,6 +358,7 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 		b.finish()
 	}
 	s.Continues.finish()
+	s.Informs.finish()
 	s.Scopes = map[string]*ScopeStats{}
 	for _, sc := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
 		if st := ScopeMetrics(cat, sc, rs); st.N > 0 {
@@ -386,6 +396,12 @@ func Print(w io.Writer, cat *catalog.Catalog, rs []Result, s Summary) {
 				cont += map[bool]string{true: " (yes)", false: " (no)"}[*r.Continues]
 			}
 		}
+		if r.InfP != nil {
+			cont += fmt.Sprintf(" · informs %.2f", *r.InfP)
+			if r.Informs != nil {
+				cont += map[bool]string{true: " (yes)", false: " (no)"}[*r.Informs]
+			}
+		}
 		decision := r.Decision
 		if r.Decision != "" && !contains(r.acceptSet(), r.Decision) {
 			decision += " ✗"
@@ -415,9 +431,14 @@ func PrintSummary(w io.Writer, s Summary) {
 		fmt.Fprintf(w, "mode %s @%.2f: %d/%d right (false yes %d, false no %d), mean p yes-cases %.2f, no-cases %.2f\n",
 			m, b.Threshold, b.Right, b.N, b.FalseYes, b.FalseNos, b.MeanYesP, b.MeanNoP)
 	}
-	if b := s.Continues; b.N > 0 {
-		fmt.Fprintf(w, "continues @%.2f: %d/%d right (false yes %d, false no %d), mean p yes-cases %.2f, no-cases %.2f\n",
-			b.Threshold, b.Right, b.N, b.FalseYes, b.FalseNos, b.MeanYesP, b.MeanNoP)
+	for _, q := range []struct {
+		name string
+		b    Binary
+	}{{"continues", s.Continues}, {"informs", s.Informs}} {
+		if b := q.b; b.N > 0 {
+			fmt.Fprintf(w, "%s @%.2f: %d/%d right (false yes %d, false no %d), mean p yes-cases %.2f, no-cases %.2f\n",
+				q.name, b.Threshold, b.Right, b.N, b.FalseYes, b.FalseNos, b.MeanYesP, b.MeanNoP)
+		}
 	}
 	for _, sc := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
 		if st := s.Scopes[sc]; st != nil {

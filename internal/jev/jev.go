@@ -83,6 +83,7 @@ func TierQuestion(c *catalog.Catalog, scope string) Question {
 const (
 	QLevel     = "level"
 	QContinues = "continues"
+	QInforms   = "informs"
 	QModePfx   = "mode_"
 )
 
@@ -94,7 +95,8 @@ var levelInstructions = map[string]string{
 // Questions builds the routing questions of a scope: a Score over the tiers
 // (they are ordered, so a Score fits better than a Choice), one Noul per
 // mode, and on warm turns a Noul on whether the prompt continues the work in
-// progress. It returns the tier IDs in level order.
+// progress, and, in the main session, one on whether it only informs that
+// work (no new work asked). It returns the tier IDs in level order.
 func Questions(c *catalog.Catalog, scope string, warm bool) (map[string]Question, []string) {
 	var levels, ids []string
 	for _, t := range c.TiersByRank(scope) {
@@ -110,6 +112,13 @@ func Questions(c *catalog.Catalog, scope string, warm bool) (map[string]Question
 				"true":  "Go-ahead or continuation of the ongoing task: 'yes, do it', 'continue', answering the assistant's question, adding a constraint or a fix to what is being built.",
 				"false": "A separate or smaller step: a new question or feature, a summary, a commit message or PR description, an explanation of what was done.",
 			}}
+		if scope == catalog.ScopeMain {
+			qs[QInforms] = Question{Type: "noul", Instructions: "Does the new prompt only give information for the work already in progress, without asking for any new work?",
+				Criteria: map[string]string{
+					"true":  "Context, a preference, a correction or an answer for the ongoing task, which then goes on as it was: 'FYI it only happens with more than 8 workers', 'env vars win' or 'camelCase' (answering the assistant's question), 'prefer plain SQL for that query', 'don't touch that table', 'the endpoint is /v2/books'.",
+					"false": "Asks for something to be done, even small or related: a new task or question, a fix, a test, a change, a review, a summary or a commit message, or a go-ahead ('yes, do it', 'continue') that starts the proposed work.",
+				}}
+		}
 	}
 	return qs, ids
 }

@@ -197,7 +197,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 
 	rd := e.Read(ans, ids, req.Scope)
-	rec.Probs, rec.Confidence, rec.JevChoice, rec.ModeP, rec.ContinuesP = rd.probs, rd.conf, rd.top, rd.modeP, rd.continues
+	rec.Probs, rec.Confidence, rec.JevChoice, rec.ModeP, rec.ContinuesP, rec.InformsP = rd.probs, rd.conf, rd.top, rd.modeP, rd.continues, rd.informs
 	dec.JevChoice, dec.Confidence, dec.Probs = rd.top, rd.conf, rd.probs
 
 	v := e.Judge(req, rd, cur, rp, params)
@@ -285,6 +285,15 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		return v // the user asked for it: no warm gate
 	}
 	curMode := req.Current.Mode
+	// A prompt that only informs the work in progress (a fact, a
+	// preference, an answer) asks for no new work: what was decided for
+	// that work stays, even where a switch would be free. Jev otherwise
+	// rates its few words ("env vars win") as a small task.
+	if req.Scope == catalog.ScopeMain && rd.informs != nil && *rd.informs >= c.Meta.InformsThreshold() {
+		if t := policy.Constrain(c, req.Scope, cur, rp, req.Context); t.ID == cur.ID {
+			return Verdict{Tier: cur, Mode: curMode, Pick: pk, Keep: "only informs the work in progress"}
+		}
+	}
 	cont := rd.continues != nil && *rd.continues >= c.Meta.ContinuesThreshold()
 	// The gates below guard switches that cost something (a cache rebuild).
 	// A free switch (per-turn effort) follows Jev's answer: holding the
@@ -317,6 +326,7 @@ type Reading struct {
 	top       string
 	modeP     map[string]float64
 	continues *float64
+	informs   *float64
 }
 
 func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Reading {
@@ -339,6 +349,10 @@ func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Readin
 	if a, ok := ans[jev.QContinues]; ok && a.Noul != nil {
 		v := *a.Noul
 		rd.continues = &v
+	}
+	if a, ok := ans[jev.QInforms]; ok && a.Noul != nil {
+		v := *a.Noul
+		rd.informs = &v
 	}
 	return rd
 }

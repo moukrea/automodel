@@ -52,6 +52,9 @@ type Meta struct {
 	// ContinuesThresholdP is the yes-probability from which a warm prompt
 	// counts as continuing the work in progress (no downgrade, mode kept).
 	ContinuesThresholdP float64 `toml:"continues_threshold" json:"continues_threshold,omitempty"`
+	// InformsThresholdP is the yes-probability from which a warm main prompt
+	// only informs the work in progress: the decision in force is kept.
+	InformsThresholdP float64 `toml:"informs_threshold" json:"informs_threshold,omitempty"`
 	// PerTurnEffortBeta is the anthropic-beta value for per-turn effort.
 	PerTurnEffortBeta string `toml:"per_turn_effort_beta" json:"per_turn_effort_beta,omitempty"`
 }
@@ -68,6 +71,16 @@ func (m Meta) ContinuesThreshold() float64 {
 		return m.ContinuesThresholdP
 	}
 	return 0.7
+}
+
+// InformsThreshold returns meta.informs_threshold or 0.6 (from `automodel
+// eval`, train split: informational cases >= 0.83, requests <= 0.28; held
+// out, questions about the work in progress reach 0.54).
+func (m Meta) InformsThreshold() float64 {
+	if m.InformsThresholdP > 0 {
+		return m.InformsThresholdP
+	}
+	return 0.6
 }
 
 // MinMainContext returns meta.main_min_context or its default.
