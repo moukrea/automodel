@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -40,23 +41,50 @@ func effortOnly(m msg) bool {
 	return len(c) == 0 || bytes.Equal(c, []byte("[]")) || bytes.Equal(c, []byte(`""`))
 }
 
-// anchor hashes a message without its cache_control markers, which Claude
-// Code moves from request to request.
+// anchor hashes what a message says, for the model: its role, and each
+// content block's type, text, tool name, input, id and result, in order.
+// Claude Code moves cache_control markers from request to request, and
+// newer versions touch other fields of a message that aren't rendered: a
+// hash over them saw the first message "change" on every request (a new
+// effort epoch each time, and a top-level effort change at the next
+// switch, which rewrites the cache).
 func anchor(raw json.RawMessage) string {
 	var m map[string]any
 	if json.Unmarshal(raw, &m) != nil {
 		return ""
 	}
-	if blocks, ok := m["content"].([]any); ok {
-		for _, b := range blocks {
-			if bm, ok := b.(map[string]any); ok {
-				delete(bm, "cache_control")
+	var b strings.Builder
+	b.WriteString(fmt.Sprint(m["role"]))
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case string:
+			b.WriteString("\x00s:" + x)
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		case map[string]any:
+			b.WriteString("\x00t:" + fmt.Sprint(x["type"]))
+			for _, k := range []string{"text", "name", "id", "tool_use_id", "thinking", "data", "signature"} {
+				if s, ok := x[k].(string); ok {
+					b.WriteString("\x00" + k + ":" + s)
+				}
+			}
+			if in, ok := x["input"]; ok {
+				j, _ := json.Marshal(in) // map keys are sorted: deterministic
+				b.WriteString("\x00input:" + string(j))
+			}
+			if c, ok := x["content"]; ok {
+				walk(c)
+			}
+			if src, ok := x["source"].(map[string]any); ok {
+				b.WriteString("\x00src:" + fmt.Sprint(src["type"], src["media_type"], len(fmt.Sprint(src["data"]))))
 			}
 		}
 	}
-	delete(m, "cache_control")
-	b, _ := json.Marshal(m) // map keys are sorted: deterministic
-	h := sha256.Sum256(b)
+	walk(m["content"])
+	h := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(h[:12])
 }
 
