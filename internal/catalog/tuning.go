@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -111,8 +112,14 @@ func Overrides(base, over []byte) ([]Override, error) {
 // Short renders a TOML value on one line, cut to n characters.
 func Short(v any, n int) string {
 	s := strings.ReplaceAll(fmt.Sprintf("%v", v), "\n", " ")
-	if str, ok := v.(string); ok {
-		s = fmt.Sprintf("%q", str)
+	switch x := v.(type) {
+	case string:
+		s = fmt.Sprintf("%q", x)
+	case float64:
+		s = strconv.FormatFloat(x, 'f', -1, 64)
+		if !strings.Contains(s, ".") {
+			s += ".0" // a TOML float, as written: 2.0, not 2
+		}
 	}
 	if len(s) > n {
 		s = s[:n-1] + "…"
