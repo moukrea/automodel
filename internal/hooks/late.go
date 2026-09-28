@@ -26,6 +26,12 @@ const LateTimeout = 20 * time.Second
 
 // spawnLate starts the late decision (a package variable: tests replace it).
 var spawnLate = func(in *Input, trigger string, at time.Time) {
+	spawnSelf(in, fmt.Sprintf("%s=%s:%d", LateEnv, trigger, at.UnixNano()))
+}
+
+// spawnSelf runs this hook again, detached, with in on stdin and one more
+// environment variable.
+func spawnSelf(in *Input, envVar string) {
 	exe, err := os.Executable()
 	if err != nil {
 		return
@@ -36,13 +42,33 @@ var spawnLate = func(in *Input, trigger string, at time.Time) {
 	}
 	cmd := exec.Command(exe, os.Args[1:]...)
 	cmd.Stdin = bytes.NewReader(body)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%s:%d", LateEnv, trigger, at.UnixNano()))
+	cmd.Env = append(os.Environ(), envVar)
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
-		log.Printf("late decision %s: %v", in.SessionID, err)
+		log.Printf("detached hook %s: %v", in.SessionID, err)
 		return
 	}
 	cmd.Process.Release()
+}
+
+// CompactEnv carries the compaction time (ns) to the detached compaction decision.
+const CompactEnv = "AUTOMODEL_COMPACT_DECISION"
+
+// compactWait bounds the wait for the compaction summary in the transcript.
+var compactWait = 10 * time.Second
+
+// spawnCompact starts the decision on the compaction summary (a package
+// variable: tests replace it).
+var spawnCompact = func(in *Input, at time.Time) {
+	spawnSelf(in, fmt.Sprintf("%s=%d", CompactEnv, at.UnixNano()))
+}
+
+func compactMode() (time.Time, bool) {
+	n, err := strconv.ParseInt(os.Getenv(CompactEnv), 10, 64)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(0, n), true
 }
 
 // lateMode reports the trigger and prompt time of a late decision process.
