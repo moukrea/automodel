@@ -34,7 +34,7 @@ func PreCompact(_ context.Context, env *router.Env, in *Input) (*Output, error) 
 // SessionStart records the model when Claude Code provides it, marks
 // compactions (belt and braces with PreCompact) and flags resumed sessions
 // whose cache Claude Code reports as expired.
-func SessionStart(_ context.Context, env *router.Env, in *Input) (*Output, error) {
+func SessionStart(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	_, err := env.State.Update(in.SessionID, func(s *state.Session) bool {
 		changed := false
 		if in.Model != "" && s.Model != in.Model {
@@ -58,7 +58,42 @@ func SessionStart(_ context.Context, env *router.Env, in *Input) (*Output, error
 		}
 		return changed
 	})
+	if err == nil && in.Source == "compact" {
+		compactDecision(ctx, env, in)
+	}
 	return nil, err
+}
+
+// compactDecision re-decides right after a compaction, from its summary:
+// the status line shows the pick for the work ahead at once. The next
+// prompt still re-decides for free (the cache is rebuilt anyway), with the
+// prompt itself.
+func compactDecision(ctx context.Context, env *router.Env, in *Input) {
+	sess, err := env.State.Load(in.SessionID)
+	if err != nil || sess.Main == nil || sess.Pin != "" || !env.IsCustom(sess.Model) || !env.Cfg.Features.WarmDecisions {
+		return
+	}
+	tr := readTranscript(in.TranscriptPath)
+	if tr == nil || tr.CompactSummary == "" {
+		return
+	}
+	pin := *in
+	pin.Prompt = ""
+	req := mainRequest(env, &pin, sess, tr, sess.Repo, "compact")
+	dec, out := env.Decide(ctx, req)
+	if !out.Changed || dec == nil {
+		return
+	}
+	env.State.Update(in.SessionID, func(s *state.Session) bool {
+		dec.Epoch = 1
+		if s.Main != nil {
+			dec.Epoch = s.Main.Epoch + 1
+		}
+		s.Main = dec
+		s.ResetEffortEpoch()
+		s.ContextTokens = 0 // stale until the next response
+		return true
+	})
 }
 
 // ModelSwitch (PostModelSwitch) tracks /model changes. Switching onto the

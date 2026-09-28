@@ -89,7 +89,7 @@ const (
 )
 
 var levelInstructions = map[string]string{
-	catalog.ScopeMain:     "How much reasoning does the work that the new prompt starts need, judging by what that work actually involves (a short prompt can approve a large job)?",
+	catalog.ScopeMain:     "How much reasoning does the work that the new prompt starts need, judging by what that work actually involves (a short prompt can approve a large job)? When the prompt hands work to subagents, judge only what this session does itself (launching them, then relaying or merging their reports): each subagent gets its own level.",
 	catalog.ScopeSubagent: "How much capability and reasoning does this subagent task need?",
 }
 

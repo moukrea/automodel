@@ -46,9 +46,17 @@ type fakeJev struct {
 	answers  []fa
 	requests []jev.Request
 	fail     bool
+	delay    time.Duration // before answering (outside the lock)
 }
 
+// No detached processes from tests.
+func init() { spawnLate = func(*Input, string, time.Time) {} }
+
 func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	d := f.delay
+	f.mu.Unlock()
+	time.Sleep(d)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var req jev.Request
@@ -877,10 +885,79 @@ func TestAskedTier(t *testing.T) {
 	}
 	// ...and a session outgrowing Haiku's window moves up.
 	warmSession(t, env, "a3", "haiku", 10_000)
-	env.State.Update("a3", func(s *state.Session) bool { s.Main.Model, s.Main.Effort, s.ContextTokens = "claude-haiku-4-5", "", 160_000; return true })
+	env.State.Update("a3", func(s *state.Session) bool {
+		s.Main.Model, s.Main.Effort, s.ContextTokens = "claude-haiku-4-5", "", 160_000
+		return true
+	})
 	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.97}}
 	decide("a3", "and the other flag?")
 	if s := main("a3"); s.Main.Tier == "haiku" {
 		t.Errorf("session past max_context stayed on Haiku: %+v", s.Main)
+	}
+}
+
+func TestLateDecision(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	var got struct {
+		in      *Input
+		trigger string
+		at      time.Time
+	}
+	spawnLate = func(in *Input, trigger string, at time.Time) { got.in, got.trigger, got.at = in, trigger, at }
+	t.Cleanup(func() { spawnLate = func(*Input, string, time.Time) {} })
+	env.Cfg.Features.WarmTimeout.Duration = 50 * time.Millisecond
+	warmSession(t, env, "l1", "xhigh", 300_000)
+	in := map[string]any{"session_id": "l1", "prompt": "Now write the commit message", "cwd": t.TempDir()}
+
+	// Jev is slow: the prompt goes on at xhigh, and a late decision is started.
+	fj.delay, fj.answers = 300*time.Millisecond, []fa{{tier: "low", conf: 0.95, cont: 0.1}}
+	run(t, env, "decide", in)
+	if s, _ := env.State.Load("l1"); s.Main.Tier != "xhigh" || got.trigger != "warm" || got.in == nil {
+		t.Fatalf("timeout: main %+v, late %q", s.Main, got.trigger)
+	}
+	// The late process gets its answer and applies it.
+	fj.delay = 0
+	t.Setenv(LateEnv, fmt.Sprintf("%s:%d", got.trigger, got.at.UnixNano()))
+	run(t, env, "decide", in)
+	if s, _ := env.State.Load("l1"); s.Main.Tier != "low" || s.PendingEffort == nil || s.Prompts != 11 {
+		t.Errorf("late decision not applied: %+v (prompts %d)", s.Main, s.Prompts)
+	}
+	// A late decision for an older prompt is dropped.
+	env.State.Update("l1", func(s *state.Session) bool { s.LastPromptAt = time.Now(); return true })
+	fj.answers = []fa{{tier: "max", conf: 0.95, cont: 0.1}}
+	run(t, env, "decide", in)
+	if s, _ := env.State.Load("l1"); s.Main.Tier != "low" {
+		t.Errorf("stale late decision applied: %+v", s.Main)
+	}
+}
+
+func TestCompactDecision(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	warmSession(t, env, "c1", "low", 300_000)
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tp, []byte(`{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"We fixed the oversell race; next: make checkout idempotent."}}`+"\n"), 0o600)
+	fj.answers = []fa{{tier: "xhigh", conf: 0.9}}
+	run(t, env, "session-start", map[string]any{"session_id": "c1", "source": "compact", "transcript_path": tp})
+	s, _ := env.State.Load("c1")
+	if s.Main.Tier != "xhigh" || s.Main.Trigger != "compact" || !s.CompactPending {
+		t.Fatalf("after compaction: %+v (pending %v)", s.Main, s.CompactPending)
+	}
+	if st := fj.last().State.(map[string]any); st["phase"] != "post_compact" || !strings.Contains(st["compaction_summary"].(string), "idempotent") {
+		t.Errorf("state = %v", st)
+	}
+}
+
+func TestStageLabel(t *testing.T) {
+	for in, want := range map[string]string{
+		`{label: 'audit:security', phase: 'Audit'}`: "audit:security",
+		`{phase: "Verify", schema: S}`:              "Verify",
+		"{label: `review:${d.key}`}":                "",
+		`{schema: S}`:                               "",
+	} {
+		if got := stageLabel(in); got != want {
+			t.Errorf("stageLabel(%s) = %q, want %q", in, got, want)
+		}
 	}
 }
