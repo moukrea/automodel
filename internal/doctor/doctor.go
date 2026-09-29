@@ -55,7 +55,7 @@ type Env struct {
 // Run runs every check.
 func Run(e Env) []Result {
 	if e.Client == nil {
-		e.Client = &http.Client{Timeout: 5 * time.Second}
+		e.Client = &http.Client{Timeout: 15 * time.Second}
 	}
 	rs := []Result{e.binary(), e.config(), e.key(), e.catalog(), e.proxy(), e.service()}
 	rs = append(rs, e.settings()...)
@@ -86,7 +86,7 @@ func (e Env) binary() Result {
 		r.Status, r.Detail = Warn, r.Detail+", development build: no update check"
 		return r
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second) // a slow resolver takes 5 s
 	defer cancel()
 	tag, err := e.Latest(ctx)
 	switch {
