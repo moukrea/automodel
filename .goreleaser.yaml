@@ -15,7 +15,7 @@ archives:
       - goos: windows
         formats: [zip]
     name_template: "automodel_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    files: [README.md, config.example.toml]
+    files: [README.md, LICENSE, config.example.toml]
 
 checksum:
   name_template: checksums.txt
