@@ -18,14 +18,17 @@
     setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1400);
   });
 
-  // Videos load YouTube only when played (our own thumbnails meanwhile).
+  // The videos are served by the site itself (a YouTube embed asks some
+  // viewers to sign in to prove they aren't a bot); nothing loads until
+  // played.
   document.querySelectorAll('.play').forEach(b => b.addEventListener('click', () => {
-    const f = document.createElement('iframe');
-    f.src = `https://www.youtube.com/embed/${b.dataset.id}?autoplay=1&rel=0`;
-    f.title = b.getAttribute('aria-label');
-    f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen';
-    f.allowFullscreen = true;
-    b.replaceWith(f);
+    const v = document.createElement('video');
+    v.src = b.dataset.src;
+    v.poster = b.querySelector('img').src;
+    v.controls = true; v.autoplay = true; v.playsInline = true; v.preload = 'auto';
+    v.setAttribute('aria-label', b.getAttribute('aria-label'));
+    b.replaceWith(v);
+    v.play().catch(() => {});
   }));
 
   const links = [...document.querySelectorAll('.toc a')];
