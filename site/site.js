@@ -21,7 +21,7 @@
   // Videos load YouTube only when played (our own thumbnails meanwhile).
   document.querySelectorAll('.play').forEach(b => b.addEventListener('click', () => {
     const f = document.createElement('iframe');
-    f.src = `https://www.youtube-nocookie.com/embed/${b.dataset.id}?autoplay=1&rel=0`;
+    f.src = `https://www.youtube.com/embed/${b.dataset.id}?autoplay=1&rel=0`;
     f.title = b.getAttribute('aria-label');
     f.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen';
     f.allowFullscreen = true;
