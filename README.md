@@ -155,7 +155,10 @@ chained), and `doctor` reports `agentline shows the automodel segment`.
 
 **Other status line authors**: `automodel [--config path] statusline --json`
 reads Claude Code's status line JSON on stdin, records model switches like
-the text status line, never runs `statusline_command`, and prints one line:
+the text status line, never runs `statusline_command`, and prints one line.
+Tools that only read the state (session viewers, dashboards) add
+`--read-only`: nothing is written, not even a state file for a session
+automodel hasn't seen.
 
 ```json
 {"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","claude_effort":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}

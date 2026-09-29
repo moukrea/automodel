@@ -53,8 +53,9 @@ const usage = `automodel — automatic model/effort routing for Claude Code via 
 Usage:
   automodel serve                      run the proxy
   automodel hook <name>                run a hook (%s)
-  automodel statusline [--json]        render the statusline segment
-                                       (--json: the routing state as one JSON line, for status lines like agentline)
+  automodel statusline [--json [--read-only]]  render the statusline segment
+                                       (--json: the routing state as one JSON line, for status lines like agentline;
+                                        --read-only: write nothing, for other tools reading the state)
   automodel report [--json] [--since 7d] [--baseline xhigh]
   automodel why [--session id] [-n 5] [--scope main] [--follow]   explain the latest routing decisions
   automodel flag [--session id] [--n 1] --want tier [--note "..."]   label a wrong decision (local eval case)
@@ -144,7 +145,7 @@ func run(cfgPath, cmd string, args []string) error {
 			return nil
 		}
 		if asJSON {
-			statusline.RunJSON(env, os.Stdin, os.Stdout)
+			statusline.RunJSON(env, os.Stdin, os.Stdout, hasFlag(args, "--read-only"))
 			return nil // exit 0: the caller reads the line
 		}
 		return statusline.Run(env, os.Stdin, os.Stdout)
