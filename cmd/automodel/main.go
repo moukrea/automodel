@@ -225,6 +225,11 @@ func serve(cfg *config.Config, args []string) error {
 	case cfg.Update.Auto && version != "dev":
 		go autoUpdate(cfg, p, exe)
 	}
+	// Hooks are short-lived processes: keep the Jev host's addresses fresh
+	// for them (dns.json and the system resolver's cache).
+	if h := router.JevHost(cfg); h != "" {
+		go router.JevDialer(cfg).Refresh(context.Background(), []string{h}, 2*time.Minute)
+	}
 	srv := &http.Server{Addr: cfg.Listen, Handler: p, ReadHeaderTimeout: 30 * time.Second}
 	ln, err := listen(cfg.Listen)
 	if err != nil {

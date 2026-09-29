@@ -134,7 +134,7 @@ func Default() *Config {
 		StatuslineFlash:              Duration{30 * time.Second},
 		RouteWorkflowSteps:           true,
 		RecordStates:                 true,
-		Update:                       Update{Auto: true, Interval: Duration{24 * time.Hour}},
+		Update:                       Update{Auto: true, Interval: Duration{6 * time.Hour}},
 		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "opus-medium"},
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,

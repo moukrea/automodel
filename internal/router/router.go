@@ -9,6 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +22,7 @@ import (
 	"github.com/moukrea/automodel/internal/config"
 	"github.com/moukrea/automodel/internal/jev"
 	"github.com/moukrea/automodel/internal/ledger"
+	"github.com/moukrea/automodel/internal/netx"
 	"github.com/moukrea/automodel/internal/policy"
 	"github.com/moukrea/automodel/internal/state"
 	"github.com/moukrea/automodel/internal/tokens"
@@ -49,9 +53,31 @@ func New(cfg *config.Config) (*Env, error) {
 		State:   state.Store{Dir: cfg.StateDir},
 		Ledger:  ledger.Ledger{Path: cfg.Ledger},
 		States:  statesFor(cfg),
-		Jev:     &jev.Client{URL: cfg.JevURL, APIKey: cfg.APIKey()},
+		Jev:     &jev.Client{URL: cfg.JevURL, APIKey: cfg.APIKey(), HTTP: JevHTTP(cfg)},
 		Now:     time.Now,
 	}, nil
+}
+
+// JevDialer dials the Jev endpoint, falling back to the addresses it last
+// resolved to when the system resolver is slow (netx).
+func JevDialer(cfg *config.Config) *netx.Dialer {
+	return &netx.Dialer{Cache: filepath.Join(cfg.StateDir, "dns.json"), Dialer: net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}}
+}
+
+// JevHTTP is the HTTP client of Jev calls.
+func JevHTTP(cfg *config.Config) *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = JevDialer(cfg).DialContext
+	return &http.Client{Transport: tr}
+}
+
+// JevHost is the host of the Jev endpoint ("" if the URL doesn't parse).
+func JevHost(cfg *config.Config) string {
+	u, err := url.Parse(cfg.JevURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // IsCustom reports whether a model string designates the routed model.

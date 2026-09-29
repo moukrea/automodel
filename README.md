@@ -37,7 +37,7 @@ a background process that is not restarted after a reboot: `install` prints
 the line to add to `~/.profile` (`automodel start` does nothing when the
 proxy already runs).
 
-- Updates: the service installs new releases by itself (checked daily,
+- Updates: the service installs new releases by itself (checked every 6 hours,
   applied when idle). `automodel update` does it now; `[update] auto = false`
   in the config turns it off.
 - Uninstall: `automodel uninstall` (config and state are kept).
@@ -150,7 +150,7 @@ cache and sees `AUTOMODEL_CHAINED=1` in its environment). Set or change
 natively instead: the routed model and effort in place of Claude Code's
 `Jev (auto)`, then the confidence and flags in its own `route` segment, fitted
 to the terminal width. A status line whose command contains `agentline` is
-left in place by `install`, the daily self-update and `uninstall` (never
+left in place by `install`, the self-update and `uninstall` (never
 chained), and `doctor` reports `agentline shows the automodel segment`.
 
 **Other status line authors**: `automodel [--config path] statusline --json`
@@ -315,7 +315,7 @@ your call.
   sent: only sizes and task-kind hints (bug, concurrency, security, review…),
   the phase, the tier in force and the repo languages. Decisions get less
   precise.
-- Otherwise only the update check (GitHub releases API, daily unless
+- Otherwise only the update check (GitHub releases API, every 6 hours unless
   `[update] auto = false`), and `automodel doctor`'s key check against
   OpenRouter. No telemetry: the ledger (`~/.local/state/automodel/`) stays
   local.
