@@ -5,7 +5,7 @@ name: release
 on:
   push:
     branches: [main]
-    paths-ignore: ["**.md", "docs/**", ".claude/**"]
+    paths-ignore: ["**.md", "docs/**", ".claude/**", "site/**", ".github/workflows/**"]
 permissions:
   contents: write
 concurrency:

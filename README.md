@@ -1,4 +1,9 @@
-# automodel
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/wordmark-dark.png">
+    <img src="docs/media/wordmark-light.png" alt="automodel" width="440">
+  </picture>
+</h1>
 
 A small tool for Claude Code: pick **Jev (auto)** in `/model`, and it picks
 the model and effort for each prompt, subagent and workflow step. A quick
@@ -8,7 +13,11 @@ Decisions come from [TypeSafe Jev](https://docs.typesafe.ai) on OpenRouter
 (under a second, ~$0.00004 each); your Claude traffic stays on your own
 subscription.
 
-<p align="center"><a href="https://youtu.be/nj46rynF0zY"><img src="docs/demo-poster.png" width="820" alt="Demo video, 5 minutes"></a><br><sub>Demo: <a href="https://youtu.be/nj46rynF0zY">watch on YouTube (5 min)</a></sub></p>
+<p align="center">
+  <a href="https://youtu.be/XOAAOmwHQSw" title="automodel overview (2 min, YouTube)"><img src="docs/media/thumb-overview.jpg" width="400" alt="automodel overview, 2 minutes"></a>
+  <a href="https://youtu.be/KeMISZr58YE" title="automodel full tour (13 min, YouTube)"><img src="docs/media/thumb-tour.jpg" width="400" alt="automodel full tour, 13 minutes"></a>
+  <br><sub><a href="https://youtu.be/XOAAOmwHQSw">Overview (2 min)</a> · <a href="https://youtu.be/KeMISZr58YE">Full tour (13 min)</a> · <a href="https://moukrea.github.io/automodel/">Documentation site</a></sub>
+</p>
 
 ## Install
 
