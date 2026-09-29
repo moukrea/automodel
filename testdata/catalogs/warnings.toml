@@ -69,3 +69,16 @@ rank = 1
 model = "b"
 effort = "low"
 criteria = "sub"
+
+[tiers.subagent.sub2]
+rank = 2
+model = "b"
+effort = "low"
+cost = 3.0
+criteria = "sub2"
+
+[tiers.subagent.sub3]
+rank = 3
+model = "a"
+effort = "high"
+criteria = "sub3"

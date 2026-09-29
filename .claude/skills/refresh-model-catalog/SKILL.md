@@ -69,6 +69,18 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      Agent Index (runs in Claude Code: the closest to real use), Terminal-Bench,
      SWE-bench Verified/Pro, and the system-card numbers.
      `frontier.py catalog.proposed.toml --version <name>` shows each.
+   - Look for **per-effort** data for every candidate *and* the models it
+     competes with: a single max-vs-max number says nothing about the lower
+     tiers. Where it hides: the chart data embedded in the vendor's
+     announcement page (score and cost per effort, often several evals), the
+     per-eval fields of AA's model-page JSON (e.g. `terminalbench-4-0` with
+     its own cost and time per task), and the Coding Agent Index rows (one
+     per effort). See `references/sources.md`.
+   - **A model released in the last week is provisional.** AA publishes times
+     per task and Coding Agent Index runs a day or more after a release, and
+     sometimes re-runs a pre-release build. "Not published" is not evidence:
+     re-read the sources 1–3 days after the release, and revisit the decision
+     with what came out.
    - Record tokens and steps per task where published: a model cheaper per
      token can cost **more per task** (more tokens, more turns). Say so.
    - Same benchmark version: add/update `[[measurements]]`.
@@ -102,6 +114,22 @@ proposed copy. In a scheduled/unattended run, stop at the report.
    scope also check structure: per-turn effort support (otherwise every
    effort change rewrites the cache), cache-read price, and what a model
    switch costs at a typical context (the whole context written again).
+   - Put the candidate in a table: one row per effort, one column per
+     benchmark with per-effort data for both models, ✓ or ✗ in each cell
+     with the dominating config. Decide from the whole table, never from one
+     column.
+   - **Being under the line between two frontier neighbours (the convex
+     hull) is not a reason to leave a frontier config out.** That argument
+     assumes the budget is spread over a random mix of tiers; a router picks
+     one config per task, so a frontier point helps on the tasks it fits.
+     Whether Jev can tell those tasks apart is the eval's question (step 6).
+     This mistake kept Sonnet 5.5 high out on 2026-09-28 on the index alone,
+     while CursorBench, Terminal-Bench and FrontierCode put it above the line.
+   - Tier costs must rise with rank: the policy reads rank as capability, so
+     a tier that costs less than a lower-ranked one turns an underprovision
+     into an "overprovision" (validation warns). A config dominated on the
+     primary benchmark can't take a slot between the two tiers that
+     dominate it.
 
 5. **Tiers**
    - Keep the main session on one model (only effort varies): switching model

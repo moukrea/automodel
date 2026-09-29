@@ -100,6 +100,7 @@ func TestWarnings(t *testing.T) {
 		"model b: active without a measurement in benchmark_version v2",
 		"measurement a@low: measured_at 2026-01-01 is older than 60 days",
 		"meta.last_refresh 2026-01-01 is older than 60 days",
+		"tier subagent.sub3 ranks above sub2 but costs less (2.00 vs 3.00)",
 	}
 	for _, w := range want {
 		found := false

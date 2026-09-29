@@ -184,6 +184,23 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 			}
 		}
 	}
+	// The policy reads rank as capability and cost as its price: a tier that
+	// ranks above another but costs less makes the lower one pointless, and
+	// a pick of the lower one for the higher one's work would count as an
+	// overprovision instead of the underprovision it is.
+	for _, scope := range sortedKeys(c.Tiers) {
+		var prev *Tier
+		for _, t := range c.TiersByRank(scope) {
+			cost := c.TierCost(t)
+			if cost <= 0 {
+				continue
+			}
+			if prev != nil && cost < c.TierCost(prev) {
+				warnf("tier %s.%s ranks above %s but costs less (%.2f vs %.2f): costs must rise with rank", scope, t.ID, prev.ID, cost, c.TierCost(prev))
+			}
+			prev = t
+		}
+	}
 	if m.UnderprovisionPenalty < 0 {
 		errf("meta.underprovision_penalty must be >= 0")
 	}
