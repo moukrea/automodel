@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>automodel: the right Claude model and effort, prompt by prompt</title>
+<meta name="description" content="automodel picks the Claude model and effort for every prompt, subagent and workflow step in Claude Code, and keeps your prompt cache warm.">
+<meta property="og:title" content="automodel">
+<meta property="og:description" content="The right Claude model and effort, prompt by prompt, for Claude Code.">
+<meta property="og:image" content="https://moukrea.github.io/automodel/assets/thumb-overview.jpg">
+<meta name="theme-color" content="#1a1918" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f3ec" media="(prefers-color-scheme: light)">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="bg" aria-hidden="true"><i class="g1"></i><i class="g2"></i></div>
+
+<header class="nav">
+  <a class="brand" href="#top">automodel</a>
+  <nav>
+    <a href="#videos">Videos</a>
+    <a href="#why">Why</a>
+    <a href="#install">Install</a>
+    <a href="#docs">Docs</a>
+    <a href="#tiers">Tiers</a>
+    <a class="gh" href="{{REPO}}" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="eyebrow">For Claude Code</div>
+    <h1 class="wordmark"><picture><source media="(prefers-color-scheme: light)" srcset="assets/wordmark-light.png"><img src="assets/wordmark-dark.png" alt="automodel" width="520"></picture></h1>
+    <p class="lede">Every prompt gets <i>the right</i> model and effort.</p>
+    <p class="sub">Pick <b>Jev (auto)</b> in <code>/model</code>. For each prompt, subagent and workflow step, automodel asks
+      <a href="https://docs.typesafe.ai" target="_blank" rel="noopener">TypeSafe Jev</a> which Claude model and effort fit
+      (under a second, about $0.00004), then sends the request with that pick. Your Claude traffic stays on your own subscription.</p>
+    <div class="install" id="quick">
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-os="unix">Linux · macOS</button>
+        <button role="tab" aria-selected="false" data-os="win">Windows</button>
+      </div>
+      <div class="cmd" data-os="unix"><span class="p">$</span><code>curl -fsSL https://raw.githubusercontent.com/moukrea/automodel/main/install.sh | sh</code><button class="copy" type="button">Copy</button></div>
+      <div class="cmd" data-os="win" hidden><span class="p">&gt;</span><code>irm https://raw.githubusercontent.com/moukrea/automodel/main/install.ps1 | iex</code><button class="copy" type="button">Copy</button></div>
+      <p class="then">Then pick <b>Jev (auto)</b> in <code>/model</code>. <a href="{{RELEASE_URL}}" target="_blank" rel="noopener" class="ver">{{VERSION}}</a></p>
+    </div>
+    <div class="picks" aria-hidden="true">
+      <span class="pill haiku"><span class="a">jev →</span> Haiku 4.5</span>
+      <span class="pill sonnet">Sonnet 5.5 · high</span>
+      <span class="pill e-xhigh">Opus 5.5 <span class="dots">●●●●○</span> xhigh</span>
+      <span class="pill ultra">+ ultracode</span>
+    </div>
+  </section>
+
+  <section id="videos" class="block">
+    <div class="eyebrow">See it work</div>
+    <h2>Two videos, real sessions.</h2>
+    <div class="videos">{{VIDEOS}}
+    </div>
+  </section>
+
+  <section id="why" class="block">
+    <div class="eyebrow">Why you want it</div>
+    <h2>Stop thinking about <i>models and efforts.</i></h2>
+    <div class="grid">
+      <div class="it"><i class="n">1</i><div><b>Don’t pay for thinking you don’t need</b><span>A quick question runs on Haiku or at low effort: faster, cheaper.</span></div></div>
+      <div class="it"><i class="n">2</i><div><b>Don’t get stuck on too little</b><span>A hard bug gets extra-high effort, instead of a quick wrong fix.</span></div></div>
+      <div class="it"><i class="n">3</i><div><b>Your prompt cache stays warm</b><span>Effort changes keep it; a model change only when it pays off.</span></div></div>
+      <div class="it"><i class="n">4</i><div><b>Extra context changes nothing</b><span>“FYI…” keeps the pick in force for the work in progress.</span></div></div>
+      <div class="it"><i class="n">5</i><div><b>Subagents and workflows too</b><span>Each gets its own pick: Haiku, Sonnet 5.5 or Opus; big jobs get parallel agents.</span></div></div>
+      <div class="it"><i class="n">6</i><div><b>Your call wins</b><span><code>[effort:x]</code> and <code>[model:x]</code> pin it, until you hand it back.</span></div></div>
+      <div class="it"><i class="n">7</i><div><b>Every pick is explained</b><span><code>automodel why</code> shows Jev’s odds and the reasons for each pick.</span></div></div>
+      <div class="it"><i class="n">8</i><div><b>Our tuning, or yours</b><span>Measured defaults, updated with every release; or tune every knob Jev sees.</span></div></div>
+    </div>
+  </section>
+
+  <section id="how" class="block">
+    <div class="eyebrow">How it works</div>
+    <h2>A small local proxy, and a fast judge.</h2>
+    <div class="flow">
+      <div class="node">Claude Code</div>
+      <div class="wire"><i></i></div>
+      <div class="node am">automodel<small>local proxy</small>
+        <div class="jev">Jev<small>model + effort in ~1 s</small></div>
+      </div>
+      <div class="wire"><i></i></div>
+      <div class="node">Claude</div>
+    </div>
+    <p class="cap">Every prompt, subagent and workflow agent. <b>Your prompt cache is kept.</b></p>
+  </section>
+
+  <section id="docs" class="block docs">
+    <div class="eyebrow">Documentation</div>
+    <h2>Everything, in one place.</h2>
+    <div class="doc-layout">
+      <aside class="toc"><div class="toc-in">{{TOC}}<a class="d2" href="#tiers">Tiers as shipped</a></div></aside>
+      <article class="md">{{DOCS}}</article>
+    </div>
+  </section>
+
+  <section id="tiers" class="block">
+    <div class="eyebrow">Tiers as shipped in {{VERSION}}</div>
+    <h2>What Jev chooses from.</h2>
+    <p class="cap left">Read from <a href="{{REPO}}/blob/main/catalog.toml" target="_blank" rel="noopener"><code>catalog.toml</code></a> at build time (refreshed {{REFRESHED}}, decisions by <code>{{JEV}}</code>). Jev scores each level on its own; the policy weighs the cost of going too low (1.5×) against going too high.</p>
+    <h3>Main session</h3>
+    {{TIERS_MAIN}}
+    {{MODES}}
+    <h3>Subagents and workflow agents</h3>
+    {{TIERS_SUBAGENT}}
+  </section>
+</main>
+
+<footer class="foot">
+  <div><span class="brand">automodel</span> <a href="{{RELEASE_URL}}" target="_blank" rel="noopener">{{VERSION}}</a></div>
+  <div class="links"><a href="{{REPO}}" target="_blank" rel="noopener">GitHub</a><a href="{{REPO}}/releases" target="_blank" rel="noopener">Releases</a><a href="{{REPO}}/blob/main/catalog-history.md" target="_blank" rel="noopener">Catalog history</a><a href="{{REPO}}/tree/main/docs/research" target="_blank" rel="noopener">Research</a></div>
+  <div class="made">Made with <picture><source media="(prefers-color-scheme: light)" srcset="assets/claude-code-wordmark-light.svg"><img src="assets/claude-code-wordmark.svg" alt="Claude Code" height="16"></picture></div>
+</footer>
+<script src="site.js" defer></script>
+</body>
+</html>

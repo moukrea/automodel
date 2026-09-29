@@ -1,0 +1,11 @@
+{
+  "name": "automodel-site",
+  "private": true,
+  "type": "module",
+  "description": "Builds the automodel GitHub Pages site from README.md and catalog.toml.",
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": {
+    "marked": "14.1.4",
+    "smol-toml": "1.3.1"
+  }
+}
