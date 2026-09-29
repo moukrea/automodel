@@ -14,8 +14,8 @@ const root = join(here, '..');
 const dist = join(here, 'dist');
 const REPO = 'https://github.com/moukrea/automodel';
 const VIDEOS = [
-  { id: 'XOAAOmwHQSw', thumb: 'thumb-overview.jpg', title: 'Overview', len: '2 min', text: 'What automodel does and why, in two minutes.' },
-  { id: 'KeMISZr58YE', thumb: 'thumb-tour.jpg', title: 'Full tour', len: '13 min', text: 'Real sessions, recorded live: every pick shown was made by Jev.' },
+  { id: 'XOAAOmwHQSw', file: 'automodel-overview.mp4', thumb: 'thumb-overview.jpg', title: 'Overview', len: '2 min', text: 'What automodel does and why, in two minutes.' },
+  { id: 'KeMISZr58YE', file: 'automodel-full-tour.mp4', thumb: 'thumb-tour.jpg', title: 'Full tour', len: '13 min', text: 'Real sessions, recorded live: every pick shown was made by Jev.' },
 ];
 
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -81,7 +81,7 @@ const tpl = readFileSync(join(here, 'template.html'), 'utf8');
 const tocHtml = d.toc.map(x => `<a class="d${x.depth}" href="#${x.id}">${x.text}</a>`).join(''); // already escaped by marked
 const videos = VIDEOS.map(x => `
       <figure class="video">
-        <div class="frame"><button class="play" type="button" data-id="${x.id}" aria-label="Play the ${esc(x.title.toLowerCase())} (${esc(x.len)})"><img src="assets/${x.thumb}" alt="" loading="lazy"><span class="btn" aria-hidden="true"></span></button></div>
+        <div class="frame"><button class="play" type="button" data-src="media/${x.file}" aria-label="Play the ${esc(x.title.toLowerCase())} (${esc(x.len)})"><img src="assets/${x.thumb}" alt="" loading="lazy"><span class="btn" aria-hidden="true"></span></button></div>
         <figcaption><b>${esc(x.title)}</b> <span>${esc(x.len)}</span><br>${esc(x.text)} <a href="https://youtu.be/${x.id}" target="_blank" rel="noopener">Open on YouTube ↗</a></figcaption>
       </figure>`).join('');
 const html = tpl
