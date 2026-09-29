@@ -191,6 +191,24 @@ def validate(cat: dict, today: dt.date, stale_days: int, dom: dict) -> list[dict
                     and ms.get("benchmark_version") == own and ms.get("cost_per_task", 0) > 0
                     for ms in cat.get("measurements", [])):
                 warn(f"tier {scope}.{tid}: no measurement for {t.get('model')}@{t.get('effort', '')} and no cost: its cost is interpolated")
+
+    def tier_cost(t):
+        for ms in cat.get("measurements", []):
+            if (ms.get("model") == t.get("model") and ms.get("effort") == t.get("effort")
+                    and ms.get("benchmark_version") == own and ms.get("cost_per_task", 0) > 0):
+                return ms["cost_per_task"]
+        return t.get("cost", 0) or 0
+
+    # Costs must rise with rank (the policy reads rank as capability).
+    for scope in sorted(tiers):
+        prev = None
+        for tid, t in sorted(tiers[scope].items(), key=lambda kv: kv[1].get("rank", 0)):
+            c = tier_cost(t)
+            if c <= 0:
+                continue
+            if prev and c < prev[1]:
+                warn(f"tier {scope}.{tid} ranks above {prev[0]} but costs less ({c:.2f} vs {prev[1]:.2f}): costs must rise with rank")
+            prev = (tid, c)
     if meta.get("underprovision_penalty", 0) < 0:
         err("meta.underprovision_penalty must be >= 0")
 

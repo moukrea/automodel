@@ -8,10 +8,25 @@
    - Deprecations: https://platform.claude.com/docs/en/about-claude/model-deprecations
    - Effort parameter (`output_config.effort`, supported models): https://platform.claude.com/docs/en/build-with-claude/effort
    - Model announcements: https://www.anthropic.com/news
+   - The announcement page's charts carry their data in the HTML (series of
+     `x` cost per task, `y` score, one point per effort: Terminal-Bench,
+     FrontierCode, CursorBench, AA-Briefcase for Sonnet 5.5). Extract it
+     from the raw HTML; it is exact, unlike reading a plotted image.
 2. **Artificial Analysis** — release comparison pages give index, cost per task
    and time per task per effort level. Always record the index version
    (e.g. Intelligence Index v4.3.2) in `benchmark_version`.
    e.g. https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-sonnet-5
+   - The model pages (https://artificialanalysis.ai/models/claude-sonnet-5-5,
+     one per effort variant) embed the full JSON of every variant: besides
+     `intelligenceIndex*` (score, cost with its input/cache/output split,
+     time, tokens) there are per-eval fields such as `terminalbench-4-0`
+     with their own cost, time and tokens per task, and output speed.
+     Record the coding ones as cross-checks.
+   - The Coding Agent Index (https://artificialanalysis.ai/agents/coding-agents)
+     runs Claude Code itself; a new model gets one row per effort, often a
+     day or more after its release.
+   - The page often lists a variant as a pre-release run (`…-eap` hosts) or
+     says a re-run is planned: note it, and re-read later.
 3. **Claude Code** — docs and changelog:
    - model configuration: https://code.claude.com/docs/en/model-config
    - workflows / ultracode: https://code.claude.com/docs/en/workflows

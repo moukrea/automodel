@@ -532,7 +532,7 @@ func TestAgentHook(t *testing.T) {
 	if len(sess.PendingAgents) != 1 || sess.PendingAgents[0].Prompt != "List all Go files" || sess.PendingAgents[0].Decision.Tier != "haiku" {
 		t.Errorf("pending = %+v", sess.PendingAgents)
 	}
-	if q := fj.last().Questions[jev.QLevel]; q.Type != "score" || len(q.Criteria.([]any)) != 7 {
+	if q := fj.last().Questions[jev.QLevel]; q.Type != "score" || len(q.Criteria.([]any)) != 8 {
 		t.Errorf("subagent question = %+v", q)
 	}
 
