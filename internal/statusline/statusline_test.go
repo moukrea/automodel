@@ -87,7 +87,7 @@ func jsonEnv(t *testing.T) *router.Env {
 func runJSON(t *testing.T, env *router.Env, in string) map[string]any {
 	t.Helper()
 	var out strings.Builder
-	if err := RunJSON(env, strings.NewReader(in), &out); err != nil {
+	if err := RunJSON(env, strings.NewReader(in), &out, false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Count(out.String(), "\n") != 1 || !strings.HasSuffix(out.String(), "\n") {
@@ -226,5 +226,24 @@ func TestRealEffortVsClaudeCode(t *testing.T) {
 	sess.Main.Effort, sess.Main.Tier = "xhigh", "xhigh"
 	if v := Build(env, sess, time.Now().Add(time.Hour)); v.ClaudeEffort != "" || strings.Contains(v.Text, "real effort") {
 		t.Fatalf("same effort still annotated: %q", v.Text)
+	}
+}
+
+func TestJSONReadOnlyWritesNothing(t *testing.T) {
+	env := jsonEnv(t)
+	var out strings.Builder
+	if err := RunJSON(env, strings.NewReader(jevIn), &out, true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"routed":true`) {
+		t.Errorf("read-only view: %s", out.String())
+	}
+	files, _ := filepath.Glob(filepath.Join(env.Cfg.StateDir, "sessions", "*"))
+	if len(files) != 0 {
+		t.Errorf("read-only wrote %v", files)
+	}
+	runJSON(t, env, jevIn) // the statusline itself records the model
+	if s, _ := env.State.Load("s"); s.Model != "jev" || s.ModelSource != "statusline" {
+		t.Errorf("recorded %q from %q", s.Model, s.ModelSource)
 	}
 }

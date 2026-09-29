@@ -58,7 +58,7 @@ func Run(env *router.Env, stdin io.Reader, stdout io.Writer) error {
 			parts = append(parts, out)
 		}
 	}
-	if sess := observe(env, in); sess != nil {
+	if sess := observe(env, in, true); sess != nil {
 		parts = append(parts, Render(env, sess, env.Now()))
 	}
 	_, err = fmt.Fprintln(stdout, strings.Join(parts, "\n"))
@@ -66,11 +66,13 @@ func Run(env *router.Env, stdin io.Reader, stdout io.Writer) error {
 }
 
 // RunJSON is `statusline --json`: the same side effect as Run (model switches
-// recorded), never the chained command, and one line of JSON (View).
-func RunJSON(env *router.Env, stdin io.Reader, stdout io.Writer) error {
+// recorded), never the chained command, and one line of JSON (View). With
+// readOnly (`--read-only`, for tools other than Claude Code's statusline) it
+// writes nothing: no model recorded, no state file for an unknown session.
+func RunJSON(env *router.Env, stdin io.Reader, stdout io.Writer, readOnly bool) error {
 	raw, _ := io.ReadAll(stdin)
 	v := View{V: 1}
-	if sess := observe(env, parse(raw)); sess != nil {
+	if sess := observe(env, parse(raw), !readOnly); sess != nil {
 		v = Build(env, sess, env.Now())
 	}
 	return writeJSON(stdout, v)
@@ -96,9 +98,9 @@ func parse(raw []byte) Input {
 	return in
 }
 
-// observe records model switches (the statusline sees them first) and
-// returns the session when it is routed, nil otherwise.
-func observe(env *router.Env, in Input) *state.Session {
+// observe records model switches (the statusline sees them first) when
+// record is set, and returns the session when it is routed, nil otherwise.
+func observe(env *router.Env, in Input, record bool) *state.Session {
 	if in.SessionID == "" {
 		return nil
 	}
@@ -107,7 +109,7 @@ func observe(env *router.Env, in Input) *state.Session {
 	if err != nil {
 		return nil
 	}
-	if in.Model.ID != "" && sess.Model != in.Model.ID && (isJev || env.IsCustom(sess.Model)) {
+	if record && in.Model.ID != "" && sess.Model != in.Model.ID && (isJev || env.IsCustom(sess.Model)) {
 		env.State.Update(in.SessionID, func(s *state.Session) bool {
 			s.Model, s.ModelSource = in.Model.ID, "statusline"
 			return true
