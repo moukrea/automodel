@@ -37,6 +37,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   - **xhigh**: a subtle mistake is expensive (concurrency, security, money
     or data integrity, intermittent bugs of unknown cause, architecture);
   - **max**: defeated repeated expert attempts, research-grade, proofs.
+  `haiku` is the label only on first prompts and cold or post-compaction
+  cases: a warm session never moves to Haiku (its cache), so warm trivia
+  is `low` with `haiku` in `accept`.
   A follow-up that continues, extends, informs or asks about the work in
   progress keeps that work's level, or more if it adds harder work: the
   effort runs the whole turn, which carries the pending work on ("yes, and
@@ -44,35 +47,58 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   yet?" while that fix is pending). A wrap-up (commit message, summary, PR
   description, push) or a separate new task gets its own level (a commit
   message after a race fix is low). A go-ahead takes on the work it
-  approves. A question while the work is still pending is a side question
-  at the work's level when it is about that work or about how the session
-  runs it ("is CI green?", "why did it stay at xhigh?"); a question or a
-  remark unrelated to the work ("which command shows a folder's size?",
-  model news, a comment in passing) is an aside at its own level, for that
-  turn only; a question that only recalls or explains finished work is a
-  wrap-up. Once a wrap-up has closed the work (`work_in_progress.done`),
-  only more work on it (a go-ahead, an addition) keeps its level; a
-  question or a fact gets its own. The same change repeated on another target (another
+  approves, even with a question or a remark along ("why did it stay at
+  xhigh? just curious, keep going" continues). A question while the work
+  is still pending is a side question at the work's level when it is about
+  that work itself: its progress, its code, its choices, its checks, or
+  which model or mode would suit it ("is CI green?", "would Fable do better
+  on this bug?"). A question about automodel's routing (why the session or
+  a subagent got, kept or changed its effort, model or mode: "why did it
+  stay at xhigh?", "why did the reviewer run on Sonnet?", the status line's
+  level) is an aside, unless routing is what the work in progress builds
+  or tunes; so is a question or a remark unrelated to the work ("which
+  command shows a folder's size?", model news, a comment in passing, a
+  thank-you): its own level, for that turn only. A question that only
+  recalls or explains finished work is a wrap-up. Once a wrap-up has
+  closed the work (`work_in_progress.done`), only more work on it (a
+  go-ahead or an addition that reopens it) keeps its level; a question or
+  a fact gets its own, and an acknowledgement ("looks good.", "ok merci",
+  "nice, that was quick") is an aside at its own level, even when its
+  words are a go-ahead's. The same change repeated on another target (another
   endpoint, page or module) is a new task; another case or input of the
-  same deliverable extends it. A prompt typed while Claude works or sent by
+  same deliverable extends it, and so does a step the work calls for, such
+  as repairing what the bug it fixes left behind (a script refunding the
+  double charges after the double-charge fix). A small standalone edit
+  asked in passing ("while you're in the config, set the review agent's
+  effort to medium") is a new task at its own level. A prompt typed while Claude works or sent by
   another session is labeled like a follow-up: it never lowers the work.
   An effort asked for in words ("passe en low") is the label, up or down
   (asked for a wrap-up, a side question or an aside, for that turn only);
   an effort set for something else (a subagent, a workflow stage, a
   config or tuning entry, a quoted prompt or a test string) is no request;
   "ultrathink" is at least xhigh; "think harder" and its family one rank
-  above the higher of the work's level and the tier in force. Going back to
+  above the higher of the work's level and the tier in force (on a
+  follow-up exactly that, not the level the words "think harder" suggest).
+  A model asked for the rest of the work as it stands ("do the rest with
+  Sonnet, it's only CSS") keeps the work's level on that model; with more
+  work to it (an extension), that work's level. Going back to
   paused work ("back to the migration", or a bare go-ahead once the detour
   is done) takes that work's level. Where the rubric is ambiguous (a small
   mechanical follow-up, implementing an agreed design), keep the lower
   tier the prompt alone would get in `accept`.
+  Modes (`modes.ultracode`): a follow-up keeps the work's mode, a new task
+  gets its own (a small one in an ultracode session has none), and a
+  wrap-up, a side question or an aside runs without it, whatever the
+  work's (the work keeps it for the next follow-up), unless the prompt
+  asks for it in words for that turn; a prompt typed mid-turn or sent by
+  another session keeps the mode the turn runs with.
 - `relation` labels how a warm, resumed or post-compaction prompt relates
   to the work in progress: `continue` (go-ahead, keep going, resume),
   `extend` (adds to, constrains or corrects it), `inform` (a fact, a
   preference or an answer, no new work), `side_question` (a question or a
-  check about the work, or about how the session runs it, while the work
-  stays pending), `aside` (a question or a remark unrelated to the work,
-  no work of its own), `resume` (goes back to the paused work, only with
+  check about the work itself while it stays pending), `aside` (a question
+  or a remark unrelated to the work, an acknowledgement, or a question
+  about automodel's routing; no work of its own), `resume` (goes back to the paused work, only with
   `state.paused_work`), `wrap_up` (summary, commit, PR, push, changelog or
   recap of finished work) or `new_task` (separate work). Label the relation from the conversation, not from the tier: the
   same words can be a side question while work is pending and a new task
@@ -111,7 +137,10 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   A split is held out only while nobody has read its cases or its
   per-case results while tuning: the 2026-09-30 test split holds cases
   that were (see `docs/research/2026-09-warm-routing.md` §7), so
-  held-out numbers come from a fresh set written apart and run once.
+  held-out numbers come from a fresh set written apart and run once. Once
+  its failures have been analysed case by case, a held-out set is used
+  up: it joins the train split (held-out run 1 did in round 3, §8), and
+  the next held-out number needs another fresh set.
 - Never copy real prompts or transcripts: invent the text.
 
 ## Running it
@@ -129,9 +158,12 @@ export OPENROUTER_API_KEY="$(sed -n 's/^openrouter_api_key *= *"\(.*\)"/\1/p' ~/
 /tmp/am eval --catalog catalog.proposed.toml --cases heldout.jsonl --repeat 3 --summary --check   # once, at the end
 ```
 
-A full run (432 cases × 3) costs about $0.10. `--json` gives every answer
-(probabilities, confidence, relation, explicit-request and mode
-probabilities) for offline analysis: decision rules, thresholds and
+A train run (443 cases × 3) costs about $0.15 and takes about a minute.
+`--json` gives every answer (probabilities, confidence, relation,
+explicit-request and mode probabilities) for offline analysis; on a prompt
+the hooks take without the relation question (a bare go-ahead, a go-ahead
+to a proposal: `fast_path`) the relation is asked apart, only to diagnose,
+and neither the decision nor the relation metrics use it: decision rules, thresholds and
 penalties are compared on saved answers without asking Jev again with
 `automodel eval --catalog <variant> --answers <saved run> --summary` (it
 re-judges; a change to a question's wording needs a live run).
@@ -253,7 +285,9 @@ work runs on because it was asked in words; switch costs are those of the
 model the decision ends up on. A bare go-ahead brings
 back the work in progress's tier and mode without asking Jev (also after a
 compaction or a pause), unless it answers a proposal ("Want me to fix
-it?"), which is routed with the work as a floor. The eval mirrors these
+it?"), which is routed with the work as a floor, or the work is done: then
+it is routed like any prompt, and Jev's relation says whether it reopens
+the work or only acknowledges it. The eval mirrors these
 rules (`internal/eval` `setup`, `router.Judge`, and the hooks' own
 go-ahead path `router.Carried`); keep it in sync with
 `internal/hooks/decide.go`.

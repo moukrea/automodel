@@ -51,10 +51,11 @@ relation_separate_threshold = 0.55
 # mentions, efforts set for subagents, workflow stages, tenant configs or
 # tuning files, quoted prompts and refusals at most 0.22. Precision
 # first: 0.8. Round 3, with lowerings and caps in the yes wording: lower
-# efforts asked with their reason 0.93 to 0.96 ("switch to medium for the
-# remaining test rewrites" was 0.86 to 0.88), "mets le paquet" 0.94 (was
-# 0.45), "effort élevé, pas plus" 0.63 to 0.67, raises 0.82 and up;
-# mentions and refusals at most 0.16 (efforts), 0.23 (modes).
+# efforts for the rest of the work asked with their reason 0.93 to 0.96
+# ("switch to medium for the remaining test rewrites" was 0.86 to 0.88),
+# "mets le paquet" 0.94 (was 0.45), "effort élevé, pas plus" 0.63 to
+# 0.67, raises 0.82 and up; mentions and refusals at most 0.16 (efforts),
+# 0.23 (modes).
 explicit_threshold = 0.8
 # A model asked for in words (only another model than the session's; the
 # work in progress runs on it until a separate new task) counts from this

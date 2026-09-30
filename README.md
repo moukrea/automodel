@@ -202,10 +202,10 @@ So every later prompt also gets Jev's answer on how it relates to that work
 | `continue` | "yes", "vas-y", "resume, the limits are reset" | at least the work's |
 | `extend` | "also add a test for that", "mais garde l'ancienne API" | at least the work's |
 | `inform` | "FYI it only fails on ARM", "env vars win" | at least the work's |
-| `side_question` | "is CI green yet?", "t'en es où ?", "why did the effort go up?" (about the work, or how the session runs it) | at least the work's |
-| `aside` | "what does HTTP 409 mean again?", "au fait, c'est quoi la différence entre rebase et merge ?" (unrelated to the work) | its own, for that turn; the work stays |
+| `side_question` | "is CI green yet?", "t'en es où ?", "would Fable do better on this bug?" (about the work itself) | at least the work's, without its mode |
+| `aside` | "what does HTTP 409 mean again?", "why did the effort go up?", "merci !" (unrelated to the work, about automodel's routing, or an acknowledgement) | its own, for that turn; the work stays |
 | `resume` | "back to the migration", "reprends le refacto" (only offered when a detour paused some work) | the paused work's; it becomes the work again |
-| `wrap_up` | "write the commit message", "push it", a recap of finished work | its own; the work is marked done |
+| `wrap_up` | "write the commit message", "push it", a recap of finished work | its own, without the work's mode; the work is marked done |
 | `new_task` | "now rename the config loader", the same change on another page | its own; it becomes the work |
 
 A prompt gets its own level, lower if that is its level, only when Jev puts
@@ -213,9 +213,12 @@ at least `meta.relation_separate_threshold` (0.55) on `wrap_up`,
 `new_task` and `aside` together (on the eval's train split, 0.45 to 0.55
 give the same decisions and no follow-up below its work). Any other prompt
 keeps at least the work's tier and mode, and raises the work when it needs
-more. Once a wrap-up has marked the work done, only more work on it (a
-go-ahead, an addition) reopens it and holds its level; a question or a
-fact then gets its own. Upgrades are never held back:
+more. A wrap-up, a side question or an aside runs without the work's
+ultracode mode, which the work keeps for the next follow-up. Once a
+wrap-up has marked the work done, only more work on it (a go-ahead, an
+addition) reopens it and holds its level; a question, a fact or an
+acknowledgement ("looks good", "merci") then gets its own. Upgrades are
+never held back:
 a low session given a hard new task goes up at once, since the floor is the
 work in progress, never the tier of the last prompt. Two kinds of prompt
 never lower the tier or drop the mode, whatever Jev says:
@@ -270,11 +273,14 @@ Opus, within the turn if needed.
 
 A bare go-ahead ("yes", "oui, vas-y", "ok, go", "let's go", "c'est parti")
 brings back the work in progress's tier and mode without asking Jev (Jev
-reads the bare word as trivial), even after a wrap-up lowered the tier, on
-a warm turn, after a compaction or after a pause; after a detour, the paused
-work's when it needs more. A go-ahead to a proposal ("Want me to fix it?")
-starts that work, which may be bigger: it is routed, and not below the work
-in progress (nor the paused work). Without Jev (a go-ahead, or a Jev
+reads the bare word as trivial), even after a side question lowered the
+tier, on a warm turn, after a compaction or after a pause; after a detour,
+the paused work's when it needs more. A go-ahead to a proposal ("Want me
+to fix it?") starts that work, which may be bigger: it is routed, and not
+below the work in progress (nor the paused work). Once a wrap-up has
+marked the work done, a go-ahead is routed too: "looks good." mostly
+acknowledges the finished work, and Jev's relation says whether it reopens
+it. Without Jev (a go-ahead, or a Jev
 failure) the tier and the mode still stay within the budget cap and the
 repository's bounds and `disable_modes`.
 
@@ -298,10 +304,13 @@ router.
 
 **Ultracode** is a *mode*, not a model: parallel multi-agent orchestration
 layered on the chosen tier, whatever its model, with effort raised to
-`xhigh`. Jev answers it as a separate yes/no question (threshold 0.75, from
+`xhigh`. Jev answers it as a separate yes/no question (threshold 0.8, from
 the eval), and you can ask for it in words. Once on, it stays on for the
-work in progress: a follow-up keeps it, a wrap-up turns it off only on a
-clear no (0.25 or less), and a new task gets it only on Jev's own yes. While it is on, the tier is raised to
+work in progress: a follow-up keeps it, and a new task gets it only on
+Jev's own yes. A wrap-up, a side question or an aside runs without it
+(Jev's answer reads the whole work: "open the draft PR" after a sweep
+still reads as the sweep), unless you ask for it in words for that turn;
+the work keeps it for the next follow-up. While it is on, the tier is raised to
 what it runs (at least `min_tier`, and the tier of its effort: xhigh on
 Opus). The hook injects the standing opt-in to workflow orchestration
 (repeated after each compaction, with an "off" notice when it ends).
@@ -341,7 +350,9 @@ still win.
   not the session: routing goes on (Jev is still asked), follow-ups and
   wrap-ups run on Sonnet at the effort picked (its default when Sonnet
   lacks it), and a separate new task, or asking for Opus again, goes back
-  to the tiers. Only `[model:sonnet]` pins a model for good. A regex
+  to the tiers. Asked for the rest of the work as it stands ("fais le reste
+  avec Sonnet, pas besoin d'Opus pour du CSS"), it keeps the work's
+  effort: the words say which model, not how hard the work is. Only `[model:sonnet]` pins a model for good. A regex
   finds the words that may make a request: effort names (`low`, `medium`
   and `high` only next to "effort", "niveau", "reasoning", "en", "in",
   "at", "passe", "switch", "use"…, and "élevé", "moyen", "faible"),
@@ -357,20 +368,22 @@ still win.
   benchmarks, "why did it pick Opus?", a subagent or a config set to a
   model and refusals are all no, and it needs
   `meta.explicit_model_threshold` (0.85). On the eval's train split,
-  efforts asked in words score 0.82 and up, models 0.83 and up; mentions,
-  efforts and models set for something else, and refusals 0.23 at most:
-  none was confirmed.
+  efforts asked in words score 0.82 and up (lower ones with their reason,
+  "drop to medium for what's left, it's boilerplate", 0.93 and up), most
+  models 0.87 and up; mentions, efforts and models set for something else,
+  and refusals 0.23 at most: none was confirmed.
 - **"ultrathink"**: at least `xhigh` for that prompt, without asking Jev.
   **"think harder"**, "take your time", "réfléchis à fond", "en profondeur",
   "mets le paquet"… (confirmed by Jev): one tier above the work in progress,
-  or above the tier in force if that is higher. With `privacy =
+  or above the tier in force if that is higher; on a follow-up that is the
+  decision, not the level Jev reads in the words "think harder". With `privacy =
   "metadata"`, Jev never sees the words, so only "think harder / more /
   deeply", "réfléchis bien / plus / davantage / en profondeur" and "prends
   ton temps" count, without confirmation, and for that turn only (the
   work in progress keeps its level).
 - A bare **go-ahead** ("yes", "oui, vas-y", "ok, go", "lgtm") brings back
   the work in progress's tier and mode without asking Jev
-  (`features.fast_path`).
+  (`features.fast_path`), unless a wrap-up has closed the work.
 - A turn you **interrupted** (Esc) is passed to Jev as a signal.
 
 Per repository, `.automodel.toml` at the repo root:

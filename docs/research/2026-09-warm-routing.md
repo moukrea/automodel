@@ -8,8 +8,10 @@ never changes anything. This document gives the evidence, the design, the
 evaluation before and after, the thresholds and what is still open. All
 runs use `typesafe/jev-1.13`, 3 calls per case. Sections 1 to 6 describe
 the first round; section 7 the review that followed, its fixes and the
-retune, and it corrects §4: the first round's test split was not held out. Every prompt quoted here is
-an invented paraphrase; no real prompt is reproduced.
+retune, and it corrects §4: the first round's test split was not held out.
+Section 8 is round 3: the first fresh held-out run (79% exact), what it
+found and the fixes. Every prompt quoted here is an invented paraphrase;
+no real prompt is reproduced.
 
 ## 1. The problem
 
@@ -446,3 +448,129 @@ its cases; a fresh set, written apart, is to be run once with `--check`.
   lowerings asked in words, are the explicit misses.
 - Live sessions again for the detour, aside and done-work paths.
 
+## 8. Round 3: the first fresh held-out run (2026-09-30)
+
+A fresh held-out set was written apart from everything the tuning had
+read: 128 invented cases (24 conversations and 6 first prompts, about 54
+in French), from the spec, the fixes and the rubric only. It was run once
+with round 2's final catalog, two runs of 3.
+
+### What it found
+
+The gate failed: decision exact 79% (78.9%, 78.4%), acceptable 89%, rank
+error 0.36, 12 decisions below the label on follow-ups and 9 below the
+work they follow up. Precision held: no effort, mode or model request was
+confirmed on a prompt that makes none. Relation 79% right; ultracode on/off
+367–368 of 384 (on 27/27, off 340–341/357).
+
+The 29–30 failing cases, one by one:
+
+| cause | cases | what happened |
+|---|---:|---|
+| ultracode on a turn-only prompt | 3 | an unrelated question ("capitale de l'Australie ?", "Python's flatMap?") and a wrap-up ("commit wave 2") in ultracode sessions ran at xhigh with the mode: the mode question reads the whole work (0.92–0.95) and the mode in force stayed on |
+| routing questions read as side questions | 3 | "why did automodel keep this whole session at xhigh?", "why did it pick Opus for this session?", "why was the first answer on Opus and now Sonnet?" were held at the work's level (side_question 0.92–0.99) |
+| go-ahead on a done work | 1 | "looks good." after an xhigh fix was wrapped up is on the go-ahead list: carried at xhigh |
+| "think harder" | 1 | low work, "explain the touch chain again but think harder": the floor was medium, but Jev's level read the words as hard (low 0.55, xhigh 0.45) and the pick went to xhigh |
+| a model asked for the rest | 1 | "fais le reste avec Sonnet, pas besoin d'Opus pour du CSS" on medium work: high on Sonnet (level medium 0.54, high 0.46) |
+| a lowering asked in words | 1 | "passe en medium pour les formulaires simples qui restent" at 0.89–0.91, under the 0.9 bar in half the answers |
+| labels | 9 | 6 warm asides labelled Haiku (a warm session never moves there: the decision, low, was right); two small standalone edits ("set the review subagent to effort medium", a README paragraph) labelled as extensions at the work's high; a resume labelled medium only |
+| Jev's answers | 11 | "mets le paquet" confirmed at 0.45; model requests at 0.66–0.80 under the 0.85 bar; a refusal of ultracode for part of the work at 0.77–0.80; ultracode turned on at 0.75–0.78 on a resumed Terraform migration and a remark typed mid-turn; the refund script after the double-charge fix read as a new task (0.73–0.77) at medium; three cases decided one rank above the label, within `accept` (a fact raised by the level, two follow-ups rated higher) |
+
+The eval's JSON had no relation answer on the go-ahead fast path, which
+the diagnosis of the done-work case needed.
+
+### The fixes
+
+| item | change |
+|---|---|
+| turn-only prompts (B1) | a wrap-up, a side question or an aside never turns a mode on nor keeps it for that turn, and the tier isn't raised to the mode's; the work keeps its mode for the next follow-up. A mode asked in words for that turn still applies; a prompt typed mid-turn or sent by another session keeps the turn's |
+| routing questions (B2) | `aside` covers questions about automodel's routing (why the session or a subagent got, kept or changed its effort, model or mode) and acknowledgements; `side_question` is about the work itself, which model or mode would suit it included |
+| done work (B3) | a go-ahead on a done work skips the fast path and is routed: continue or extend reopen the work, anything else takes its own level |
+| more thinking (B4) | on a follow-up, one rank above the work and the tier in force is the decision, not only a floor; on new work it stays a floor; asked for a turn-only prompt it is for that turn |
+| a model asked in words (B5) | on a follow-up that adds no work, it keeps the work's level on that model |
+| lowerings (B6) | the effort question's yes side says a lower effort for easier work, or a cap, is asked as much as a raise, usually with its reason; "mets le paquet" and "going all out" are more thinking |
+| eval (B7) | on a fast-path prompt the relation is asked apart, recorded with `fast_path`, and used neither by the decision nor by the relation metrics |
+
+Three wording changes came from train gaps once the set was merged:
+`continue` says a question or a remark along with a go-ahead is still a
+go-ahead (after B2, "why did it stay at xhigh? just curious, keep going"
+read as an aside at 0.81–0.93 and was lowered); `continue`'s `not_for`
+sends acknowledgements of done work to `aside`; `extend` covers a step the
+work calls for, such as repairing what the problem it fixes left behind
+(the refund script now holds the work's xhigh). A first `aside` wording
+that named "the effort, the model or the mode" drew requests for an
+effort or a model into asides; the kept wording asks about the routing's
+past choices and names requests and facts about a subagent in `not_for`.
+
+### The benchmark
+
+The 128 held-out cases were read one by one, so they join the train split
+with their ids (443 train, 210 test). Label fixes: the warm Haiku labels
+become low with Haiku acceptable; the two standalone edits become new
+tasks at their own level (low), the work's still acceptable; the resume
+accepts medium and high. The round 3 rubric, on both splits: a side
+question runs without the work's mode (3 cases), questions about
+automodel's routing are asides (6 cases, 2 of them in the test split), an
+acknowledgement of done work is an aside (2 cases). The test split was
+not run.
+
+### Results (train split, 3 runs each)
+
+| main scope | before | final (two runs) |
+|---|---:|---:|
+| router decision exact / acceptable | 89.8% / 96.4% | 91.9–92.1% / 97.7–97.8% |
+| rank error | 0.13 | 0.09 |
+| decisions below / above the label | 21 / 103 | 15 / 81–83 |
+| recall low / medium / high / xhigh / max | 88 / 86 / 84 / 98 / 93% | 91 / 88 / 87 / 98 / 100% |
+| follow-ups below the label / their work | 6 / 3 of 588 | 0 / 0 of 585 |
+| relation right (ECE) | 83.5% (0.03) | 86.2–86.6% (0.02–0.03) |
+| explicit: right / false / missed | 101 / 0 / 28 | 109–110 / 0 / 19–20 |
+| per kind (right / missed): effort, mode, model | 61/14, 22/8, 18/6 | 69/6, 22–23/7–8, 18/6 |
+| ultracode on/off (on side, off side) | 1192/1215 (51/57, 1141/1158) | 1204–1205/1215 (54/57, 1150–1151/1158) |
+
+"Before" is the fixed code (B1, B3, B4, B5, B7) with round 2's wording and
+thresholds, on the merged set before the last six relabels. Relation
+confusion (final, one run, rows = label): continue 128, 23 read as extend,
+5 as aside; extend 192, 13 as new_task, 11 as continue; inform 46, 23 as
+extend; side_question 78, 3 as aside, 3 as wrap_up; aside 87, 3 as a side
+question; resume 21/21; wrap_up 94, 5 as a side question; new_task 105,
+12 as extend. None lowered a follow-up.
+
+The 128 former held-out cases now score 95.3–95.6% exact and 100%
+acceptable, where they scored 79% held out: train numbers, since the
+fixes, the wording and the labels came from them.
+
+### Thresholds
+
+- `relation_separate_threshold` stays 0.55: 0.45 to 0.55 keep every
+  follow-up at its work and differ by one to three answers on wrap-ups
+  and asides; 0.4 lowers a routing question ending in "just curious,
+  carry on".
+- `explicit_threshold` stays 0.8 and the lowering bar 0.9: lowerings for
+  the rest of the work, asked with a reason, now read 0.93–0.96,
+  "mets le paquet" 0.94; "effort élevé, pas plus" 0.63–0.67 is still
+  missed. Mentions and refusals at most 0.16 (effort), 0.23 (mode).
+- `explicit_model_threshold` stays 0.85: most requests 0.87 and up;
+  "Run this on Sonnet, it's simple" (0.66–0.71) and "switch this to Opus
+  for the tricky test" (0.76–0.80) are missed; mentions at most 0.21.
+- `modes.ultracode.threshold` 0.75 → 0.8: new work Jev turns the mode on
+  for reads 0.86 and up; the off-labelled cases above 0.75 read 0.73–0.78
+  (a Terraform migration resumed across six environments, remarks typed
+  during a form migration). 0.85 would also turn off a Moment.js removal
+  (0.82–0.83), 0.01 under the lowest on-case.
+
+### The gate
+
+`eval.DefaultGate` (unchanged) passes on the train split in both final
+runs. A second fresh held-out set is being written; its run is the next
+held-out number.
+
+### Still open
+
+- Model requests Jev is unsure of, parallel agents asked or refused
+  without naming ultracode, and caps ("effort élevé, pas plus") are the
+  explicit misses.
+- An effort asked for the rest of the work that Jev reads as an aside
+  ("set the effort to medium for the rest", aside 0.43–0.54 in some
+  answers) is applied to that turn only, not to the work.
+- Live sessions for the turn-only mode and the done-work go-ahead.
