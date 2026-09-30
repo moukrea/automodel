@@ -432,9 +432,15 @@ func TestHeldOutRound3(t *testing.T) {
 		_, req := setup(c, cs)
 		ans, ids := levelAnswer(c, a.level)
 		if a.spread != nil {
+			lv, peak := ans[jev.QLevel], 0.0
 			for i, id := range ids {
-				ans[jev.QLevel].Probabilities[fmt.Sprint(i)] = a.spread[id]
+				lv.Probabilities[fmt.Sprint(i)] = a.spread[id]
+				peak = max(peak, a.spread[id])
 			}
+			// Jev's confidence: (n·peak - 1)/(n - 1).
+			n := float64(len(ids))
+			lv.Confidence = (n*peak - 1) / (n - 1)
+			ans[jev.QLevel] = lv
 		}
 		if a.rel != nil {
 			ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: a.rel, Confidence: 0.9}

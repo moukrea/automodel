@@ -467,11 +467,14 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 			why = append(why, "ultrathink")
 		}
 		if x.more {
-			// More thinking is one rank above what runs; on a follow-up that
-			// is the decision too, since Jev's level rates the words asking
-			// for it ("think harder" reads as hard work).
+			// More thinking is one rank above what runs. On a follow-up that
+			// is the decision too when the extra comes from the words alone:
+			// Jev's level rates the words asking for it ("think harder" reads
+			// as hard work), unless the prompt adds work (extend) and Jev is
+			// sure of its level; then the pick stands if it is higher (asking
+			// for more thinking never gets less).
 			more := e.above(req.Scope, higher(work, cur))
-			if hold != nil {
+			if hold != nil && (top != catalog.RelationExtend || rd.conf < f.WarmMinConfidence) {
 				tier = more
 			}
 			floor = higher(floor, more)

@@ -78,7 +78,8 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   config or tuning entry, a quoted prompt or a test string) is no request;
   "ultrathink" is at least xhigh; "think harder" and its family one rank
   above the higher of the work's level and the tier in force (on a
-  follow-up exactly that, not the level the words "think harder" suggest).
+  follow-up exactly that, not the level the words "think harder" suggest,
+  unless the prompt adds work that needs more: then that work's level).
   A model asked for the rest of the work as it stands ("do the rest with
   Sonnet, it's only CSS") keeps the work's level on that model; with more
   work to it (an extension), that work's level. Asked for a wrap-up, a

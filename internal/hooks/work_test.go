@@ -112,6 +112,15 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "xhigh", conf: 0.4, rel: "extend", x: x("effort_more", 0.97)}, want: "medium", wantWork: "medium"},
 		{name: "think harder on xhigh work: max", tier: "xhigh", prompt: "think harder, the last two fixes for this hang didn't hold", ask: "explicit_effort_more",
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "continue", x: x("effort_more", 0.95)}, want: "max", wantWork: "max"},
+		{name: "think harder on a go-ahead: one rank up, whatever the level", tier: "low", prompt: "ok, go on, but think harder this time", ask: "explicit_effort_more",
+			jev: fa{tier: "xhigh", conf: 0.9, rel: "continue", x: x("effort_more", 0.95)}, want: "medium", wantWork: "medium"},
+		// An extension adds work: when Jev is sure its level is higher,
+		// asking for more thinking doesn't get less than the same prompt
+		// without the words.
+		{name: "think harder on an extension rated xhigh: xhigh", tier: "medium", prompt: "think harder on this one: also retry the idempotent calls when the pool is exhausted", ask: "explicit_effort_more",
+			jev: fa{tier: "xhigh", conf: 0.9, rel: "extend", relP: 0.95, x: x("effort_more", 0.95)}, want: "xhigh", wantWork: "xhigh"},
+		{name: "think harder on an extension rated max: max", tier: "medium", prompt: "think harder on this one: also redesign the lock ordering across the scheduler, the pool and the queue", ask: "explicit_effort_more",
+			jev: fa{tier: "max", conf: 0.9, rel: "extend", x: x("effort_more", 0.95)}, want: "max", wantWork: "max"},
 		{name: "think harder on a new task: a floor above the session", tier: "medium", prompt: "next: design how to shard the job queue, and think hard about it", ask: "explicit_effort_more",
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "new_task", x: x("effort_more", 0.95)}, want: "xhigh", wantWork: "xhigh", newGoal: true},
 		{name: "ultrathink: xhigh at least, without a question", tier: "low", prompt: "ultrathink: and check the other places we read the lease without the lock",
