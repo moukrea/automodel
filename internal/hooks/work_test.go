@@ -137,8 +137,12 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "extend", relP: 0.95, x: x("effort_more", 0.95)}, want: "xhigh", wantWork: "xhigh"},
 		{name: "think harder on an extension rated max: max", tier: "medium", prompt: "think harder on this one: also redesign the lock ordering across the scheduler, the pool and the queue", ask: "explicit_effort_more",
 			jev: fa{tier: "max", conf: 0.9, rel: "extend", x: x("effort_more", 0.95)}, want: "max", wantWork: "max"},
-		{name: "think harder on a new task: a floor above the session", tier: "medium", prompt: "next: design how to shard the job queue, and think hard about it", ask: "explicit_effort_more",
-			jev: fa{tier: "xhigh", conf: 0.9, rel: "new_task", x: x("effort_more", 0.95)}, want: "xhigh", wantWork: "xhigh", newGoal: true},
+		// On a new task it is one rank above the level Jev gives that task,
+		// whatever the work it leaves.
+		{name: "think harder on a new task: one rank above its level", tier: "medium", prompt: "next: design how to shard the job queue, and think hard about it", ask: "explicit_effort_more",
+			jev: fa{tier: "xhigh", conf: 0.9, rel: "new_task", x: x("effort_more", 0.95)}, want: "max", wantWork: "max", newGoal: true},
+		{name: "think harder on a smaller new task: not above the work it leaves", tier: "xhigh", prompt: "new thing: think hard about the error messages of the import form", ask: "explicit_effort_more",
+			jev: fa{tier: "medium", conf: 0.9, rel: "new_task", x: x("effort_more", 0.95)}, want: "high", wantWork: "high", newGoal: true},
 		{name: "ultrathink: xhigh at least, without a question", tier: "low", prompt: "ultrathink: and check the other places we read the lease without the lock",
 			jev: fa{tier: "low", conf: 0.9, rel: "extend"}, want: "xhigh", wantWork: "xhigh"},
 		// A wrap-up, a side question or an aside is answered for that turn:
