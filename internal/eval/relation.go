@@ -7,11 +7,13 @@ import (
 	"strings"
 
 	"github.com/moukrea/automodel/internal/catalog"
+	"github.com/moukrea/automodel/internal/jev"
+	"github.com/moukrea/automodel/internal/router"
 )
 
-// FollowUp reports a relation label that follows the work in progress up
-// (continue, extend, inform, side_question): its decision must not fall
-// below the work's level.
+// FollowUp reports a relation label that follows the work up (continue,
+// extend, inform, side_question, and resume, which goes back to the paused
+// work): its decision must not fall below the work's level.
 func FollowUp(relation string) bool {
 	for _, r := range catalog.Relations {
 		if r == relation {
@@ -102,19 +104,32 @@ func PrintRelation(w io.Writer, s RelationStats) {
 }
 
 // ExplicitStats scores the requests confirmed in words (a yes at
-// meta.explicit_threshold) against the labels: a case without an explicit
-// label asks for nothing, so a request confirmed there is a false one; a
-// labeled request the regex missed, or Jev didn't confirm, is missed.
-type ExplicitStats struct{ TP, FP, FN int }
+// meta.explicit_threshold, meta.explicit_model_threshold for a model)
+// against the labels: a case without an explicit label asks for nothing,
+// so a request confirmed there is a false one; a labeled request the regex
+// missed, or Jev didn't confirm, is missed. ByKind splits them by kind.
+type ExplicitStats struct {
+	ExplicitCount
+	ByKind map[string]*ExplicitCount `json:",omitempty"`
+}
 
-func (e ExplicitStats) Precision() float64 {
+// ExplicitCount scores the requests of one kind (Threshold: the yes it needs).
+type ExplicitCount struct {
+	TP, FP, FN int
+	Threshold  float64 `json:",omitempty"`
+}
+
+// ExplicitKinds are the kinds of explicit requests, in print order.
+var ExplicitKinds = []string{jev.ExplicitEffort, jev.ExplicitMode, jev.ExplicitModel}
+
+func (e ExplicitCount) Precision() float64 {
 	if e.TP+e.FP == 0 {
 		return 0
 	}
 	return float64(e.TP) / float64(e.TP+e.FP)
 }
 
-func (e ExplicitStats) Recall() float64 {
+func (e ExplicitCount) Recall() float64 {
 	if e.TP+e.FN == 0 {
 		return 0
 	}
@@ -124,27 +139,66 @@ func (e ExplicitStats) Recall() float64 {
 // ExplicitMetrics computes precision and recall of the explicit requests
 // over the main-scope answers.
 func ExplicitMetrics(cat *catalog.Catalog, rs []Result) ExplicitStats {
-	var e ExplicitStats
-	th := cat.Meta.ExplicitThreshold()
+	e := ExplicitStats{ByKind: map[string]*ExplicitCount{}}
+	kind := func(id string) *ExplicitCount {
+		k, _, _ := strings.Cut(id, "_")
+		c := e.ByKind[k]
+		if c == nil {
+			c = &ExplicitCount{Threshold: router.ExplicitThreshold(cat, k)}
+			e.ByKind[k] = c
+		}
+		return c
+	}
 	for _, r := range rs {
 		if r.Err != "" || r.Scope != catalog.ScopeMain {
 			continue
 		}
 		want := map[string]bool{}
-		for _, id := range r.Explicit.requests(cat) {
+		for _, id := range r.Explicit.requests(cat, r.sessionModel(cat)) {
 			want[id] = true
 		}
 		for id, p := range r.ExplicitP {
+			c := kind(id)
 			switch {
-			case p < th:
+			case p < c.Threshold:
 			case want[id]:
 				e.TP++
+				c.TP++
 				delete(want, id)
 			default:
 				e.FP++
+				c.FP++
 			}
 		}
-		e.FN += len(want)
+		for id := range want {
+			e.FN++
+			kind(id).FN++
+		}
 	}
 	return e
+}
+
+// wantModel is the model a main case's decision should run on besides the
+// tiers': one it asks for in words, else the one its work runs on unless
+// it starts separate new work ("": the tiers').
+func (c Case) wantModel(cat *catalog.Catalog) string {
+	def := cat.DefaultTier(catalog.ScopeMain).Model
+	for _, id := range c.Explicit.requests(cat, c.sessionModel(cat)) {
+		if key, ok := strings.CutPrefix(id, jev.ExplicitModel+"_"); ok {
+			if key == def {
+				return ""
+			}
+			return key
+		}
+	}
+	w := "work_in_progress"
+	if c.Relation == catalog.RelationResume {
+		w = "paused_work"
+	}
+	wm, _ := c.State[w].(map[string]any)
+	name, _ := wm["model"].(string)
+	if c.Relation == catalog.RelationNewTask && !c.holds() {
+		return ""
+	}
+	return modelKey(cat, name)
 }

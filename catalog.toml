@@ -40,6 +40,11 @@ relation_separate_threshold = 0.6
 # its refusal, a model) counts from this yes-probability. Probe: requests
 # 0.95, mentions 0.06, refusals 0.03, a bare "ultrathink:" question 0.19.
 explicit_threshold = 0.8
+# A model asked for in words (only another model than the session's; the
+# work in progress runs on it until a separate new task) counts from this
+# yes-probability, stricter than for an effort or a mode: a wrong model
+# runs the whole work, and models are talked about far more than asked for.
+explicit_model_threshold = 0.9
 
 # ---------------------------------------------------------------- models
 
@@ -1263,6 +1268,12 @@ what = "Asks a question or a quick check aside (progress, status, why something 
 not_for = "A question that opens an investigation of its own (new_task)."
 examples = ["is CI green yet?", "why did you pick a mutex there?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi ce choix de lib ?"]
 
+# Only offered when a detour paused earlier work (paused_work in the state).
+[questions.relation.options.resume]
+what = "Goes back to the paused work (`paused_work.goal`), which a detour set aside, now that the detour is done or dropped."
+not_for = "Going on with the work in progress itself (continue), or a piece of work neither of them is about (new_task)."
+examples = ["back to the migration", "ok, now let's get back to the refactor", "continue the audit", "reprends le refacto", "on revient à la migration", "bon, on reprend l'audit"]
+
 [questions.relation.options.wrap_up]
 what = "Wraps up work that is done: a summary, a commit message, a PR description, a push, a changelog entry."
 not_for = "Finishing or fixing the work itself (extend)."
@@ -1280,7 +1291,9 @@ examples = ["now rename the config loader", "next: design how to shard the job q
 # (from effort/more/mode/model, {v} the effort, the mode or the model).
 # It asks about the action, not the subject: effort names are often only
 # talked about ("why did it stay at xhigh?"). The ultrathink keyword needs
-# no question (a floor at xhigh).
+# no question (a floor at xhigh). A model has its own question, about the
+# model the assistant itself runs on: in this line of work models are
+# compared, released and benchmarked far more often than asked for.
 [questions.explicit]
 question = "Does the new prompt `task` explicitly ask the assistant to use {x} for this work?"
 yes = "It asks for it, as an instruction or a wish, in any language: 'do this at xhigh', 'use ultracode for the audit', 'switch to Sonnet', 'think harder about it', 'passe en low', 'fais-le en ultracode', 'réfléchis à fond'."
@@ -1288,6 +1301,9 @@ no = "It only mentions, quotes, discusses or questions it, or refuses it: 'why d
 off_question = "Does the new prompt `task` explicitly ask the assistant to stop using {x}, or not to use it, for this work?"
 off_yes = "It asks to stop it or to do without it, in any language: 'no ultracode for this', 'without workflows', 'stop the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'."
 off_no = "It asks for it, only mentions it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'ultracode était lent hier'."
+model_question = "Does the new prompt `task` ask the assistant to run on {x} itself for this work, instead of the model it runs on now?"
+model_yes = "It tells the assistant to switch to that model, or to do this work with it, as an instruction or a wish: 'switch to Sonnet for this', 'do the rest with Fable', 'use Opus for this part', 'passe sur Sonnet pour la suite', 'fais ça avec Fable'."
+model_no = "It only talks about the model or refuses it: a mention, a comparison, release news, prices or benchmarks, a question about models or about how automodel routes and why it picked one, a subagent, a config or a catalog entry set to it, a refusal: 'Sonnet 5.5 is out', 'is Sonnet cheaper than Opus?', 'why did it pick Opus?', 'Fable tops the index now', 'make the review agent use sonnet', 'pas besoin d'Opus', 'Opus a mis 3 minutes'."
 effort = "the {v} reasoning effort"
 more = "more thinking than so far (thinking harder, longer or more carefully)"
 mode = "{v}, several agents working in parallel (workflow orchestration)"

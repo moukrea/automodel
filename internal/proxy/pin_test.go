@@ -81,6 +81,23 @@ func TestClientEffortPinKeepsTheMode(t *testing.T) {
 	}
 }
 
+// /effort on the model a work asked for in words pins that model at that
+// effort: a model outside the tiers has no tier to pin.
+func TestClientEffortPinsTheWorkModel(t *testing.T) {
+	p, _, _ := setup(t)
+	cat, _ := p.Catalog.Get()
+	p.State.Update("w", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: state.PinnedTier, Model: "claude-sonnet-5-5", APIID: "claude-sonnet-5-5", Effort: "high"}
+		s.Work = &state.Work{Tier: "high", Model: "claude-sonnet-5-5"}
+		return true
+	})
+	p.observeClientEffort(cat, "w", "medium") // Claude Code's default
+	p.observeClientEffort(cat, "w", "xhigh")
+	if s, _ := p.State.Load("w"); s.Pin != "xhigh" || s.PinModel != "claude-sonnet-5-5" || s.Main.Model != "claude-sonnet-5-5" || s.Main.Effort != "xhigh" {
+		t.Fatalf("/effort xhigh on the work's model: pin %q/%q, %+v", s.Pin, s.PinModel, s.Main)
+	}
+}
+
 func ledgerDecisions(p *Proxy) ([]ledger.Decision, error) { return ledger.Decisions(p.Ledger.Path) }
 
 func TestPinnedModelRewrite(t *testing.T) {

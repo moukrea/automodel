@@ -26,9 +26,9 @@ type ScopeStats struct {
 	// decisions below/above the label.
 	MAE, MAEDecision float64
 	Under, Over      int
-	// FollowUnder counts the decisions below the label on cases labeled
-	// as a follow-up of the work in progress (continue, extend, inform,
-	// side_question): the lowering the owner rejects.
+	// FollowUnder counts the decisions below the label on cases that hold
+	// the work (continue, extend, inform, side_question, resume, mid-turn,
+	// peer): the lowering the owner rejects.
 	FollowUnder        int
 	MeanPWant, MeanTop float64
 	// ECE is the expected calibration error of Jev's top probability
@@ -125,7 +125,7 @@ func ScopeMetrics(cat *catalog.Catalog, scope string, rs []Result) *ScopeStats {
 			switch {
 			case d < 0:
 				s.Under++
-				if FollowUp(r.Relation) {
+				if r.holds() {
 					s.FollowUnder++
 				}
 			case d > 0:
@@ -201,8 +201,13 @@ type Gate struct {
 	MaxShareGap float64 // |decision share − label share| of any tier
 	MaxMAE      float64 // router decision mean absolute rank error
 	// MaxFollowUnder is how many decisions may fall below the label on
-	// cases labeled as a follow-up of the work in progress (none).
+	// cases that hold the work in progress (none).
 	MaxFollowUnder int
+	// MaxBelowWork is how many decisions may fall below the work a case
+	// holds, efforts asked in words aside; MaxExplicitFalse how many
+	// requests of each kind (effort, mode, model) Jev may confirm on cases
+	// that don't make them. None: the owner's requirement (2026-09-30).
+	MaxBelowWork, MaxExplicitFalse int
 }
 
 // DefaultGate is set from the 2026-09 routing-quality work: the fixed
@@ -231,6 +236,26 @@ func (s *ScopeStats) Check(g Gate) []string {
 		}
 		if gap := c.DecisionShare - c.LabelShare; math.Abs(gap) > g.MaxShareGap {
 			out = append(out, fmt.Sprintf("%s: %s gets %.0f%% of decisions for %.0f%% of labels", s.Scope, t, 100*c.DecisionShare, 100*c.LabelShare))
+		}
+	}
+	return out
+}
+
+// Check lists the gate's failures over a whole run: the main scope's tier
+// metrics, the decisions below the work a case holds and the requests
+// confirmed where none was made.
+func (s Summary) Check(g Gate) []string {
+	st := s.Scopes[catalog.ScopeMain]
+	if st == nil {
+		return []string{"no main-scope answers"}
+	}
+	out := st.Check(g)
+	if n := s.Follow.N - s.Follow.Right; n > g.MaxBelowWork {
+		out = append(out, fmt.Sprintf("main: %d decisions below the work in progress they follow up", n))
+	}
+	for _, k := range ExplicitKinds {
+		if c := s.Explicit.ByKind[k]; c != nil && c.FP > g.MaxExplicitFalse {
+			out = append(out, fmt.Sprintf("main: %d %s requests confirmed on prompts that don't make them", c.FP, k))
 		}
 	}
 	return out

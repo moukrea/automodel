@@ -161,7 +161,7 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 	}
 	if x := c.Questions.Explicit; x != nil {
 		for _, f := range []struct{ name, v, want string }{
-			{"question", x.Question, "{x}"}, {"off_question", x.OffQuestion, "{x}"},
+			{"question", x.Question, "{x}"}, {"off_question", x.OffQuestion, "{x}"}, {"model_question", x.ModelQuestion, "{x}"},
 			{"effort", x.Effort, "{v}"}, {"mode", x.Mode, "{v}"}, {"model", x.Model, "{v}"},
 		} {
 			if f.v != "" && !strings.Contains(f.v, f.want) {
@@ -172,7 +172,7 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 	for _, t := range []struct {
 		name string
 		v    float64
-	}{{"relation_separate_threshold", m.RelationSeparateP}, {"explicit_threshold", m.ExplicitP}} {
+	}{{"relation_separate_threshold", m.RelationSeparateP}, {"explicit_threshold", m.ExplicitP}, {"explicit_model_threshold", m.ExplicitModelP}} {
 		if t.v < 0 || t.v > 1 {
 			errf("meta.%s must be between 0 and 1", t.name)
 		}

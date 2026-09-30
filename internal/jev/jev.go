@@ -99,8 +99,9 @@ var DefaultLevel = map[string]string{
 // Ask says which of the optional questions a request carries.
 type Ask struct {
 	// Relation: how the prompt relates to the work in progress (main
-	// session, once there is work in progress).
-	Relation bool
+	// session, once there is work in progress). Resume offers going back
+	// to the work a detour paused (once there is one).
+	Relation, Resume bool
 	// Explicit: the requests a regex found in the prompt's words, a yes/no
 	// each (Jev tells a request from a mention).
 	Explicit []Explicit
@@ -150,7 +151,7 @@ func Questions(c *catalog.Catalog, scope string, a Ask) (map[string]Question, []
 		qs[QModePfx+m.ID] = Question{Type: "noul", Instructions: m.Question, Criteria: map[string]string{"true": m.Yes, "false": m.No}}
 	}
 	if a.Relation && scope == catalog.ScopeMain {
-		qs[QRelation] = RelationQuestion(c)
+		qs[QRelation] = RelationQuestion(c, a.Resume)
 	}
 	for _, x := range a.Explicit {
 		qs[x.ID()] = ExplicitQuestion(c, x)
@@ -160,14 +161,18 @@ func Questions(c *catalog.Catalog, scope string, a Ask) (map[string]Question, []
 
 // RelationQuestion is the Choice on how the prompt relates to the work in
 // progress: the catalog's wording (questions.relation) over the built-in
-// one, each option an object {what, not_for, examples}.
-func RelationQuestion(c *catalog.Catalog) Question {
+// one, each option an object {what, not_for, examples}. The resume option
+// is only offered when there is paused work to go back to.
+func RelationQuestion(c *catalog.Catalog, resume bool) Question {
 	q, opts := DefaultRelation.Question, map[string]*catalog.Option{}
 	r := c.Questions.Relation
 	if r != nil && r.Question != "" {
 		q = r.Question
 	}
 	for _, id := range catalog.Relations {
+		if id == catalog.RelationResume && !resume {
+			continue
+		}
 		opts[id] = DefaultRelation.Options[id]
 		if r != nil && r.Options[id] != nil && r.Options[id].What != "" {
 			opts[id] = r.Options[id]
@@ -186,6 +191,7 @@ func ExplicitQuestion(c *catalog.Catalog, x Explicit) Question {
 		}{
 			{&w.Question, o.Question}, {&w.Yes, o.Yes}, {&w.No, o.No},
 			{&w.OffQuestion, o.OffQuestion}, {&w.OffYes, o.OffYes}, {&w.OffNo, o.OffNo},
+			{&w.ModelQuestion, o.ModelQuestion}, {&w.ModelYes, o.ModelYes}, {&w.ModelNo, o.ModelNo},
 			{&w.Effort, o.Effort}, {&w.More, o.More}, {&w.Mode, o.Mode}, {&w.Model, o.Model},
 		} {
 			if f.v != "" {
@@ -199,8 +205,11 @@ func ExplicitQuestion(c *catalog.Catalog, x Explicit) Question {
 	}
 	name = strings.ReplaceAll(name, "{v}", x.Label)
 	q, yes, no := w.Question, w.Yes, w.No
-	if x.Kind == ExplicitMode && x.Value == ExplicitOff {
+	switch {
+	case x.Kind == ExplicitMode && x.Value == ExplicitOff:
 		q, yes, no = w.OffQuestion, w.OffYes, w.OffNo
+	case x.Kind == ExplicitModel:
+		q, yes, no = w.ModelQuestion, w.ModelYes, w.ModelNo
 	}
 	return Question{Type: "noul", Instructions: strings.ReplaceAll(q, "{x}", name), Criteria: map[string]string{"true": yes, "false": no}}
 }
@@ -231,6 +240,11 @@ var (
 				NotFor:   "A question that opens an investigation of its own (new_task).",
 				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi ce choix de lib ?"},
 			},
+			catalog.RelationResume: {
+				What:     "Goes back to the paused work (`paused_work.goal`), which a detour set aside, now that the detour is done or dropped.",
+				NotFor:   "Going on with the work in progress itself (continue), or a piece of work neither of them is about (new_task).",
+				Examples: []string{"back to the migration", "ok, now let's get back to the refactor", "continue the audit", "reprends le refacto", "on revient à la migration", "bon, on reprend l'audit"},
+			},
 			catalog.RelationWrapUp: {
 				What:     "Wraps up work that is done: a summary, a commit message, a PR description, a push, a changelog entry.",
 				NotFor:   "Finishing or fixing the work itself (extend).",
@@ -244,16 +258,19 @@ var (
 		},
 	}
 	DefaultExplicit = catalog.Explicit{
-		Question:    "Does the new prompt `task` explicitly ask the assistant to use {x} for this work?",
-		Yes:         "It asks for it, as an instruction or a wish, in any language: 'do this at xhigh', 'use ultracode for the audit', 'switch to Sonnet', 'think harder about it', 'passe en low', 'fais-le en ultracode', 'réfléchis à fond'.",
-		No:          "It only mentions, quotes, discusses or questions it, or refuses it: 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'.",
-		OffQuestion: "Does the new prompt `task` explicitly ask the assistant to stop using {x}, or not to use it, for this work?",
-		OffYes:      "It asks to stop it or to do without it, in any language: 'no ultracode for this', 'without workflows', 'stop the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'.",
-		OffNo:       "It asks for it, only mentions it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'ultracode était lent hier'.",
-		Effort:      "the {v} reasoning effort",
-		More:        "more thinking than so far (thinking harder, longer or more carefully)",
-		Mode:        "{v}, several agents working in parallel (workflow orchestration)",
-		Model:       "the {v} model",
+		Question:      "Does the new prompt `task` explicitly ask the assistant to use {x} for this work?",
+		Yes:           "It asks for it, as an instruction or a wish, in any language: 'do this at xhigh', 'use ultracode for the audit', 'switch to Sonnet', 'think harder about it', 'passe en low', 'fais-le en ultracode', 'réfléchis à fond'.",
+		No:            "It only mentions, quotes, discusses or questions it, or refuses it: 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'.",
+		OffQuestion:   "Does the new prompt `task` explicitly ask the assistant to stop using {x}, or not to use it, for this work?",
+		OffYes:        "It asks to stop it or to do without it, in any language: 'no ultracode for this', 'without workflows', 'stop the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'.",
+		OffNo:         "It asks for it, only mentions it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'ultracode était lent hier'.",
+		ModelQuestion: "Does the new prompt `task` ask the assistant to run on {x} itself for this work, instead of the model it runs on now?",
+		ModelYes:      "It tells the assistant to switch to that model, or to do this work with it, as an instruction or a wish: 'switch to Sonnet for this', 'do the rest with Fable', 'use Opus for this part', 'passe sur Sonnet pour la suite', 'fais ça avec Fable'.",
+		ModelNo:       "It only talks about the model or refuses it: a mention, a comparison, release news, prices or benchmarks, a question about models or about how automodel routes and why it picked one, a subagent, a config or a catalog entry set to it, a refusal: 'Sonnet 5.5 is out', 'is Sonnet cheaper than Opus?', 'why did it pick Opus?', 'Fable tops the index now', 'make the review agent use sonnet', 'pas besoin d'Opus', 'Opus a mis 3 minutes'.",
+		Effort:        "the {v} reasoning effort",
+		More:          "more thinking than so far (thinking harder, longer or more carefully)",
+		Mode:          "{v}, several agents working in parallel (workflow orchestration)",
+		Model:         "the {v} model",
 	}
 )
 

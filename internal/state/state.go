@@ -40,18 +40,33 @@ const PinnedTier = "pinned"
 
 // Work is the work in progress of the main session: the tier and mode it
 // needs and the prompt that started it. It is set by the first decision, a
-// prompt that starts separate work, or an effort or mode asked in words;
-// raised when a follow-up needs more; kept across side questions, wrap-ups,
-// pins and compactions.
+// prompt that starts separate work, or an effort, a mode or a model asked
+// in words; raised when a follow-up needs more; kept across side
+// questions, wrap-ups, pins and compactions. Model is another model than
+// the tiers' the user asked for in words: the work runs on it (the tier
+// is then only its level) until separate new work starts.
 type Work struct {
 	Tier  string    `json:"tier"`
 	Mode  string    `json:"mode,omitempty"`
+	Model string    `json:"model,omitempty"`
 	Goal  string    `json:"goal,omitempty"` // head of the prompt that started it
-	Since time.Time `json:"since,omitzero"`
+	Since time.Time `json:"since,omitzero"` // started; for paused work, paused
 }
 
 // WorkGoalChars bounds the goal kept for the work in progress.
 const WorkGoalChars = 400
+
+// PausedTTL is how long paused work waits to be resumed.
+const PausedTTL = 2 * time.Hour
+
+// PausedWork is the work a detour paused (a new task below it), while it
+// can still be resumed (nil: none, or paused more than PausedTTL ago).
+func (s *Session) PausedWork(now time.Time) *Work {
+	if s.Paused == nil || now.Sub(s.Paused.Since) > PausedTTL {
+		return nil
+	}
+	return s.Paused
+}
 
 // WorkInProgress is the session's work in progress; a session from before
 // it was recorded takes its decision in force (nil: none, or a model pin).
@@ -85,7 +100,10 @@ type Session struct {
 	Main *Decision `json:"main,omitempty"`
 	// Work is the work in progress: follow-ups of it (go-aheads, additions,
 	// side questions, mid-turn remarks) keep at least its tier and mode.
-	Work *Work `json:"work,omitempty"`
+	// Paused is the work a new task below it set aside (a detour while it
+	// was pending): a prompt that goes back to it resumes it.
+	Work   *Work `json:"work,omitempty"`
+	Paused *Work `json:"paused,omitempty"`
 
 	LastPromptAt  time.Time `json:"last_prompt_at,omitzero"`
 	LastAPIAt     time.Time `json:"last_api_at,omitzero"`

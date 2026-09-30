@@ -67,11 +67,17 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 		if s.Main == nil {
 			return true
 		}
-		if s.PinModel != "" { // pinned model: /effort changes its effort
-			if m := cat.Model(s.PinModel); m != nil && m.SupportsEffort(effort) && s.Main.Effort != effort {
+		// A pinned model, or the model a work asked for in words runs on:
+		// /effort changes its effort (and pins it there).
+		pm := s.PinModel
+		if w := s.Work; pm == "" && w != nil && w.Model != "" && w.Model == s.Main.Model {
+			pm = w.Model
+		}
+		if pm != "" {
+			if m := cat.Model(pm); m != nil && m.SupportsEffort(effort) && s.Main.Effort != effort {
 				d := *s.Main
 				d.Effort, d.Cause, d.DecidedAt = effort, "/effort", time.Now()
-				s.Main, s.Pin, s.PinSource = &d, effort, "/effort"
+				s.Main, s.Pin, s.PinModel, s.PinSource = &d, effort, pm, "/effort"
 				if perTurn(cat, m) && !s.PerTurnRejected && s.EffortBase != "" {
 					s.PendingEffort = &state.PendingEffort{Effort: effort, CreatedAt: time.Now()}
 				}

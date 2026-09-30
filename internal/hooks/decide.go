@@ -112,9 +112,15 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			pin, pinModel, pinSource = eff, mtag, "prompt"
 		}
 	case etag != "":
+		w := sess.Work
 		switch {
 		case pinModel != "" && env.Catalog.Model(pinModel).SupportsEffort(etag):
 			pin, pinSource = etag, "prompt"
+		case pinModel == "" && w != nil && w.Model != "" && w.Model == curModel:
+			// On the model a work asked for in words: the tag pins it there.
+			if env.Catalog.Model(w.Model).SupportsEffort(etag) {
+				pin, pinModel, pinSource = etag, w.Model, "prompt"
+			}
 		case pinModel == "" && env.Catalog.TierFor(catalog.ScopeMain, curModel, etag) != nil:
 			pin, pinSource = etag, "prompt"
 		} // else: an effort this model doesn't have: ignored
@@ -206,23 +212,6 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if !out.Changed || (late && out.TimedOut) {
 			dec = nil
 		}
-		// Another model asked for in words: pinned like a [model:X] tag, at
-		// the effort decided (or the current one).
-		if out.Model != "" && !(late && out.TimedOut) {
-			eff := curEffort
-			if dec != nil {
-				eff = dec.Effort
-			}
-			if eff = modelEffort(env, out.Model, eff, curEffort); eff != "" {
-				mode := curMode
-				if dec != nil {
-					mode = dec.Mode
-				}
-				pin, pinModel, pinSource = eff, out.Model, "prompt"
-				dec = env.PinnedModel(in.SessionID, repoRoot(sess, in.Cwd), out.Model, eff, mode, "prompt")
-				trigger = "pinned-" + trigger
-			}
-		}
 	}
 
 	var notice string
@@ -253,6 +242,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		}
 		if s.Work == nil && (dec != nil || work != nil) {
 			s.Work = s.WorkInProgress() // a session from before: the decision in force was its work
+		}
+		if s.Paused != nil && s.PausedWork(now) == nil {
+			s.Paused = nil // paused too long ago to be resumed
 		}
 		work.Apply(s, in.Prompt, now)
 		if dec != nil {
@@ -409,22 +401,29 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	left -= tokens.Estimate(task)
 	// The work in progress, for Jev to relate the prompt to: the prompt that
 	// started it (also after a compaction, when recent prompts are gone)
-	// and the level it was decided at.
-	var work *state.Work
+	// and the level it was decided at; and the work a detour paused, which
+	// the prompt may go back to.
+	var work, paused *state.Work
 	if trigger != "initial" {
-		work = sess.WorkInProgress()
+		work, paused = sess.WorkInProgress(), sess.PausedWork(env.Now())
 	}
-	if work != nil {
-		wip := map[string]any{}
-		if lv := router.WorkLevel(env.Catalog, work.Tier); lv != "" {
-			wip["level"] = lv
+	for _, w := range []struct {
+		key  string
+		work *state.Work
+	}{{"work_in_progress", work}, {"paused_work", paused}} {
+		if w.work == nil {
+			continue
 		}
-		if work.Goal != "" {
-			g := tokens.Truncate(work.Goal, left/8)
-			wip["goal"] = g
+		m := map[string]any{}
+		if lv := router.WorkLevel(env.Catalog, w.work.Tier); lv != "" {
+			m["level"] = lv
+		}
+		if w.work.Goal != "" {
+			g := tokens.Truncate(w.work.Goal, left/8)
+			m["goal"] = g
 			left -= tokens.Estimate(g)
 		}
-		st["work_in_progress"] = wip
+		st[w.key] = m
 	}
 	ctxTokens := sess.ContextTokens
 	if trigger == "compact" {
@@ -467,6 +466,10 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		if sess.Main.Mode != "" {
 			cur["mode"] = sess.Main.Mode
 		}
+		if m := env.Catalog.Model(sess.Main.Model); sess.Main.Tier == state.PinnedTier && m != nil {
+			delete(cur, "tier") // a model outside the tiers, asked for this work
+			cur["model"] = m.Label
+		}
 		st["current"] = cur
 	}
 	session := map[string]any{}
@@ -488,7 +491,7 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		st["repo"] = r
 	}
 	req := router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
-		State: st, RepoDir: in.Cwd, Context: ctxTokens, RepoRoot: repoRoot(sess, in.Cwd), Work: work}
+		State: st, RepoDir: in.Cwd, Context: ctxTokens, RepoRoot: repoRoot(sess, in.Cwd), Work: work, Paused: paused}
 	if repoSignals != nil && repoSignals.Root != "" {
 		req.RepoRoot = repoSignals.Root
 	}

@@ -261,7 +261,7 @@ func evalCmd(cfg *config.Config, args []string) error {
 	repeat := fs.Int("repeat", 1, "ask every case this many times (Jev varies a little between calls)")
 	split := fs.String("split", "all", "cases to run: train, test (held out) or all")
 	summary := fs.Bool("summary", false, "print the summary only, without the per-case table")
-	check := fs.Bool("check", false, "fail unless the main scope passes the regression gate (exact accuracy, recall per tier, tier share vs label share, rank error)")
+	check := fs.Bool("check", false, "fail unless the main scope passes the regression gate (exact accuracy, recall per tier, tier share vs label share, rank error, no follow-up below its work, no request confirmed where none was made)")
 	fs.Parse(args)
 	if *catPath != "" {
 		// A whole catalog is evaluated alone; a partial file (a custom
@@ -300,11 +300,7 @@ func evalCmd(cfg *config.Config, args []string) error {
 		eval.Print(os.Stdout, env.Catalog, rs, sum)
 	}
 	if *check {
-		st := sum.Scopes[catalog.ScopeMain]
-		if st == nil {
-			return fmt.Errorf("check: no main-scope answers")
-		}
-		if fails := st.Check(eval.DefaultGate); len(fails) > 0 {
+		if fails := sum.Check(eval.DefaultGate); len(fails) > 0 {
 			return fmt.Errorf("regression gate failed:\n  %s", strings.Join(fails, "\n  "))
 		}
 		fmt.Println("regression gate: pass")

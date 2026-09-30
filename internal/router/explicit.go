@@ -97,12 +97,13 @@ func ExplicitCandidates(c *catalog.Catalog, prompt, model string) []Candidate {
 }
 
 // EffortTier is the main tier that runs effort on model; on a model
-// without efforts (Haiku), the default tier's model at that effort.
+// without efforts (Haiku) or without main tiers (one a work runs on, asked
+// for in words), the default tier's model at that effort.
 func EffortTier(c *catalog.Catalog, model, effort string) *catalog.Tier {
-	if m := c.Model(model); m == nil || len(m.Efforts) == 0 {
-		model = c.DefaultTier(catalog.ScopeMain).Model
+	if t := c.TierFor(catalog.ScopeMain, model, effort); t != nil {
+		return t
 	}
-	return c.TierFor(catalog.ScopeMain, model, effort)
+	return c.TierFor(catalog.ScopeMain, c.DefaultTier(catalog.ScopeMain).Model, effort)
 }
 
 // MainModel returns the catalog model a name designates (alias, catalog
@@ -141,6 +142,15 @@ func (rd *Reading) unconfirmedMore(cs []Candidate) {
 	}
 }
 
+// ExplicitThreshold is the yes-probability from which a request of kind
+// counts.
+func ExplicitThreshold(c *catalog.Catalog, kind string) float64 {
+	if kind == jev.ExplicitModel {
+		return c.Meta.ExplicitModelThreshold()
+	}
+	return c.Meta.ExplicitThreshold()
+}
+
 // asks is what a prompt explicitly asked for, as Jev confirmed it.
 type asks struct {
 	effort *catalog.Tier // an effort: the tier running it
@@ -153,15 +163,15 @@ type asks struct {
 func (a asks) any() bool { return a.effort != nil || a.more || a.on != "" || a.off || a.model != "" }
 
 // confirmed reads Jev's answers to the explicit-request questions: a request
-// counts from meta.explicit_threshold; of two efforts (or models) the more
-// likely wins, and so does the more likely of a mode asked and refused.
+// counts from meta.explicit_threshold, a model from the stricter
+// meta.explicit_model_threshold; of two efforts (or models) the more likely
+// wins, and so does the more likely of a mode asked and refused.
 func (e *Env) confirmed(req Request, rd Reading) asks {
 	var a asks
-	th := e.Catalog.Meta.ExplicitThreshold()
 	var effortP, modelP, onP, offP float64
 	for _, x := range req.Explicit {
 		p, ok := rd.explicit[x.ID()]
-		if !ok || p < th {
+		if !ok || p < ExplicitThreshold(e.Catalog, x.Kind) {
 			continue
 		}
 		switch {

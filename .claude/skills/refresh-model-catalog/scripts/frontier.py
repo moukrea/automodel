@@ -26,7 +26,7 @@ DEFAULT_MAIN_MIN_CONTEXT = 1_000_000
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 SCOPES = ["main", "subagent"]
 # Options of the relation question (mirrors catalog.Relations).
-RELATIONS = ["continue", "extend", "inform", "side_question", "wrap_up", "new_task"]
+RELATIONS = ["continue", "extend", "inform", "side_question", "resume", "wrap_up", "new_task"]
 META_REQUIRED = ["last_refresh", "benchmark", "benchmark_version", "jev_model",
                  "default_main_tier", "default_subagent_tier"]
 
@@ -230,11 +230,11 @@ def validate(cat: dict, today: dt.date, stale_days: int, dom: dict) -> list[dict
                 err(f"questions.relation: option {oid} is missing")
     expl = questions.get("explicit")
     if expl is not None:
-        for name, want in (("question", "{x}"), ("off_question", "{x}"),
+        for name, want in (("question", "{x}"), ("off_question", "{x}"), ("model_question", "{x}"),
                            ("effort", "{v}"), ("mode", "{v}"), ("model", "{v}")):
             if expl.get(name) and want not in expl[name]:
                 err(f"questions.explicit.{name} must contain {want}")
-    for name in ("relation_separate_threshold", "explicit_threshold"):
+    for name in ("relation_separate_threshold", "explicit_threshold", "explicit_model_threshold"):
         if not 0 <= meta.get(name, 0) <= 1:
             err(f"meta.{name} must be between 0 and 1")
     for name, present in (("meta.continues_threshold", bool(meta.get("continues_threshold"))),

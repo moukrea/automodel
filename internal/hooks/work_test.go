@@ -235,23 +235,158 @@ func TestPinsKeepTheMode(t *testing.T) {
 	}
 }
 
-// Another model asked for in words is pinned like a [model:x] tag.
-func TestModelAskedInWords(t *testing.T) {
+// A model asked for in words runs the work in progress, not the session:
+// follow-ups (and wrap-ups) stay on it at the effort routing picks, a
+// separate new task goes back to the tiers, and only the [model:x] tag
+// pins. Mentions, and requests Jev is not sure enough of (below
+// meta.explicit_model_threshold), change nothing.
+func TestWorkModel(t *testing.T) {
 	fj := &fakeJev{}
 	env := setup(t, fj)
-	workSession(t, env, "m1", "high", "", "high")
-	fj.answers = []fa{{tier: "medium", conf: 0.9, rel: "new_task", x: map[string]float64{"model_claude-sonnet-5-5": 0.92}}}
-	run(t, env, "decide", map[string]any{"session_id": "m1", "prompt": "utilise sonnet pour résumer les logs d'hier", "cwd": t.TempDir()})
-	s, _ := env.State.Load("m1")
-	if s.PinModel != "claude-sonnet-5-5" || s.Main.Model != "claude-sonnet-5-5" || s.Main.Effort != "medium" || s.PinSource != "prompt" {
-		t.Fatalf("model asked in words: pin %q, main %+v", s.PinModel, s.Main)
+	const sonnet = "claude-sonnet-5-5"
+	cwd := t.TempDir()
+	decide := func(sid, p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load(sid)
+		return s
 	}
-	// Only mentioned: routing goes on.
+	model := func(p float64) map[string]float64 { return map[string]float64{"model_" + sonnet: p} }
+	workSession(t, env, "m1", "high", "", "high")
+	s := decide("m1", "passe sur sonnet pour la suite des exports", fa{tier: "medium", conf: 0.9, rel: "extend", x: model(0.95)})
+	if s.Pin != "" || s.PinModel != "" || s.Main.Model != sonnet || s.Main.Tier != state.PinnedTier || s.Main.Effort != "high" || s.Work.Model != sonnet || s.Work.Tier != "high" || s.Work.Goal != workGoal {
+		t.Fatalf("model asked in words: pin %q/%q, main %+v, work %+v", s.Pin, s.PinModel, s.Main, s.Work)
+	}
+	if st := fj.last().State.(map[string]any); st["current"].(map[string]any)["tier"] != "high" {
+		t.Errorf("state before the switch = %v", st["current"])
+	}
+	// A follow-up stays on it, at the level routing picks (never below the
+	// work's): Jev is still asked, and sees the model in force.
+	s = decide("m1", "and handle the retry storm when the pool is exhausted too", fa{tier: "xhigh", conf: 0.9, rel: "extend"})
+	if s.Main.Model != sonnet || s.Main.Effort != "xhigh" || s.Work.Tier != "xhigh" || s.Work.Model != sonnet {
+		t.Fatalf("follow-up on the work's model: %+v, work %+v", s.Main, s.Work)
+	}
+	if cur := fj.last().State.(map[string]any)["current"].(map[string]any); cur["model"] != "Sonnet 5.5" || cur["tier"] != nil {
+		t.Errorf("current = %v", cur)
+	}
+	s = decide("m1", "is CI green yet?", fa{tier: "low", conf: 0.9, rel: "side_question"})
+	if s.Main.Model != sonnet || s.Main.Effort != "xhigh" {
+		t.Fatalf("side question: %+v", s.Main)
+	}
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; !d.Kept || d.KeepReason != "same model and effort" {
+		t.Errorf("unchanged decision on the work's model: %+v", d)
+	}
+	// A wrap-up gets its own level, still on the work's model.
+	s = decide("m1", "write the commit message", fa{tier: "low", conf: 0.95, rel: "wrap_up"})
+	if s.Main.Model != sonnet || s.Main.Effort != "low" || s.Work.Model != sonnet || s.Work.Tier != "xhigh" {
+		t.Fatalf("wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+	// [effort:x] on it pins that model at that effort.
+	s = decide("m1", "[effort:high] now the easy part", fa{tier: "low", conf: 0.9, rel: "extend"})
+	if s.PinModel != sonnet || s.Pin != "high" || s.Main.Model != sonnet || s.Main.Effort != "high" {
+		t.Fatalf("[effort:high] on the work's model: pin %q/%q, %+v", s.Pin, s.PinModel, s.Main)
+	}
+	decide("m1", "[effort:auto] ok", fa{tier: "high", conf: 0.9, rel: "extend"})
+	// A separate new task goes back to the tiers.
+	s = decide("m1", "now rename the config loader to settings", fa{tier: "medium", conf: 0.9, rel: "new_task"})
+	if s.Main.Model != "claude-opus-5-5" || s.Main.Tier != "medium" || s.Work.Model != "" || s.Work.Tier != "medium" {
+		t.Fatalf("new task: %+v, work %+v", s.Main, s.Work)
+	}
+
+	// Asking for the tiers' model goes back to routing on the tiers.
 	workSession(t, env, "m2", "high", "", "high")
-	fj.answers = []fa{{tier: "high", conf: 0.9, rel: "side_question", x: map[string]float64{"model_claude-sonnet-5-5": 0.05}}}
-	run(t, env, "decide", map[string]any{"session_id": "m2", "prompt": "is sonnet cheaper than opus for this?", "cwd": t.TempDir()})
-	if s, _ := env.State.Load("m2"); s.PinModel != "" || s.Main.Model != "claude-opus-5-5" {
-		t.Fatalf("a mention pinned the model: %+v", s.Main)
+	decide("m2", "use sonnet for this part", fa{tier: "high", conf: 0.9, rel: "extend", x: model(0.95)})
+	s = decide("m2", "ok switch back to opus for the rest", fa{tier: "high", conf: 0.9, rel: "extend", x: map[string]float64{"model_claude-opus-5-5": 0.96}})
+	if s.Main.Model != "claude-opus-5-5" || s.Main.Tier != "high" || s.Work.Model != "" {
+		t.Fatalf("back to opus: %+v, work %+v", s.Main, s.Work)
+	}
+	// Only mentioned, or not sure enough: routing goes on as before.
+	for i, c := range []struct {
+		prompt string
+		p      float64
+	}{{"is sonnet cheaper than opus for this?", 0.05}, {"sonnet 5.5 est sorti, tu en penses quoi ?", 0.85}} {
+		sid := fmt.Sprint("m3", i)
+		workSession(t, env, sid, "high", "", "high")
+		s = decide(sid, c.prompt, fa{tier: "high", conf: 0.9, rel: "side_question", x: model(c.p)})
+		if q := fj.last().Questions["explicit_model_"+sonnet]; q.Type != "noul" || !strings.Contains(q.Instructions, "run on the Sonnet 5.5 model itself") {
+			t.Errorf("model question = %+v", q)
+		}
+		if s.PinModel != "" || s.Main.Model != "claude-opus-5-5" || s.Work.Model != "" {
+			t.Errorf("%q moved the work to %s: %+v", c.prompt, s.Main.Model, s.Work)
+		}
+	}
+	// The [model:x] tag is still a lasting pin.
+	workSession(t, env, "m4", "high", "", "high")
+	s = decide("m4", "[model:sonnet] summarize yesterday's logs", fa{tier: "low", conf: 0.9, rel: "new_task"})
+	if s.PinModel != sonnet || s.Main.Model != sonnet {
+		t.Fatalf("[model:sonnet]: pin %q, %+v", s.PinModel, s.Main)
+	}
+}
+
+// A new task below the work in progress pauses it (a detour); a prompt
+// that goes back to it restores its tier, mode, model and goal. Another
+// new task, or two hours, drop it.
+func TestPausedWork(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	decide := func(sid, p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load(sid)
+		return s
+	}
+	offered := func() bool {
+		opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any)
+		_, ok := opts[catalog.RelationResume]
+		return ok
+	}
+	workSession(t, env, "d1", "xhigh", "ultracode", "xhigh")
+	env.State.Update("d1", func(s *state.Session) bool { s.Work.Model = "claude-sonnet-5-5"; return true })
+	s := decide("d1", "quick one: fix the typo in the README title", fa{tier: "low", conf: 0.95, rel: "new_task"})
+	if offered() {
+		t.Error("resume offered without paused work")
+	}
+	if p := s.Paused; s.Main.Tier != "low" || s.Main.Mode != "" || s.Work.Tier != "low" || p == nil || p.Tier != "xhigh" || p.Mode != "ultracode" || p.Model != "claude-sonnet-5-5" || p.Goal != workGoal {
+		t.Fatalf("detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	// A follow-up of the detour keeps it; the paused work waits, and Jev
+	// may relate the prompt to it.
+	s = decide("d1", "and the one in CONTRIBUTING too", fa{tier: "low", conf: 0.95, rel: "extend"})
+	st := fj.last().State.(map[string]any)
+	if pw, _ := st["paused_work"].(map[string]any); !offered() || pw["goal"] != workGoal || pw["level"] != "xhigh" || s.Paused == nil {
+		t.Fatalf("paused work in the state: %v (resume offered %v)", st["paused_work"], offered())
+	}
+	s = decide("d1", "ok, back to the pool race", fa{tier: "low", conf: 0.9, rel: "resume", relP: 0.9})
+	if s.Main.Tier != state.PinnedTier || s.Main.Model != "claude-sonnet-5-5" || s.Main.Effort != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil ||
+		s.Work.Tier != "xhigh" || s.Work.Mode != "ultracode" || s.Work.Model != "claude-sonnet-5-5" || s.Work.Goal != workGoal {
+		t.Fatalf("resume: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; d.Work != "resumed" || d.PausedTier != "xhigh" || !strings.HasPrefix(d.Hold, "back to the paused work (resume 0.90)") {
+		t.Errorf("ledger = %+v", d)
+	}
+
+	// Another new task drops the paused work, and so does time.
+	workSession(t, env, "d2", "xhigh", "", "xhigh")
+	decide("d2", "quick one: fix the typo in the README title", fa{tier: "low", conf: 0.95, rel: "new_task"})
+	if s = decide("d2", "now design how to shard the job queue", fa{tier: "xhigh", conf: 0.9, rel: "new_task"}); s.Paused != nil || s.Work.Tier != "xhigh" {
+		t.Fatalf("second new task: work %+v, paused %+v", s.Work, s.Paused)
+	}
+	workSession(t, env, "d3", "xhigh", "", "xhigh")
+	decide("d3", "quick one: fix the typo in the README title", fa{tier: "low", conf: 0.95, rel: "new_task"})
+	env.State.Update("d3", func(s *state.Session) bool { s.Paused.Since = time.Now().Add(-3 * time.Hour); return true })
+	s = decide("d3", "back to the pool race", fa{tier: "low", conf: 0.9, rel: "continue"})
+	if st := fj.last().State.(map[string]any); st["paused_work"] != nil || offered() || s.Paused != nil || s.Main.Tier != "low" {
+		t.Fatalf("expired paused work: %v, %+v, paused %+v", st["paused_work"], s.Main, s.Paused)
+	}
+	// A new task that doesn't go below the work pauses nothing.
+	workSession(t, env, "d4", "medium", "", "medium")
+	if s = decide("d4", "next: find why refunds are counted twice under load", fa{tier: "xhigh", conf: 0.9, rel: "new_task"}); s.Paused != nil {
+		t.Fatalf("harder new task paused %+v", s.Paused)
 	}
 }
 

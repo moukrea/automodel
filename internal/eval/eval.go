@@ -37,9 +37,11 @@ type Case struct {
 	Modes  map[string]bool `json:"modes"`
 	// Relation labels how the prompt relates to the work in progress (one
 	// of catalog.Relations); Explicit what it asks for in words. The work
-	// in progress is state.work_in_progress ({goal, level}), else the
-	// decision in state.current; state.mid_turn marks a prompt typed while
-	// Claude worked (it is not sent to Jev).
+	// in progress is state.work_in_progress ({goal, level, mode, model}),
+	// else the decision in state.current; state.paused_work the work a
+	// detour paused; Jev sees their goal and level, as the hooks send them.
+	// state.mid_turn marks a prompt typed while Claude worked (it is not
+	// sent to Jev).
 	Relation string    `json:"relation,omitempty"`
 	Explicit *Explicit `json:"explicit,omitempty"`
 	// Split is "train" (criteria and rules may be tuned on it) or "test"
@@ -57,8 +59,11 @@ type Explicit struct {
 	Model  string `json:"model,omitempty"`
 }
 
-// requests are the explicit-request IDs (effort_xhigh, mode_off...) a label asks for.
-func (x *Explicit) requests(cat *catalog.Catalog) []string {
+// requests are the explicit-request IDs (effort_xhigh, mode_off...) a label
+// asks for, on a session running model. Only another model a main session
+// can run on is a model request: Haiku is the asked tier's, and the
+// session's own model changes nothing.
+func (x *Explicit) requests(cat *catalog.Catalog, model string) []string {
 	if x == nil {
 		return nil
 	}
@@ -69,14 +74,50 @@ func (x *Explicit) requests(cat *catalog.Catalog) []string {
 	if x.Mode != "" {
 		out = append(out, jev.ExplicitMode+"_"+x.Mode)
 	}
-	if x.Model != "" {
-		key := router.MainModel(cat, x.Model)
-		if key == "" {
-			key = x.Model
-		}
+	if key := modelKey(cat, x.Model); key != "" && key != model {
 		out = append(out, jev.ExplicitModel+"_"+key)
 	}
 	return out
+}
+
+// sessionModel is the model a main case's session runs on: its current
+// tier's, else the model state.current names (a work asked to run on a
+// model outside the tiers), else the default tier's.
+func (c Case) sessionModel(cat *catalog.Catalog) string {
+	cs, _ := c.State["current"].(map[string]any)
+	tier, _ := cs["tier"].(string)
+	name, _ := cs["model"].(string)
+	if t := cat.Tier(catalog.ScopeMain, tier); t != nil {
+		return t.Model
+	}
+	if key := modelKey(cat, name); key != "" {
+		return key
+	}
+	return cat.DefaultTier(catalog.ScopeMain).Model
+}
+
+// modelKey is the catalog model a case names: its key, alias, API ID or label.
+func modelKey(cat *catalog.Catalog, name string) string {
+	if name == "" {
+		return ""
+	}
+	if key := router.MainModel(cat, strings.ToLower(name)); key != "" {
+		return key
+	}
+	for key, m := range cat.Models {
+		if strings.EqualFold(m.Label, name) {
+			return key
+		}
+	}
+	return ""
+}
+
+// holds reports a case whose decision must not fall below the work it
+// follows up: a follow-up relation (resume included), a prompt typed
+// mid-turn, a message from another session.
+func (c Case) holds() bool {
+	task, _ := c.State["task"].(string)
+	return FollowUp(c.Relation) || c.State["mid_turn"] == true || transcript.IsPeer(task)
 }
 
 // Filter keeps the cases of a split ("" or "all" keeps every case; a case
@@ -105,16 +146,20 @@ type Result struct {
 	// Decision is what the router does with the answer (policy, the work
 	// in progress, requests, modes); Kept says why a warm case stays on its
 	// current tier, Hold what set the tier besides the pick.
-	Decision string             `json:"decision"`
-	Mode     string             `json:"mode,omitempty"`
-	Kept     string             `json:"kept,omitempty"`
-	Hold     string             `json:"hold,omitempty"`
-	WorkTier string             `json:"work_tier,omitempty"`
-	Probs    map[string]float64 `json:"probs"`
-	Conf     float64            `json:"confidence"`
-	ModeP    map[string]float64 `json:"mode_p,omitempty"`
-	RelP     map[string]float64 `json:"relation_p,omitempty"`
-	RelConf  float64            `json:"relation_confidence,omitempty"`
+	// Model is the model the decision runs on besides the tier's (the
+	// work's, or one asked in words); PausedTier the paused work's tier.
+	Decision   string             `json:"decision"`
+	Mode       string             `json:"mode,omitempty"`
+	Model      string             `json:"model,omitempty"`
+	Kept       string             `json:"kept,omitempty"`
+	Hold       string             `json:"hold,omitempty"`
+	WorkTier   string             `json:"work_tier,omitempty"`
+	PausedTier string             `json:"paused_tier,omitempty"`
+	Probs      map[string]float64 `json:"probs"`
+	Conf       float64            `json:"confidence"`
+	ModeP      map[string]float64 `json:"mode_p,omitempty"`
+	RelP       map[string]float64 `json:"relation_p,omitempty"`
+	RelConf    float64            `json:"relation_confidence,omitempty"`
 	// ExplicitP is Jev's yes-probability per request a regex found in the
 	// prompt (effort_xhigh, mode_off...).
 	ExplicitP map[string]float64 `json:"explicit_p,omitempty"`
@@ -177,8 +222,8 @@ func Run(ctx context.Context, env *router.Env, cases []Case, format string, para
 }
 
 // setup is what the hooks would send and judge for a case: the state Jev
-// sees, and the router request (the work in progress, the prompt's
-// requests, mid-turn and peer flags).
+// sees, and the router request (the work in progress, the paused work, the
+// prompt's requests, mid-turn and peer flags).
 func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 	st := make(map[string]any, len(c.State))
 	for k, v := range c.State {
@@ -194,23 +239,19 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 	cs, _ := c.State["current"].(map[string]any)
 	curTier, _ := cs["tier"].(string)
 	curMode, _ := cs["mode"].(string)
-	model := cat.DefaultTier(catalog.ScopeMain).Model
-	if t := cat.Tier(c.Scope, curTier); t != nil {
-		model = t.Model
-	}
+	curEffort, _ := cs["effort"].(string)
+	model := c.sessionModel(cat)
 	if c.State["phase"] != "initial" {
 		// The work in progress: as labeled, else the decision in force
-		// (the hooks' legacy sessions do the same).
+		// (the hooks' legacy sessions do the same); the paused work.
 		if w, ok := c.State["work_in_progress"].(map[string]any); ok {
-			lv, _ := w["level"].(string)
-			goal, _ := w["goal"].(string)
-			mode, _ := w["mode"].(string)
-			if t := levelTier(cat, model, lv); t != nil {
-				req.Work = &state.Work{Tier: t.ID, Mode: mode, Goal: goal}
-			}
+			req.Work, st["work_in_progress"] = labeledWork(cat, model, w, curMode)
 		} else if cat.Tier(c.Scope, curTier) != nil {
 			req.Work = &state.Work{Tier: curTier, Mode: curMode}
 			st["work_in_progress"] = map[string]any{"level": router.WorkLevel(cat, curTier)}
+		}
+		if w, ok := c.State["paused_work"].(map[string]any); ok {
+			req.Paused, st["paused_work"] = labeledWork(cat, model, w, "")
 		}
 	}
 	req.Peer = transcript.IsPeer(task)
@@ -220,10 +261,34 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 			req.MinTier = t.ID
 		}
 	}
-	if cat.Tier(c.Scope, curTier) != nil && c.Warm {
-		req.Current = &state.Decision{Tier: curTier, Mode: curMode}
+	switch t := cat.Tier(c.Scope, curTier); {
+	case !c.Warm:
+	case t != nil:
+		req.Current = &state.Decision{Tier: curTier, Model: t.Model, Effort: t.Effort, Mode: curMode}
+	case model != cat.DefaultTier(catalog.ScopeMain).Model:
+		req.Current = &state.Decision{Tier: state.PinnedTier, Model: model, Effort: curEffort, Mode: curMode}
 	}
 	return st, req
+}
+
+// labeledWork reads a labeled work ({goal, level, mode, model}; mode
+// defaults to mode) and what the hooks would send Jev of it ({goal, level}).
+func labeledWork(cat *catalog.Catalog, model string, w map[string]any, mode string) (*state.Work, map[string]any) {
+	lv, _ := w["level"].(string)
+	goal, _ := w["goal"].(string)
+	wm, _ := w["model"].(string)
+	if m, ok := w["mode"].(string); ok {
+		mode = m
+	}
+	sent := map[string]any{"level": lv}
+	if goal != "" {
+		sent["goal"] = goal
+	}
+	t := levelTier(cat, model, lv)
+	if t == nil {
+		return nil, sent
+	}
+	return &state.Work{Tier: t.ID, Mode: mode, Model: modelKey(cat, wm), Goal: goal}, sent
 }
 
 // levelTier is the main tier a work_in_progress level names: a tier ID or
@@ -240,6 +305,7 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	r := Result{Case: c}
 	st, req := setup(cat, c)
 	ask := jev.Ask{Relation: req.Work != nil}
+	ask.Resume = ask.Relation && req.Paused != nil
 	for _, x := range req.Explicit {
 		ask.Explicit = append(ask.Explicit, x.Explicit)
 	}
@@ -294,6 +360,9 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	if req.Work != nil {
 		r.WorkTier = req.Work.Tier
 	}
+	if req.Paused != nil {
+		r.PausedTier = req.Paused.Tier
+	}
 	// A bare go-ahead carries the work in progress on without asking Jev
 	// (the hooks' fast path on warm turns, and after a compaction or a
 	// pause), unless it answers a proposal: then it is routed, not below
@@ -310,13 +379,13 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	}
 	// The router's verdict, with free switches (per-turn effort).
 	v := env.Judge(req, env.Read(ans, ids, c.Scope), cur, policy.RepoPolicy{}, policy.Params{Penalty: cat.Meta.UnderprovisionPenalty, Scale: 1})
-	r.Decision, r.Mode, r.Kept, r.Hold = v.Tier.ID, v.Mode, v.Keep, v.Hold
+	r.Decision, r.Mode, r.Model, r.Kept, r.Hold = v.Tier.ID, v.Mode, v.Model, v.Keep, v.Hold
 	if goAhead {
 		w := *req.Work
 		if req.MidTurn && cur != nil && cur.Rank > cat.Tier(c.Scope, w.Tier).Rank {
 			w.Tier, w.Mode = cur.ID, cmp.Or(w.Mode, req.Current.Mode) // a go-ahead typed mid-turn lowers nothing
 		}
-		r.Decision, r.Mode, r.Kept, r.Hold = w.Tier, w.Mode, "go-ahead", ""
+		r.Decision, r.Mode, r.Model, r.Kept, r.Hold = w.Tier, w.Mode, w.Model, "go-ahead", ""
 	}
 	return r
 }
@@ -342,10 +411,13 @@ type Summary struct {
 	ModeDecision map[string]*Count
 	// Relation scores the relation Choice, Explicit the requests confirmed
 	// in words; Follow counts the decisions below the work in progress on
-	// cases labeled as a follow-up of it.
+	// cases that hold it (a follow-up relation, mid-turn, a peer message);
+	// Model scores the model the decision runs on where the case asks for
+	// one, follows up work that runs on one, or the router moved it.
 	Relation RelationStats
 	Explicit ExplicitStats
 	Follow   Count
+	Model    Count
 	CostUSD  float64
 	// Scopes holds the per-scope tier metrics: exact accuracy, recall per
 	// tier, confusion matrices, tier share against label share, rank
@@ -468,12 +540,22 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 				}
 			}
 		}
-		// A follow-up below the work in progress, unless the user asked for
-		// that effort.
-		if w, d := cat.Tier(r.Scope, r.WorkTier), cat.Tier(r.Scope, r.Decision); FollowUp(r.Relation) && w != nil && d != nil && (r.Explicit == nil || r.Explicit.Effort == "") {
+		// A follow-up below the work it holds (the paused work when it goes
+		// back to it), unless the user asked for that effort.
+		work := r.WorkTier
+		if r.Relation == catalog.RelationResume && r.PausedTier != "" {
+			work = r.PausedTier
+		}
+		if w, d := cat.Tier(r.Scope, work), cat.Tier(r.Scope, r.Decision); r.holds() && w != nil && d != nil && (r.Explicit == nil || r.Explicit.Effort == "") {
 			s.Follow.N++
 			if d.Rank >= w.Rank {
 				s.Follow.Right++
+			}
+		}
+		if want := r.wantModel(cat); r.Scope == catalog.ScopeMain && r.Decision != "" && (want != "" || r.Model != "") {
+			s.Model.N++
+			if r.Model == want {
+				s.Model.Right++
 			}
 		}
 	}
@@ -552,6 +634,9 @@ func Print(w io.Writer, cat *catalog.Catalog, rs []Result, s Summary) {
 		if r.Mode != "" {
 			decision += " +" + r.Mode
 		}
+		if r.Model != "" {
+			decision += " on " + r.Model
+		}
 		if r.Kept != "" && r.Kept != "same tier" {
 			decision += " (kept: " + r.Kept + ")"
 		}
@@ -581,12 +666,20 @@ func PrintSummary(w io.Writer, s Summary) {
 		fmt.Fprintf(w, "mode %s on/off (router decision): %d/%d right\n", m, c.Right, c.N)
 	}
 	if f := s.Follow; f.N > 0 {
-		fmt.Fprintf(w, "follow-ups (continue, extend, inform, side_question): %d/%d decisions below the work in progress\n", f.N-f.Right, f.N)
+		fmt.Fprintf(w, "follow-ups (continue, extend, inform, side_question, resume, mid-turn, peer): %d/%d decisions below the work they hold\n", f.N-f.Right, f.N)
+	}
+	if m := s.Model; m.N > 0 {
+		fmt.Fprintf(w, "model the work runs on (router decision): %d/%d right\n", m.Right, m.N)
 	}
 	PrintRelation(w, s.Relation)
 	if e := s.Explicit; e.TP+e.FP+e.FN > 0 {
 		fmt.Fprintf(w, "explicit requests: precision %.0f%%, recall %.0f%% (%d confirmed right, %d false, %d missed)\n",
 			100*e.Precision(), 100*e.Recall(), e.TP, e.FP, e.FN)
+		for _, k := range ExplicitKinds {
+			if c := e.ByKind[k]; c != nil {
+				fmt.Fprintf(w, "  %s @%.2f: precision %.0f%%, recall %.0f%% (%d right, %d false, %d missed)\n", k, c.Threshold, 100*c.Precision(), 100*c.Recall(), c.TP, c.FP, c.FN)
+			}
+		}
 	}
 	for _, sc := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
 		if st := s.Scopes[sc]; st != nil {

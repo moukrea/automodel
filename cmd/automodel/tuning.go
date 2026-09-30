@@ -240,8 +240,8 @@ func tuningTemplate() ([]byte, error) {
 
 `)
 	m := c.Meta
-	fmt.Fprintf(&b, "# The policy: working below the right tier costs this many times the cost\n# gap; how likely a prompt must be separate work (a new task, a wrap-up)\n# to go below the work in progress; how sure Jev must be that a prompt\n# asks for an effort, a mode or a model in words.\n# [meta]\n# underprovision_penalty = %v\n# relation_separate_threshold = %v\n# explicit_threshold = %v\n\n",
-		m.UnderprovisionPenalty, m.RelationSeparateThreshold(), m.ExplicitThreshold())
+	fmt.Fprintf(&b, "# The policy: working below the right tier costs this many times the cost\n# gap; how likely a prompt must be separate work (a new task, a wrap-up)\n# to go below the work in progress; how sure Jev must be that a prompt\n# asks for an effort or a mode in words, and for a model.\n# [meta]\n# underprovision_penalty = %v\n# relation_separate_threshold = %v\n# explicit_threshold = %v\n# explicit_model_threshold = %v\n\n",
+		m.UnderprovisionPenalty, m.RelationSeparateThreshold(), m.ExplicitThreshold(), m.ExplicitModelThreshold())
 	for _, t := range c.ScoredTiers(catalog.ScopeMain) {
 		fmt.Fprintf(&b, "# What Jev reads for the main %s tier:\n# [tiers.main.%s]\n# criteria = %s\n\n", t.ID, t.ID, q(t.Criteria))
 		break

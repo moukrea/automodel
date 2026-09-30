@@ -74,11 +74,13 @@ func TestInvalidCatalog(t *testing.T) {
 		"tier main.one: model a has a 1000-token window; main tiers need at least 1000000",
 		"model d: context 400000 above 200000 needs long_context",
 		"meta.relation_separate_threshold must be between 0 and 1",
+		"meta.explicit_model_threshold must be between 0 and 1",
 		"questions.relation: question is required",
 		"questions.relation: unknown option detour",
 		"questions.relation.options.extend: what is required",
 		"questions.relation: option new_task is missing",
 		"questions.explicit.question must contain {x}",
+		"questions.explicit.model_question must contain {x}",
 	}
 	errs := is.Errors()
 	for _, w := range want {

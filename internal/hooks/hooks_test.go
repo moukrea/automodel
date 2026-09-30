@@ -124,9 +124,10 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "choice":
 			if id == jev.QRelation {
 				rel, p := cmp.Or(a.rel, catalog.RelationNewTask), cmp.Or(a.relP, 0.95)
+				opts, _ := q.Criteria.(map[string]any) // the options asked
 				probs := map[string]float64{}
-				for _, r := range catalog.Relations {
-					probs[r] = (1 - p) / float64(len(catalog.Relations)-1)
+				for r := range opts {
+					probs[r] = (1 - p) / float64(len(opts)-1)
 				}
 				probs[rel] = p
 				answers[id] = map[string]any{"type": "choice", "choice": rel, "confidence": p, "probabilities": probs}

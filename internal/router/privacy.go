@@ -80,7 +80,7 @@ func MetadataOnly(st map[string]any) map[string]any {
 			if r, ok := v.(map[string]any); ok {
 				out["repo"] = map[string]any{"languages": r["languages"], "files": r["files"]}
 			}
-		case "work_in_progress":
+		case "work_in_progress", "paused_work":
 			if w, ok := v.(map[string]any); ok {
 				m := map[string]any{"level": w["level"]}
 				if g, ok := w["goal"].(string); ok {

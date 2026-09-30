@@ -231,11 +231,17 @@ func workLine(d Decision, o WhyOptions) string {
 	}
 	switch d.Work {
 	case "new":
-		parts = append(parts, "starts a new work in progress")
+		if d.Pauses && d.WorkTier != "" {
+			parts = append(parts, "starts a new work in progress, pausing the one at "+d.WorkTier)
+		} else {
+			parts = append(parts, "starts a new work in progress")
+		}
 	case "set":
 		parts = append(parts, "sets the work in progress")
 	case "raised":
 		parts = append(parts, "raises the work in progress")
+	case "resumed":
+		parts = append(parts, "resumes the paused work ("+d.PausedTier+")")
 	}
 	return strings.Join(parts, " · ")
 }

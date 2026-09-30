@@ -7,6 +7,7 @@ benchmark_version = "v1"
 default_main_tier = "nope"
 default_subagent_tier = "sub"
 relation_separate_threshold = 1.5
+explicit_model_threshold = -0.1
 
 [models.a]
 label = "A"
@@ -71,3 +72,4 @@ what = "Something else."
 
 [questions.explicit]
 question = "Does it ask for more?"
+model_question = "Does it ask to run on another model?"

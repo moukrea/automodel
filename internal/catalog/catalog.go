@@ -59,14 +59,17 @@ type Noul struct {
 
 // Relations are the options of the relation question. new_task and
 // wrap_up are separate from the work in progress (the prompt gets its own
-// level); the others follow it up (they keep at least its level).
-var Relations = []string{RelationContinue, RelationExtend, RelationInform, RelationSideQuestion, RelationWrapUp, RelationNewTask}
+// level); the others follow it up (they keep at least its level), and
+// resume goes back to the work a detour paused (only offered when there is
+// one).
+var Relations = []string{RelationContinue, RelationExtend, RelationInform, RelationSideQuestion, RelationResume, RelationWrapUp, RelationNewTask}
 
 const (
 	RelationContinue     = "continue"
 	RelationExtend       = "extend"
 	RelationInform       = "inform"
 	RelationSideQuestion = "side_question"
+	RelationResume       = "resume"
 	RelationWrapUp       = "wrap_up"
 	RelationNewTask      = "new_task"
 )
@@ -101,10 +104,15 @@ type Explicit struct {
 	OffQuestion string `toml:"off_question" json:"off_question,omitempty"` // a mode the prompt may refuse
 	OffYes      string `toml:"off_yes" json:"off_yes,omitempty"`
 	OffNo       string `toml:"off_no" json:"off_no,omitempty"`
-	Effort      string `toml:"effort" json:"effort,omitempty"`
-	More        string `toml:"more" json:"more,omitempty"`
-	Mode        string `toml:"mode" json:"mode,omitempty"`
-	Model       string `toml:"model" json:"model,omitempty"`
+	// A model: the one the assistant itself runs on (models are talked
+	// about far more often than asked for).
+	ModelQuestion string `toml:"model_question" json:"model_question,omitempty"`
+	ModelYes      string `toml:"model_yes" json:"model_yes,omitempty"`
+	ModelNo       string `toml:"model_no" json:"model_no,omitempty"`
+	Effort        string `toml:"effort" json:"effort,omitempty"`
+	More          string `toml:"more" json:"more,omitempty"`
+	Mode          string `toml:"mode" json:"mode,omitempty"`
+	Model         string `toml:"model" json:"model,omitempty"`
 }
 
 // StateTuning sizes what the main session's state shows Jev.
@@ -154,8 +162,11 @@ type Meta struct {
 	// work up and keeps at least its level.
 	RelationSeparateP float64 `toml:"relation_separate_threshold" json:"relation_separate_threshold,omitempty"`
 	// ExplicitP is the yes-probability from which a request in the prompt's
-	// words (an effort, more thinking, a mode, a model) counts.
-	ExplicitP float64 `toml:"explicit_threshold" json:"explicit_threshold,omitempty"`
+	// words (an effort, more thinking, a mode) counts; ExplicitModelP the
+	// one for a model, stricter (a model is mentioned far more often than
+	// asked for, and a wrong one runs the whole work).
+	ExplicitP      float64 `toml:"explicit_threshold" json:"explicit_threshold,omitempty"`
+	ExplicitModelP float64 `toml:"explicit_model_threshold" json:"explicit_model_threshold,omitempty"`
 	// ContinuesThresholdP and InformsThresholdP belonged to the questions
 	// the relation question replaced: parsed, ignored.
 	ContinuesThresholdP float64 `toml:"continues_threshold" json:"continues_threshold,omitempty"`
@@ -187,6 +198,14 @@ func (m Meta) ExplicitThreshold() float64 {
 		return m.ExplicitP
 	}
 	return 0.8
+}
+
+// ExplicitModelThreshold returns meta.explicit_model_threshold or 0.9.
+func (m Meta) ExplicitModelThreshold() float64 {
+	if m.ExplicitModelP > 0 {
+		return m.ExplicitModelP
+	}
+	return 0.9
 }
 
 // MinMainContext returns meta.main_min_context or its default.

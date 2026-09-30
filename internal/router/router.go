@@ -106,12 +106,13 @@ type Request struct {
 	MinTier string
 
 	// Work is the session's work in progress (main scope; nil on a first
-	// prompt): a prompt that follows it up keeps at least its tier and its
-	// mode. MidTurn: the prompt came in while Claude was still working;
-	// Peer: another Claude session sent it. Neither lowers the effort.
-	// FollowUp is why the prompt follows the work up without asking Jev
-	// (a go-ahead to a proposal, a compaction).
-	Work          *state.Work
+	// prompt): a prompt that follows it up keeps at least its tier, its
+	// mode and its model. Paused is the work a detour set aside, which the
+	// prompt may go back to. MidTurn: the prompt came in while Claude was
+	// still working; Peer: another Claude session sent it. Neither lowers
+	// the effort. FollowUp is why the prompt follows the work up without
+	// asking Jev (a go-ahead to a proposal, a compaction).
+	Work, Paused  *state.Work
 	MidTurn, Peer bool
 	FollowUp      string
 	// Explicit are the requests the prompt's words may make, for Jev to
@@ -137,9 +138,6 @@ type Outcome struct {
 	TimedOut bool
 	// Work is what becomes of the session's work in progress (nil: nothing).
 	Work *WorkUpdate
-	// Model is another model the prompt asked for in words: the hook pins it
-	// like a [model:X] tag.
-	Model string
 }
 
 // Decide asks Jev (and the shadow model, if configured) and applies the
@@ -151,6 +149,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	f := e.Cfg.Features
 	rp := policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile)
 	ask := jev.Ask{Relation: req.Work != nil && req.FollowUp == ""}
+	ask.Resume = ask.Relation && req.Paused != nil
 	// A repository can only make privacy stricter, never looser. Without
 	// the prompt's text Jev can't confirm what it asks for.
 	metadata := rp.Privacy == PrivacyMetadata || e.Cfg.Privacy == PrivacyMetadata
@@ -178,6 +177,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	if req.Work != nil {
 		rec.WorkTier = req.Work.Tier
+	}
+	if req.Paused != nil {
+		rec.PausedTier = req.Paused.Tier
 	}
 	params := policy.Params{Penalty: c.Meta.UnderprovisionPenalty, Scale: req.Scale}
 	if params.Penalty <= 0 {
@@ -264,6 +266,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		rec.Trigger, rec.Cause = "fallback", req.Trigger
 		log.Printf("jev %s/%s: %v (default tier %s)", req.Scope, req.Trigger, err, tier.ID)
 		e.fill(dec, tier, mode)
+		if req.Work != nil {
+			e.onModel(dec, req.Work.Model) // the work goes on on its model
+		}
 		rec.Chosen, rec.Model, rec.Effort, rec.Mode = dec.Tier, dec.APIID, dec.Effort, dec.Mode
 		if err := e.Ledger.Append(rec); err != nil {
 			log.Printf("ledger: %v", err)
@@ -293,14 +298,15 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	v, rec.BudgetCap = e.capBudget(req, v, cur)
 	rec.Hold = v.Hold
 	if v.Work != nil {
-		rec.Work = v.Work.Kind
+		rec.Work, rec.Pauses = v.Work.Kind, v.Work.Pause
 	}
 	if v.Pick != nil {
 		rec.Loss, rec.GainUSD, rec.SwitchUSD = v.Pick.Loss, v.Pick.Gain, v.Pick.SwitchCost
 	}
-	// Leaving a model outside the tiers (a released [model:x] pin): there is
-	// nothing to stay on, the move is the user's call, but its cost is real.
-	if cur == nil && req.Current != nil && req.SwitchCost != nil {
+	// Leaving a model outside the tiers (a released [model:x] pin, the end
+	// of the work a model was asked for): there is nothing to stay on, the
+	// move is the user's call, but its cost is real.
+	if cur == nil && req.Current != nil && req.SwitchCost != nil && v.Model != req.Current.Model {
 		rec.SwitchUSD = req.SwitchCost(v.Tier)
 	}
 	if shadow != nil && shAnswer != nil {
@@ -309,18 +315,23 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		shadow.Choice, shadow.Confidence, shadow.Probs, shadow.Chosen = sd.top, sd.conf, sd.probs, sv.Tier.ID
 	}
 	rec.Shadow = shadow
+	e.fill(dec, v.Tier, v.Mode)
+	e.onModel(dec, v.Model)
+	// On the work's model the tier is only a level: the same model, effort
+	// and mode is no change.
+	if cur := req.Current; v.Keep == "" && v.Model != "" && req.Warm && cur != nil && dec.Model == cur.Model && dec.Effort == cur.Effort && dec.Mode == cur.Mode {
+		v.Keep = "same model and effort"
+	}
 	if v.Keep != "" {
 		d, out := keep(v.Keep)
-		out.Work, out.Model = v.Work, v.Model
+		out.Work = v.Work
 		return d, out
 	}
-	tier, mode := v.Tier, v.Mode
-	e.fill(dec, tier, mode)
 	rec.Chosen, rec.Model, rec.Effort, rec.Mode = dec.Tier, dec.APIID, dec.Effort, dec.Mode
 	if err := e.Ledger.Append(rec); err != nil {
 		log.Printf("ledger: %v", err)
 	}
-	return dec, Outcome{Changed: true, Work: v.Work, Model: v.Model}
+	return dec, Outcome{Changed: true, Work: v.Work}
 }
 
 // noteJev records on the session why Jev couldn't answer (shown by the
@@ -373,7 +384,9 @@ type Verdict struct {
 	Hold string
 	// Work is what becomes of the work in progress (nil: unchanged).
 	Work *WorkUpdate
-	// Model is another model the prompt asked for (the hook pins it).
+	// Model is the model the decision runs on when it isn't the tier's:
+	// one the prompt asked for in words, else the one the work it follows
+	// up runs on ("": the tier's).
 	Model string
 }
 
@@ -381,8 +394,9 @@ type Verdict struct {
 // prompt asks for in words (up or down); the thinking floors (ultrathink,
 // "think harder"); the prompt's relation to the work in progress, where a
 // follow-up keeps at least the work's tier and separate work gets its own
-// level; the repo's bounds; the modes; and on warm turns the confidence a
-// downgrade that rebuilds the cache needs.
+// level, and going back to paused work brings its tier back; the repo's
+// bounds; the modes; the model the work runs on; and on warm turns the
+// confidence a downgrade that rebuilds the cache needs.
 func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPolicy, params policy.Params) Verdict {
 	c, f := e.Catalog, e.Cfg.Features
 	tier, pk := e.pick(req, rd, cur, params)
@@ -390,18 +404,25 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		tier = a
 	}
 	x := e.confirmed(req, rd)
-	var work *catalog.Tier
-	if req.Work != nil {
-		work = c.Tier(req.Scope, req.Work.Tier)
+	// The work the prompt follows up: the work in progress, or the paused
+	// work it goes back to.
+	followed := req.Work
+	back := e.resumes(req, rd)
+	if back {
+		followed = req.Paused
 	}
-	v := Verdict{Pick: pk, Model: x.model}
+	var work *catalog.Tier
+	if followed != nil {
+		work = c.Tier(req.Scope, followed.Tier)
+	}
+	v := Verdict{Pick: pk}
 	var why []string
 	hold, reason := e.holdAt(req, rd, work, cur)
 	// The mode a follow-up keeps on: the work's, and on a mid-turn prompt
 	// or a peer message the one the turn runs with.
 	keepMode := ""
 	if hold != nil {
-		keepMode = req.Work.Mode
+		keepMode = followed.Mode
 		if keepMode == "" && (req.MidTurn || req.Peer) && req.Warm && req.Current != nil {
 			keepMode = req.Current.Mode
 		}
@@ -448,6 +469,17 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	case x.off:
 		why = append(why, "explicit: no "+cmp.Or(e.inForceMode(req), "mode"))
 	}
+	// The model: one asked for in words, else the work's as long as the
+	// prompt doesn't start separate new work (a wrap-up stays on it too).
+	top, _ := rd.relationTop()
+	fresh := work == nil || (hold == nil && top == catalog.RelationNewTask)
+	if !fresh {
+		v.Model = followed.Model
+	}
+	if x.model != "" {
+		v.Model = e.offTiers(x.model)
+		why = append(why, "explicit model "+x.model)
+	}
 	v.Tier, v.Mode, v.Hold = tier, mode, strings.Join(why, "; ")
 
 	if cur != nil {
@@ -460,7 +492,7 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		// turn effort) and what the prompt asked for need no confidence.
 		free := req.SwitchCost == nil || req.SwitchCost(tier) <= 0
 		switch {
-		case tier.ID == cur.ID && mode == curMode:
+		case tier.ID == cur.ID && mode == curMode && (v.Model == "" || v.Model == req.Current.Model):
 			v.Keep = "same tier"
 		case free || x.any() || req.MinTier != "":
 		case tier.Rank < cur.Rank && rd.conf < f.WarmMinConfidence:
@@ -471,28 +503,40 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		}
 	}
 	if req.Scope == catalog.ScopeMain {
-		v.Work = e.workUpdate(req, rd, v, work, hold, x)
+		v.Work = workUpdate(v, followed, work, hold, x, fresh, back)
 	}
 	return v
 }
 
 // workUpdate is what a verdict makes of the work in progress: separate new
-// work (or a first prompt) starts it, an effort or a mode asked in words
-// sets it, a follow-up that needs more raises it; a wrap-up, a side
-// question or a plain follow-up leave it as it is.
-func (e *Env) workUpdate(req Request, rd Reading, v Verdict, work, hold *catalog.Tier, x asks) *WorkUpdate {
-	top, _ := rd.relationTop()
+// work (or a first prompt) starts it, pausing the work in progress when
+// the new work is below it (a detour); going back to the paused work
+// restores it; an effort, a mode or a model asked in words sets it; a
+// follow-up that needs more raises it; a wrap-up, a side question or a
+// plain follow-up leave it as it is.
+func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x asks, fresh, back bool) *WorkUpdate {
 	switch {
-	case work == nil || (hold == nil && top == catalog.RelationNewTask):
-		return &WorkUpdate{Kind: WorkNew, Tier: v.Tier.ID, Mode: v.Mode}
+	case fresh:
+		u := &WorkUpdate{Kind: WorkNew, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
+		u.Pause = work != nil && (v.Tier.Rank < work.Rank || (v.Tier.Rank == work.Rank && followed.Mode != "" && v.Mode == ""))
+		return u
+	case back:
+		return &WorkUpdate{Kind: WorkResumed, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
 	case x.effort != nil || x.on != "" || x.off:
-		return &WorkUpdate{Kind: WorkSet, Tier: v.Tier.ID, Mode: v.Mode}
-	case hold != nil && (v.Tier.Rank > work.Rank || (v.Mode != "" && v.Mode != req.Work.Mode)):
-		mode := req.Work.Mode
+		return &WorkUpdate{Kind: WorkSet, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
+	}
+	tier, mode := work, followed.Mode
+	if hold != nil {
+		tier = higher(work, v.Tier)
 		if v.Mode != "" {
 			mode = v.Mode
 		}
-		return &WorkUpdate{Kind: WorkRaised, Tier: higher(work, v.Tier).ID, Mode: mode}
+	}
+	switch {
+	case v.Model != followed.Model:
+		return &WorkUpdate{Kind: WorkSet, Tier: tier.ID, Mode: mode, Model: v.Model}
+	case hold != nil && (v.Tier.Rank > work.Rank || (v.Mode != "" && v.Mode != followed.Mode)):
+		return &WorkUpdate{Kind: WorkRaised, Tier: tier.ID, Mode: mode, Model: v.Model}
 	}
 	return nil
 }
@@ -534,7 +578,7 @@ type Reading struct {
 	conf     float64
 	top      string
 	modeP    map[string]float64
-	relation map[string]float64 // the prompt's relation to the work in progress
+	relation map[string]float64 // the prompt's relation to the work in progress (and to paused work)
 	explicit map[string]float64 // explicit requests: yes-probability by question ID
 	asked    map[string]float64 // asked tiers: Jev's yes-probability
 }
@@ -740,8 +784,13 @@ func (e *Env) Carry(sessionID string, cur *state.Decision, work *state.Work, tri
 	if work != nil {
 		// On a warm cache a go-ahead doesn't move to another model: that
 		// rebuilds the whole context (the asked Haiku tier, see asked).
-		if t := e.Catalog.Tier(catalog.ScopeMain, work.Tier); t != nil && (trigger != "warm" || t.Model == cur.Model) {
-			e.fill(&d, t, work.Mode)
+		if t := e.Catalog.Tier(catalog.ScopeMain, work.Tier); t != nil {
+			w := d
+			e.fill(&w, t, work.Mode)
+			e.onModel(&w, work.Model)
+			if trigger != "warm" || w.Model == cur.Model {
+				d = w
+			}
 		}
 	}
 	same := d.Tier == cur.Tier && d.Model == cur.Model && d.Effort == cur.Effort && d.Mode == cur.Mode
@@ -780,9 +829,45 @@ func (e *Env) fill(d *state.Decision, t *catalog.Tier, mode string) {
 	d.Tier, d.Model, d.APIID, d.Effort, d.Workflows, d.Mode = t.ID, model, m.APIID, effort, wf, mode
 }
 
+// onModel moves a decision onto the model its work runs on, when that
+// isn't the tier's (a model asked for in words; "" leaves it): at the
+// tier's effort if the model has it, else the model's default. The tier
+// becomes the model's tier at that effort, or state.PinnedTier for a model
+// outside the tiers (the proxy then sends its model and effort as they
+// are). The mode stays unless the effort is below its own.
+func (e *Env) onModel(d *state.Decision, model string) {
+	c := e.Catalog
+	m := c.Model(model)
+	if m == nil || model == d.Model {
+		return
+	}
+	effort := d.Effort
+	if !m.SupportsEffort(effort) {
+		effort = m.DefaultEffort
+	}
+	d.Tier = state.PinnedTier
+	if t := c.TierFor(catalog.ScopeMain, model, effort); t != nil {
+		d.Tier = t.ID
+	}
+	d.Model, d.APIID, d.Effort = model, m.APIID, effort
+	if !c.KeepsMode(d.Mode, effort) {
+		d.Mode, d.Workflows = "", false
+	}
+}
+
+// offTiers is the model a work asked to run on in words runs on besides
+// the tiers': "" for the tiers' own model (asking for it goes back to
+// routing on the tiers).
+func (e *Env) offTiers(model string) string {
+	if model == e.Catalog.DefaultTier(catalog.ScopeMain).Model {
+		return ""
+	}
+	return model
+}
+
 // Budget is the token budget for the state, after the questions.
 func (e *Env) Budget(scope string) int {
-	qs, _ := jev.Questions(e.Catalog, scope, jev.Ask{Relation: true})
+	qs, _ := jev.Questions(e.Catalog, scope, jev.Ask{Relation: true, Resume: true})
 	return e.Cfg.StateBudgetTokens - tokens.Estimate(mustJSON(qs)) - 200
 }
 

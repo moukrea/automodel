@@ -55,8 +55,16 @@ func TestQuestions(t *testing.T) {
 		Examples []string `json:"examples"`
 	}
 	json.Unmarshal(b, &opts)
-	if rel.Type != "choice" || len(opts) != len(catalog.Relations) || opts["side_question"].What == "" || len(opts["extend"].Examples) == 0 {
+	if rel.Type != "choice" || len(opts) != len(catalog.Relations)-1 || opts["side_question"].What == "" || len(opts["extend"].Examples) == 0 {
 		t.Fatalf("relation = %s", b)
+	}
+	// Going back to paused work is only an option once there is some.
+	if _, ok := opts[catalog.RelationResume]; ok {
+		t.Errorf("resume offered without paused work: %s", b)
+	}
+	qs2, _ := Questions(c, catalog.ScopeMain, Ask{Relation: true, Resume: true})
+	if o := qs2[QRelation].Criteria.(map[string]*catalog.Option)[catalog.RelationResume]; o == nil || !strings.Contains(o.What, "`paused_work.goal`") {
+		t.Errorf("resume option = %+v", o)
 	}
 	for _, path := range []string{"`task`", "`work_in_progress.goal`", "`recent_prompts`", "`last_assistant`"} {
 		if !strings.Contains(rel.Instructions, path) {
@@ -67,7 +75,7 @@ func TestQuestions(t *testing.T) {
 		"explicit_effort_xhigh":            "to use the xhigh reasoning effort for this work?",
 		"explicit_effort_more":             "to use more thinking than so far",
 		"explicit_mode_off":                "to stop using ultracode, several agents working in parallel",
-		"explicit_model_claude-sonnet-5-5": "to use the Sonnet 5.5 model for this work?",
+		"explicit_model_claude-sonnet-5-5": "ask the assistant to run on the Sonnet 5.5 model itself for this work",
 	} {
 		q := qs[id]
 		crit, _ := q.Criteria.(map[string]string)
