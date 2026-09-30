@@ -1239,8 +1239,8 @@ criteria = "Open-ended hardest problems needing the deepest reasoning, where cos
 # tiers' own questions: the Score question's instructions per scope, the
 # relation of a main-session prompt to the work in progress, and the
 # yes/no that confirms each request a prompt's words may make. A wording
-# change is kept only if it wins on the train split and holds on the
-# held-out split (.claude/skills/refresh-model-catalog/references/routing-eval.md).
+# change is kept only if it wins on the train split and holds on a
+# held-out set (.claude/skills/refresh-model-catalog/references/routing-eval.md).
 # [questions.continues] and [questions.informs], the warm-turn questions
 # the relation question replaced, are still read and ignored.
 

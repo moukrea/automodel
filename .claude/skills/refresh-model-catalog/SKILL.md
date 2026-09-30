@@ -147,7 +147,7 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      the level numbers or the neighbours, so "harder than the previous level"
      or "levels are ordered" means nothing to it. How to write and test them:
      `references/routing-eval.md`. A wording change is kept only if it wins
-     on the train split *and* holds on the held-out split.
+     on the train split *and* holds on a held-out set.
    - Tiers without a measurement need a `cost` (relative cost per task, same
      unit as `cost_per_task`), otherwise it is interpolated (warning).
    - An **asked tier** (`question` + `criteria` as its yes side + `no` +
@@ -169,30 +169,35 @@ proposed copy. In a scheduled/unattended run, stop at the report.
    - Build a dev binary and run the eval with an isolated config (never the
      real `~/.config/automodel`: the eval saves the evaluated catalog as the
      last-good copy of its state dir):
-     `automodel eval --catalog catalog.proposed.toml --repeat 3 --summary`,
-     once with `--split train` and once with `--split test`, and the same
-     for the current `catalog.toml`. Jev varies a little between calls:
-     compare runs of 3 repeats, never single runs.
+     `automodel eval --catalog catalog.proposed.toml --split train --repeat 3
+     --summary`, and the same for the current `catalog.toml`. Jev varies a
+     little between calls: compare runs of 3 repeats, never single runs.
    - **Read the metrics, not just "acceptable".** For each scope: exact
      accuracy and rank error of Jev's top level *and* of the router's
      decision (the gap between the two is the policy's doing); recall per
      tier; the confusion matrices (a tier skipped, e.g. low → high with
      medium empty, is the collapse); **decision share vs label share** per
      tier; ECE of the top probability.
-   - **Regression gate** (mandatory):
-     `automodel eval --catalog catalog.proposed.toml --split test --repeat 3 --summary --check`
-     must print "regression gate: pass" (decision exact ≥ 88%, recall ≥ 80%
-     per tier, each tier's decision share within 6 points of its label
-     share, rank error ≤ 0.12, no follow-up decided below its label or
-     below the work it holds, and no effort, mode or model request
-     confirmed on a prompt that doesn't make one; run the train split with
-     `--check` too for the last two). A proposal that fails is not proposed. If
-     a new Jev version or tier set makes a gate unreachable, report it with
-     the tables; changing `eval.DefaultGate` needs the user's approval.
-   - Tune on `--split train` only. The `test` cases are held out: look at
-     their aggregate numbers, never at their per-case rows while tuning, or
-     the gate stops meaning anything. New cases go to train unless you add a
-     batch big enough to split (alternate train/test within each label).
+   - **Regression gate** (mandatory): `automodel eval --catalog
+     catalog.proposed.toml --split train --repeat 3 --summary --check`
+     while tuning, then once on a held-out set, must print "regression
+     gate: pass" (decision exact ≥ 88%, recall ≥ 80% per tier, each tier's
+     decision share within 6 points of its label share, rank error ≤ 0.12,
+     the ultracode on/off decision right on 80% of the cases labeled on and
+     of those labeled off, no follow-up decided below every acceptable tier
+     or below the work it holds, and no effort, mode or model request
+     confirmed on a prompt that doesn't make one). A proposal that fails is
+     not proposed. If a new Jev version or tier set makes a gate
+     unreachable, report it with the tables; changing `eval.DefaultGate`
+     needs the user's approval.
+   - Tune on `--split train` only. A held-out set is one nobody has read
+     while tuning: never look at its per-case rows, run it once at the end.
+     The 2026-09-30 `test` split is no longer held out (its cases were read
+     while tuning warm routing v2): held-out numbers need a fresh set
+     written apart. New cases go to train unless you add a batch big
+     enough to split; a conversation (cases sharing a work goal, a paused
+     work, the last assistant message or the recent prompts) stays in one
+     split, with labels balanced across splits.
    - Thresholds come from the eval, never from intuition: a mode's
      `threshold`, an asked tier's `threshold`, `meta.explicit_threshold`
      (effort and mode requests) and `meta.explicit_model_threshold` (model
@@ -203,8 +208,10 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      Compare thresholds and rules on the same answers with `automodel eval
      --catalog <variant> --answers <saved --json run>` (no Jev call, no
      noise); wording changes need live runs of 3 repeats. `meta.relation_separate_threshold` (default 0.6) is
-     where P(new_task) + P(wrap_up) separates the separate cases from the
-     follow-ups (no follow-up below the label: the gate checks it).
+     where P(new_task) + P(wrap_up) + P(aside) separates the separate
+     cases from the follow-ups (no follow-up below the label: the gate
+     checks it), and resumes need it too. `explicit_threshold` stays at 0.8
+     or more and `explicit_model_threshold` at 0.85 or more.
      `features.warm_min_confidence`
      (costly switches only) sits where exact accuracy by confidence bucket
      jumps (0.8 for jev-1.13: 39–46% below, 83%+ above).

@@ -6,7 +6,9 @@ dropped the effort in the middle of the work, and requests written in prose
 owner also required that *talking* about a model, an effort or ultracode
 never changes anything. This document gives the evidence, the design, the
 evaluation before and after, the thresholds and what is still open. All
-runs use `typesafe/jev-1.13`, 3 calls per case. Every prompt quoted here is
+runs use `typesafe/jev-1.13`, 3 calls per case. Sections 1 to 6 describe
+the first round; section 7 the review that followed, its fixes and the
+retune, and it corrects §4: the first round's test split was not held out. Every prompt quoted here is
 an invented paraphrase; no real prompt is reproduced.
 
 ## 1. The problem
@@ -171,7 +173,11 @@ thresholds below were compared.
 
 "Before" is the v2 router as first implemented (untuned wording, thresholds
 0.6 / 0.8, a model asked in words pinned) on the same 438 cases. Test
-numbers are aggregates only; no per-case test row was read while tuning.
+numbers are aggregates only. **Correction (§7):** they are no held-out
+evidence: the split was per prompt, so 43 of the 110 relation-labelled test
+cases shared a conversation with train cases, and the test relation
+confusion (wrap-ups read as side questions) was read before six train cases
+and three wording changes aimed at it.
 
 **Train (253 cases, 3 runs)**
 
@@ -191,7 +197,7 @@ as extend (both hold, no effect on the tier); new_task 52, 9 read as
 extend, 2 as continue; wrap_up 51, 3 read as new_task; side_question 39/39;
 resume 3/3; inform 21, 9 read as extend.
 
-**Held out (185 cases, two runs of 3, identical aggregates)**
+**Test split (185 cases, two runs of 3, identical aggregates; not held out, see §7)**
 
 | main scope | before | after |
 |---|---:|---:|
@@ -209,7 +215,7 @@ resume 3/3; inform 21, 9 read as extend.
     session's own model and for Haiku, which the router never asks about;
     the mode requests it missed are real misses (0.60–0.73 < 0.8).
 
-**Regression gate** (`--split test --repeat 3 --check`, run twice): the two
+**Regression gate** (`--split test --repeat 3 --check`, run twice; the test split was not held out): the two
 owner rules pass on both splits: no effort, mode or model request confirmed
 on a prompt that makes none, and no follow-up decided below its work. The
 gate still fails on decision exact (87.4% < 88%), rank error (0.19 > 0.12),
@@ -232,6 +238,7 @@ untuned router failed the same four, further off. What remains:
 ## 5. Thresholds and why
 
 All from the train split; the same answers were re-judged at each value.
+Superseded by §7 (0.55 / 0.8 / 0.85 on the conversation split).
 
 - **`relation_separate_threshold` = 0.5** (was 0.6). Follow-ups put at most
   0.42 on new_task + wrap_up. On the same answers, 0.45 and 0.5 give
@@ -275,6 +282,10 @@ first wording, are held.
 
 ## 6. Open limits
 
+As of the first round; §7 says which the review closed (the live check was
+run, questions unrelated to the work are now asides, a small new task no
+longer inherits ultracode through the turn-off hysteresis).
+
 - The live check in real Claude Code sessions (spec §8) is not done yet.
 - Recaps of finished work read as side questions (held at the work) on the
   held-out split; train has only one of them. Grow train from real
@@ -293,3 +304,145 @@ first wording, are held.
   (news, comparisons, benchmark talk, routing questions, a subagent's model,
   refusals), none ever confirmed.
 - Messages marked `[jaunt bridge]` are not recognised as peer messages.
+
+## 7. Round 2: the review, the fixes, the retune (2026-09-30)
+
+Four reviews followed the first round: the eval, the routing code, its
+robustness, and live Claude Code sessions on an isolated harness (22 of 25
+live checks passed; the applied effort matched the decision on all 68
+routed requests).
+
+### What they found
+
+- **A mention confirmed as a request, the critical one.** With the xhigh
+  deadlock hunt pending, "set it to low in the tuning file for the
+  subagents, then keep going" and "use low for the explore agents in the
+  workflow" got 0.84–0.89 on the effort question: the decision *and the
+  work in progress* went to low, and every later go-ahead restored low.
+  The benchmark had no negative low, medium, "more" or mode-off candidate,
+  so it reported 100% precision.
+- **The gate could not pass.** The follow-up check compared the decision to
+  the exact label: a bare "continue" after a compaction, labelled max on
+  xhigh work with xhigh acceptable, is always decided at the work's xhigh.
+- **The test split was not held out** (the correction in §4).
+- **Detours.** After "quick one: fix the typo", a bare "ok, continue" took
+  the fast path and went on at the typo's level with the mode off; the
+  paused migration was never resumed.
+- An effort asked in words turned ultracode off and kept Jev from turning
+  it on; an effort asked for a commit message lowered the work; a small new
+  task in an ultracode session inherited the mode as its own work; the
+  regex missed "set the effort to medium", "mets l'effort à low",
+  "effort élevé", "skip ultracode", "in parallel"; resume needed no minimum
+  probability; a Jev failure ignored the budget cap and `disable_modes`;
+  leaving a model asked for in words skipped switch costs and the
+  confidence gate; a prompt quoting the peer phrase was taken for a peer
+  message; a remark typed early in a turn was not seen as mid-turn (Claude
+  Code writes the turn's entries seconds later); unrelated trivial
+  questions were always held at the work's level.
+
+### The fixes
+
+| area | change |
+|---|---|
+| explicit questions | about the effort, mode or model the assistant *itself* uses for its own work (this prompt or the rest of the work); "no" names subagents, workflow stages, configs, tunings, quoted prompts, test strings |
+| thresholds | `explicit_threshold` 0.8, `explicit_model_threshold` 0.85; an effort below the work needs 0.9 |
+| requests and the work | an effort or mode asked for a wrap-up, a side question or an aside is for that turn; an effort keeps the work's mode, and Jev may turn one on unless it would raise that effort |
+| regex pre-filter | levels near effort / niveau / reasoning, French level words, English mode words; any mode word asks the mode-off question too |
+| metadata privacy | only "think harder / more / deeply", "réfléchis bien / plus / davantage / en profondeur", "prends ton temps" count without Jev, for that turn only |
+| relations | new `aside` (unrelated: its own level, that turn only); `side_question` about the work or how the session runs it |
+| done work | a wrap-up marks the work done; a question or a fact then gets its own level; a go-ahead or an addition reopens it |
+| detours | a go-ahead carries the higher of the work and the paused work, and resumes the paused one; so does a go-ahead to a proposal; resume needs `relation_separate_threshold`; a smaller task during a detour keeps the paused work |
+| modes | no turn-off hysteresis for new tasks (kept for follow-ups and wrap-ups) |
+| mid-turn, peers | a real prompt starts a turn unless it is the one being decided; the peer phrase only at the start |
+| costs and caps | fallbacks and go-aheads within the budget cap, the repo's bounds and `disable_modes`; switch costs on the model the decision ends up on; leaving a model asked in words needs `warm_min_confidence`; `/effort` on it drops a mode above the effort; the report counts carried go-aheads as switches |
+| eval | uses the hooks' go-ahead path (`router.Carried`); follow-ups checked against the lowest acceptable tier; ultracode on/off in the gate |
+
+### The benchmark
+
+- Relabelled: the four "continue" cases labelled max after xhigh work want
+  xhigh (max acceptable); fixing one finding of an audit that asked for no
+  fixes is a new task; unrelated questions while work is pending are
+  asides; questions about how the session runs (why it stayed at xhigh,
+  the status line) are side questions; 17 cases where the rubric is
+  ambiguous (a small mechanical follow-up, implementing an agreed design)
+  have their old lower tiers back in `accept`; 14 cases after a wrap-up
+  mark the work done.
+- 87 new cases, all invented: efforts, modes and models talked about or
+  set for something else (subagents, workflow stages, tenant configs,
+  tuning files, fixtures, quoted prompts, news, questions about the
+  routing), Opus mentioned on sessions running Sonnet, asides against
+  side questions, done work, detours ended by a go-ahead, prompts typed
+  early in a turn, and the requests the wider regex finds, in English and
+  French. Some come from the reviews' probes.
+- Re-split by conversation: cases sharing a work goal, a paused work, the
+  last assistant message or recent prompts go to the same split, label
+  shares balanced: 315 train, 210 test. The new test split still holds the
+  first round's test cases, so it is not held out either; it was not run.
+
+### Results (train split, 3 runs each)
+
+| main scope | first run | final (two runs) |
+|---|---:|---:|
+| router decision exact / acceptable | 87.6% / 93.4% | 90.9–91.0% / 97.1% |
+| rank error | 0.19 | 0.10–0.11 |
+| decisions below / above the label | 35 / 68 | 15 / 60–61 |
+| recall low / medium / high / xhigh / max | 86 / 88 / 82 / 94 / 80% | 91 / 88 / 84–85 / 98 / 100% |
+| follow-ups below their work | 17 / 378 | 0 / 372 |
+| relation right (ECE) | 80.5% (0.06) | 85.8–87.3% (0.04) |
+| explicit: right / false / missed | 37 / 0 / 23 | 48 / 0 / 12 |
+| per kind (right / missed): effort, mode, model | 27/9, 6/9, 4/5 | 30/6, 9–10/5–6, 8–9/0–1 |
+| ultracode on/off (on side, off side) | 816/831 (33/39, 783/792) | 819–820/831 (36–37/39, 783/792) |
+| model the work runs on | 12/17 | 12/13, 12/12 |
+
+"First run" is the fixed code with the reworded explicit questions and the
+first round's relation wording, at 0.5 / 0.8 / 0.85. Relation confusion
+(final, one run, rows = label): continue 81, 15 read as extend, 6 as a side
+question; extend 109, 12 read as new_task (a detour's second fix, an
+effort-lowering rename, work after a wrap-up), 5 as continue; inform 27,
+15 read as extend; side_question 57, 3 as wrap_up; aside 27, 3 as
+wrap_up; resume 12/12; wrap_up 72, 3 as side_question; new_task 73, 8 read
+as extend, 3 as continue. Every relation confusion left is between two
+holds or two separate relations, or held a separate prompt at the work;
+none lowered a follow-up.
+
+Wording changes kept, each after a 3-run comparison on train: the explicit
+questions' "own work (this prompt, or the rest of the work in progress)"
+and the yes examples (model recall 44% → 89–100%); `aside`'s `not_for`
+(questions about the work, and prompts that also say to go on or how) and
+`side_question`'s "how this session runs it" (follow-ups below their work
+17 → 1); `continue`, `extend` and `resume` as in the catalog history
+(resumes 0.47–0.59 → 0.75+, the last follow-up below its work gone).
+
+### Thresholds
+
+- `relation_separate_threshold` = 0.55: on the same answers 0.45 to 0.55
+  (0.6 on one run) give identical decisions; 0.4 lowers two or three
+  follow-ups; 0.65 and up hold separate prompts. Resumes need it too and
+  sit at 0.75 or more.
+- `explicit_threshold` = 0.8: efforts asked in words 0.82–0.98; mentions,
+  efforts set for something else and refusals at most 0.20 (mode 0.22).
+  Misses: lowerings Jev is less sure of, left to the 0.9 bar ("switch to
+  medium for the remaining test rewrites" 0.85–0.87, "effort élevé, pas
+  plus" 0.47–0.55), and parallel agents asked or refused without naming
+  ultracode (0.61–0.80). Precision first: the spec's minimum.
+- `explicit_model_threshold` = 0.85: requests 0.83–0.93, mentions at most
+  0.21; in the two final runs one answer (0.83) was missed.
+
+### The gate
+
+`eval.DefaultGate` (thresholds unchanged, plus the ultracode on/off check)
+passes on the train split in both final runs. It has not been run on a
+held-out set: the old test split is used up and the new test split holds
+its cases; a fresh set, written apart, is to be run once with `--check`.
+
+### Still open
+
+- The held-out run above.
+- The ultracode question reads the whole work in the state: a draft PR
+  after an ultracode sweep gets 0.92–0.93 and runs at xhigh with the mode
+  (3 of the 9 off-side errors per run; 3 more are a refusal of parallel
+  agents the explicit question missed, 3 a single-area upgrade at 0.82).
+- Parallel agents asked or refused without the word ultracode, and
+  lowerings asked in words, are the explicit misses.
+- Live sessions again for the detour, aside and done-work paths.
+

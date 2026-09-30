@@ -45,24 +45,36 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   description, push) or a separate new task gets its own level (a commit
   message after a race fix is low). A go-ahead takes on the work it
   approves. A question while the work is still pending is a side question
-  at the work's level, even an unrelated one ("which command shows a
-  folder's size?"); a question that only recalls or explains finished work
-  is a wrap-up. The same change repeated on another target (another
+  at the work's level when it is about that work or about how the session
+  runs it ("is CI green?", "why did it stay at xhigh?"); a question or a
+  remark unrelated to the work ("which command shows a folder's size?",
+  model news, a comment in passing) is an aside at its own level, for that
+  turn only; a question that only recalls or explains finished work is a
+  wrap-up. Once a wrap-up has closed the work (`work_in_progress.done`),
+  only more work on it (a go-ahead, an addition) keeps its level; a
+  question or a fact gets its own. The same change repeated on another target (another
   endpoint, page or module) is a new task; another case or input of the
   same deliverable extends it. A prompt typed while Claude works or sent by
   another session is labeled like a follow-up: it never lowers the work.
-  An effort asked for in words ("passe en low") is the label, up or down;
+  An effort asked for in words ("passe en low") is the label, up or down
+  (asked for a wrap-up, a side question or an aside, for that turn only);
+  an effort set for something else (a subagent, a workflow stage, a
+  config or tuning entry, a quoted prompt or a test string) is no request;
   "ultrathink" is at least xhigh; "think harder" and its family one rank
   above the higher of the work's level and the tier in force. Going back to
-  paused work ("back to the migration") takes that work's level.
+  paused work ("back to the migration", or a bare go-ahead once the detour
+  is done) takes that work's level. Where the rubric is ambiguous (a small
+  mechanical follow-up, implementing an agreed design), keep the lower
+  tier the prompt alone would get in `accept`.
 - `relation` labels how a warm, resumed or post-compaction prompt relates
   to the work in progress: `continue` (go-ahead, keep going, resume),
   `extend` (adds to, constrains or corrects it), `inform` (a fact, a
   preference or an answer, no new work), `side_question` (a question or a
-  check aside while the work stays pending), `resume` (goes back to the
-  paused work, only with `state.paused_work`), `wrap_up` (summary, commit,
-  PR, push, changelog or recap of finished work) or `new_task` (separate
-  work). Label the relation from the conversation, not from the tier: the
+  check about the work, or about how the session runs it, while the work
+  stays pending), `aside` (a question or a remark unrelated to the work,
+  no work of its own), `resume` (goes back to the paused work, only with
+  `state.paused_work`), `wrap_up` (summary, commit, PR, push, changelog or
+  recap of finished work) or `new_task` (separate work). Label the relation from the conversation, not from the tier: the
   same words can be a side question while work is pending and a new task
   once it is done. `want` follows from it with the rubric above.
 - `explicit` labels what the prompt asks for in words: `{"effort": "xhigh"}`
@@ -70,8 +82,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   keyword), `{"mode": "ultracode"}` (or `"off"`), `{"model": "sonnet"}`.
   A case without it asks for nothing, so a mention ("why did it stay at
   xhigh?", "max retries is 3", "Sonnet 5.5 is out", "why did it pick
-  Opus?") has no `explicit` and counts against precision if Jev confirms
-  it. A model request is scored only for a model other than the session's
+  Opus?"), and an effort, a mode or a model set for something else
+  ("use low for the explore agents", a tenant config, a quoted prompt),
+  have no `explicit` and count against precision if Jev confirms them. A model request is scored only for a model other than the session's
   that a main session can run on (Haiku is the asked tier's question);
   `want` stays the level (the work runs on the model at that level), and
   the eval scores the model separately. Include mentions and refusals, in
@@ -79,9 +92,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   own conversations are full of (release news, comparisons, benchmark
   talk, questions about routing, a subagent or a config set to a model):
   they are what the explicit questions must reject.
-- `state.work_in_progress` (`{goal, level}`, the level an effort name) is
-  the work in progress as the hooks send it; without it the eval takes
-  `state.current`. It may also carry `mode` (else `state.current`'s) and
+- `state.work_in_progress` (`{goal, level}`, the level an effort name, and
+  `done: true` once a wrap-up closed it) is the work in progress as the
+  hooks send it; without it the eval takes `state.current`. It may also carry `mode` (else `state.current`'s) and
   `model` (the model a request in words moved the work to), which the eval
   uses but doesn't send, like the hooks. `state.paused_work` (`{goal,
   level}`, same extras) is the work a detour paused; with it Jev is offered
@@ -91,8 +104,14 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   eval applies the mid-turn rule; it is not sent to Jev). A message from
   another session starts with `<cross-session-message` or "Another Claude
   session sent a message".
-- `split`: `train` (tune on it) or `test` (held out). Keep labels balanced
-  within each split.
+- `split`: `train` (tune on it) or `test`. A conversation stays in one
+  split: cases that share a work goal, a paused work, the last assistant
+  message or the recent prompts are split together (the relation depends
+  mostly on that state), and labels stay balanced within each split.
+  A split is held out only while nobody has read its cases or its
+  per-case results while tuning: the 2026-09-30 test split holds cases
+  that were (see `docs/research/2026-09-warm-routing.md` §7), so
+  held-out numbers come from a fresh set written apart and run once.
 - Never copy real prompts or transcripts: invent the text.
 
 ## Running it
@@ -106,8 +125,8 @@ go build -o /tmp/am ./cmd/automodel
 mkdir -p /tmp/amcfg && printf 'state_dir = "./state"\n' > /tmp/amcfg/config.toml
 export AUTOMODEL_CONFIG=/tmp/amcfg/config.toml
 export OPENROUTER_API_KEY="$(sed -n 's/^openrouter_api_key *= *"\(.*\)"/\1/p' ~/.config/automodel/config.toml)"
-/tmp/am eval --catalog catalog.proposed.toml --split train --repeat 3 --summary
-/tmp/am eval --catalog catalog.proposed.toml --split test  --repeat 3 --summary --check
+/tmp/am eval --catalog catalog.proposed.toml --split train --repeat 3 --summary --check
+/tmp/am eval --catalog catalog.proposed.toml --cases heldout.jsonl --repeat 3 --summary --check   # once, at the end
 ```
 
 A full run (432 cases × 3) costs about $0.10. `--json` gives every answer
@@ -137,10 +156,10 @@ And across scopes:
 | metric | why |
 |---|---|
 | relation accuracy, confusion, ECE of the top probability | whether follow-ups and separate work are told apart, and whether `relation_separate_threshold` means anything |
-| follow-ups below the work they hold | the owner's complaint: a continuation, an addition, a side question, a resume, a mid-turn or peer prompt that lowered the effort (asked efforts excluded) |
+| follow-ups below the work they hold | the owner's complaint: a continuation, an addition, a side question, a resume, a mid-turn or peer prompt that lowered the effort (asked efforts excluded; after a wrap-up, only continue, extend and resume hold) |
 | explicit requests: precision, recall, per kind | a mention read as a request changes the effort, the mode or the model for nothing; a missed request is ignored |
 | model the work runs on (router decision) | a model asked in words is kept for the work, and left on a new task |
-| mode on/off (router decision) | ultracode kept, turned on or off where the labels say |
+| mode on/off (router decision) | ultracode kept, turned on or off where the labels say, on the cases labeled on and on those labeled off |
 
 The gap between Jev's top and the router's decision is the policy's doing
 (penalty, the work in progress, requests in words, go-ahead handling), not
@@ -150,13 +169,16 @@ Jev's.
 
 `--check` fails unless, on the main scope, decision exact ≥ 88%, recall ≥
 80% for every tier with 20+ answers, each tier's decision share within 6
-points of its label share, rank error ≤ 0.12, no decision below the
-label on a case that holds the work (relation `continue`, `extend`,
-`inform`, `side_question` or `resume`, a mid-turn prompt, a peer message),
-no such decision below the work it holds (efforts asked in words aside),
-and no effort, mode or model request confirmed where the label has none
-(`eval.DefaultGate`). Run it on `--split test --repeat 3`; the last two
-must hold on the train split too.
+points of its label share, rank error ≤ 0.12, the ultracode on/off
+decision right on 80% of the cases labeled on and of those labeled off
+(20+ answers each), no decision below every acceptable tier on a case
+that holds the work (relation `continue`, `extend`, `inform`,
+`side_question` or `resume`, a mid-turn prompt, a peer message), no such
+decision below the work it holds (efforts asked in words aside), and no
+effort, mode or model request confirmed where the label has none
+(`eval.DefaultGate`; its thresholds change only with the owner's
+approval). Run it on the train split while tuning (`--repeat 3`), and
+once on a fresh held-out set at the end.
 The 2026-09 router passes with 91% / 0.09; the collapsed one scored 79% /
 0.24 and the same code with the old penalty fails on five counts.
 
@@ -201,9 +223,11 @@ overfit (90.6% → 89.0%, below argmax).
 
 A prompt gets its own level (below the work in progress if that is its
 level) only when Jev's relation answer puts at least
-`meta.relation_separate_threshold` on `new_task` + `wrap_up` and it didn't
-arrive mid-turn or from another session; anything else keeps at least the
-work's tier and mode. The floor is the work in progress, set when separate
+`meta.relation_separate_threshold` on `new_task` + `wrap_up` + `aside` and
+it didn't arrive mid-turn or from another session; anything else keeps at
+least the work's tier and mode. `resume` needs the same threshold on its
+own. After a wrap-up (the work is done), a question or a fact gets its own
+level too. The floor is the work in progress, set when separate
 work starts, never the last prompt's tier, so upgrades stay free: holding
 the *current* tier froze sessions (warm cases 69% exact with the old gates,
 91% without), and a low session given a hard new task must still go up.
@@ -211,18 +235,25 @@ Keep a regression case for it. Tune `relation_separate_threshold` on the
 train split: the right relation's probability sits at 0.9+ on clear
 prompts and near 0.5 on mixed ones; don't carry over a threshold tuned on
 a Noul (TypeSafe: a Choice's probabilities are relative). Tune
-`explicit_threshold` (effort, mode) and `explicit_model_threshold` in the
-gap between requests and mentions; the model one stays at least as strict.
+`explicit_threshold` (effort, mode; at least 0.8) and
+`explicit_model_threshold` (at least 0.85) in the gap between requests and
+mentions, precision first: a mention, or an effort set for a subagent or a
+config, must never count. An effort below the work in progress needs 0.9
+(`router.LowerEffortP`) whatever the threshold.
 
 A new task below the work in progress pauses that work (`paused_work`,
-two hours); `resume` restores it. A model asked in words
+two hours); `resume` restores it, and so does a bare go-ahead when the
+paused work needs more; a further task below it keeps it paused. A model asked in words
 (`work_in_progress.model`) runs the work, not the session: follow-ups and
 wrap-ups stay on it, a new task goes back to the tiers.
 
 The confidence gate (`features.warm_min_confidence`) only guards
-downgrades that cost something (a cache rebuild). A bare go-ahead brings
+downgrades that cost something (a cache rebuild), and leaving a model a
+work runs on because it was asked in words; switch costs are those of the
+model the decision ends up on. A bare go-ahead brings
 back the work in progress's tier and mode without asking Jev (also after a
 compaction or a pause), unless it answers a proposal ("Want me to fix
 it?"), which is routed with the work as a floor. The eval mirrors these
-rules (`internal/eval` `setup`, `router.Judge`); keep it in sync with
+rules (`internal/eval` `setup`, `router.Judge`, and the hooks' own
+go-ahead path `router.Carried`); keep it in sync with
 `internal/hooks/decide.go`.
