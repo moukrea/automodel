@@ -111,8 +111,10 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 		return running, "mid-turn"
 	case req.Peer && running != nil:
 		return running, "peer message"
-	case req.FollowUp != "":
+	case req.FollowUp != "" && !done:
 		return work, req.FollowUp
+	case req.FollowUp != "":
+		return nil, "" // a compaction after the work was wrapped up
 	case rd.relation == nil:
 		return work, "work in progress"
 	}

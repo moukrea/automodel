@@ -631,12 +631,13 @@ func thisTurn(relation string) bool {
 }
 
 // inForceMode is the mode of the decision in force: the current one on a
-// warm turn, else the work in progress's (after a compaction or a pause).
+// warm turn, else the work in progress's (after a compaction or a pause),
+// unless a wrap-up closed it: then none is in force.
 func (e *Env) inForceMode(req Request) string {
 	switch {
 	case req.Warm && req.Current != nil:
 		return req.Current.Mode
-	case req.Work != nil:
+	case req.Work != nil && !req.Work.Done:
 		return req.Work.Mode
 	}
 	return ""

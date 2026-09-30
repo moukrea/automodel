@@ -533,6 +533,17 @@ func TestCompactionKeepsWork(t *testing.T) {
 	if s, _ = env.State.Load("c2"); s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" {
 		t.Errorf("after the first prompt: %+v", s.Main)
 	}
+
+	// A work a wrap-up closed holds nothing after a compaction: the
+	// summary gets its own level, without the work's mode.
+	workSession(t, env, "c3", "low", "", "xhigh")
+	env.State.Update("c3", func(s *state.Session) bool { s.Work.Mode, s.Work.Done = "ultracode", true; return true })
+	fj.answers = []fa{{tier: "low", conf: 0.9, ultra: 0.9}}
+	t.Setenv(CompactEnv, fmt.Sprint(time.Now().UnixNano()))
+	run(t, env, "session-start", map[string]any{"session_id": "c3", "source": "compact", "transcript_path": tp})
+	if s, _ = env.State.Load("c3"); s.Main.Tier != "low" || s.Main.Mode != "" || !s.Work.Done || s.Work.Mode != "ultracode" {
+		t.Errorf("compaction after a wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
 }
 
 // Requests in words: an effort talked about for something else (a
@@ -815,6 +826,17 @@ func TestAsideAndDoneWork(t *testing.T) {
 	run(t, env, "decide", map[string]any{"session_id": "w3", "prompt": "oh and mention the ticket number", "cwd": cwd, "transcript_path": busyTranscript(t)})
 	if s, _ = env.State.Load("w3"); s.Main.Tier != "low" || s.Main.Mode != "" || !s.Work.Done {
 		t.Errorf("mid-turn remark on a done work: %+v, work %+v", s.Main, s.Work)
+	}
+	// On a cold turn a done ultracode work holds nothing: a fact or an
+	// aside gets its own level, and the mode the work ran with is not in
+	// force (Jev's yes turns it on only for work it can run).
+	workSession(t, env, "w4", "xhigh", "ultracode", "xhigh")
+	decide("w4", "write the commit message", fa{tier: "low", conf: 0.95, ultra: 0.1, rel: "wrap_up"})
+	for _, c := range []struct{ prompt, rel string }{{"FYI the release is tomorrow", "inform"}, {"au fait, c'est quoi la différence entre rebase et merge ?", "aside"}} {
+		env.State.Update("w4", func(s *state.Session) bool { s.ColdHint = true; return true })
+		if s = decide("w4", c.prompt, fa{tier: "low", conf: 0.9, ultra: 0.9, rel: c.rel}); s.Main.Tier != "low" || s.Main.Mode != "" || !s.Work.Done || s.Work.Mode != "ultracode" {
+			t.Errorf("%s on a done ultracode work, cold: %+v, work %+v", c.rel, s.Main, s.Work)
+		}
 	}
 	// A new task below a done work pauses nothing.
 	workSession(t, env, "w2", "xhigh", "", "xhigh")

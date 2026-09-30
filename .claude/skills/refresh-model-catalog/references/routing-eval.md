@@ -95,7 +95,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   wrap-up, a side question or an aside runs without it, whatever the
   work's (the work keeps it for the next follow-up), unless the prompt
   asks for it in words for that turn; a prompt typed mid-turn or sent by
-  another session keeps the mode the turn runs with.
+  another session keeps the mode the turn runs with. Once a wrap-up closed
+  the work, its mode is no longer in force (a fact on a cold turn, or the
+  decision after a compaction, gets the mode its own work needs).
 - `relation` labels how a warm, resumed or post-compaction prompt relates
   to the work in progress: `continue` (go-ahead, keep going, resume),
   `extend` (adds to, constrains or corrects it), `inform` (a fact, a
