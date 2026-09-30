@@ -50,10 +50,14 @@ type Info struct {
 	// InterruptedAt is how many prompts came before that interruption.
 	Interrupted   bool
 	InterruptedAt int
-	// MidTurn: Claude was still working when the file was read (its last
-	// message called a tool and no turn end followed), so a prompt read
-	// now was typed during the turn.
-	MidTurn bool
+	// MidTurn: Claude was still working when the file was read (a user
+	// prompt started a turn, or its last message called a tool, and no turn
+	// end followed), so a prompt read now was typed during the turn.
+	// TurnPrompt is the prompt that started that turn: when it is the one
+	// being decided (a late decision reads the file after it was written),
+	// nothing was typed mid-turn.
+	MidTurn    bool
+	TurnPrompt string
 }
 
 // Read scans the tail of the transcript.
@@ -133,7 +137,11 @@ func Read(path string) (Info, error) {
 				info.MidTurn = false
 			case e.IsMeta || text == "" || IsSynthetic(text) || IsPeer(text):
 			default:
+				// A prompt starts a turn: Claude Code writes the turn's own
+				// entries in batches, seconds later, so a prompt typed early
+				// in the turn may see no assistant entry after it yet.
 				info.UserPrompts = append(info.UserPrompts, text)
+				info.MidTurn, info.TurnPrompt = true, text
 			}
 		}
 	}
@@ -225,8 +233,16 @@ func IsSynthetic(text string) bool {
 // IsPeer reports a message another Claude session sent to this one. It
 // asks for something, so it is routed, but it is not the user's prompt:
 // its words are no request of the user's, and it never lowers the effort
-// of the work in progress.
+// of the work in progress. Only the start counts: a prompt may quote the
+// phrase.
 func IsPeer(text string) bool {
 	t := strings.TrimSpace(text)
-	return strings.HasPrefix(t, "<cross-session-message") || strings.Contains(t[:min(len(t), 200)], "Another Claude session sent a message")
+	return strings.HasPrefix(t, "<cross-session-message") || strings.HasPrefix(t, "Another Claude session sent a message")
+}
+
+// MidTurnFor reports whether prompt was typed while Claude worked: the
+// transcript shows a turn still running, and that turn isn't the prompt's
+// own (read after the prompt was written).
+func (info *Info) MidTurnFor(prompt string) bool {
+	return info != nil && info.MidTurn && strings.Join(strings.Fields(info.TurnPrompt), " ") != strings.Join(strings.Fields(prompt), " ")
 }

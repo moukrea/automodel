@@ -49,6 +49,17 @@ func TestMidTurnAndQueuedPrompts(t *testing.T) {
 	if info := write(prompt, toolUse, toolResult, queued); !info.MidTurn || len(info.UserPrompts) != 2 || info.UserPrompts[1] != "and convert the prices to euros" {
 		t.Errorf("mid-turn: %+v", info)
 	}
+	// A prompt starts a turn: typed before the turn's first entries are
+	// written (Claude Code writes them in batches), a prompt is still
+	// typed mid-turn; unless it is that turn's prompt itself (a late
+	// decision reads the file after the prompt was written).
+	info := write(prompt)
+	if !info.MidTurn || !info.MidTurnFor("au fait, garde les messages d'erreur en anglais") || info.MidTurnFor("Add the price  column to the export") {
+		t.Errorf("a turn just started: %+v", info)
+	}
+	if (*Info)(nil).MidTurnFor("x") {
+		t.Error("no transcript read as mid-turn")
+	}
 	for name, lines := range map[string][]string{
 		"turn ended":         {prompt, toolUse, toolResult, done, turnEnd},
 		"end_turn, no stamp": {prompt, toolUse, toolResult, done},
@@ -61,14 +72,15 @@ func TestMidTurnAndQueuedPrompts(t *testing.T) {
 		}
 	}
 	// Notifications and messages from other sessions are not user prompts.
-	info := write(prompt,
+	info = write(prompt,
 		`{"type":"attachment","attachment":{"type":"queued_command","commandMode":"task-notification","prompt":"<task-notification>done</task-notification>"}}`,
 		`{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","prompt":"<cross-session-message from=\"x\">hi</cross-session-message>"}}`,
 		`{"type":"user","message":{"role":"user","content":"Another Claude session sent a message: the build is green"}}`)
 	if len(info.UserPrompts) != 1 {
 		t.Errorf("prompts = %q", info.UserPrompts)
 	}
-	if !IsPeer("  <cross-session-message from=\"a\">x</cross-session-message>") || !IsPeer("Another Claude session sent a message: hi") || IsPeer("tell another Claude session to rebase") {
+	if !IsPeer("  <cross-session-message from=\"a\">x</cross-session-message>") || !IsPeer("Another Claude session sent a message: hi") || IsPeer("tell another Claude session to rebase") ||
+		IsPeer("add an eval case whose task is 'Another Claude session sent a message: rebase' [effort:low]") {
 		t.Error("IsPeer")
 	}
 }

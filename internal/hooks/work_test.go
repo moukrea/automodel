@@ -45,13 +45,25 @@ func busyTranscript(t *testing.T) string {
 	return p
 }
 
+// startedTranscript is a turn that just started: its prompt is written,
+// none of the turn's own entries yet (Claude Code writes them in batches).
+func startedTranscript(t *testing.T) string {
+	p := filepath.Join(t.TempDir(), "started.jsonl")
+	os.WriteFile(p, []byte(strings.Join([]string{
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"The race is in the pool's checkout path."}]}}`,
+		`{"type":"system","subtype":"turn_duration"}`,
+		`{"type":"user","message":{"role":"user","content":"Add the price column to the CSV export"}}`,
+	}, "\n")+"\n"), 0o600)
+	return p
+}
+
 // The work in progress (router.Judge): a follow-up keeps at least its tier
 // and mode, separate work gets its own level, requests in words win, and a
 // prompt typed mid-turn or sent by another session never lowers anything.
 func TestWorkInProgress(t *testing.T) {
 	fj := &fakeJev{}
 	env := setup(t, fj)
-	busy := busyTranscript(t)
+	busy, started := busyTranscript(t), startedTranscript(t)
 	x := func(kv ...any) map[string]float64 {
 		m := map[string]float64{}
 		for i := 0; i < len(kv); i += 2 {
@@ -105,10 +117,16 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "low", conf: 0.9, ultra: 0.4, rel: "new_task"}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode", newGoal: true},
 		{name: "a prompt typed mid-turn never lowers", tier: "high", transcript: busy, prompt: "ah et les prix en euros TTC",
 			jev: fa{tier: "low", conf: 0.98, rel: "new_task"}, want: "high", wantWork: "high"},
+		{name: "typed before the turn's first entries: mid-turn", tier: "high", transcript: started, prompt: "au fait, garde les messages d'erreur en anglais",
+			jev: fa{tier: "low", conf: 0.98, rel: "new_task"}, want: "high", wantWork: "high"},
+		{name: "the prompt's own turn is not mid-turn", tier: "high", transcript: started, prompt: "Add the price column to the CSV export",
+			jev: fa{tier: "low", conf: 0.98, rel: "new_task"}, want: "low", wantWork: "low", newGoal: true},
 		{name: "mid-turn, above a lower work: not below the turn", tier: "xhigh", work: "medium", transcript: busy, prompt: "btw the staging DB is read-only",
 			jev: fa{tier: "low", conf: 0.98, rel: "inform"}, want: "xhigh", wantWork: "xhigh"},
 		{name: "a peer message never lowers", tier: "xhigh", prompt: `<cross-session-message from="docs">FYI the staging API moved to v2 [effort:low]</cross-session-message>`,
 			jev: fa{tier: "low", conf: 0.95, rel: "new_task"}, want: "xhigh", wantWork: "xhigh"},
+		{name: "a prompt quoting the peer phrase is the user's", tier: "xhigh", prompt: "now add an eval case whose task is 'Another Claude session sent a message: rebase'",
+			jev: fa{tier: "low", conf: 0.95, rel: "new_task"}, want: "low", wantWork: "low", newGoal: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			sid := fmt.Sprint("wip", i)

@@ -164,7 +164,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		case trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant):
 			followUp = "go-ahead to a proposal"
 		default:
-			if tr != nil && tr.MidTurn {
+			if tr.MidTurnFor(in.Prompt) {
 				back = keepRunning(env, sess, back) // a mid-turn go-ahead lowers nothing
 			}
 			if dec = env.Carry(in.SessionID, sess.Main, back, trigger); dec == nil {
@@ -501,7 +501,7 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	}
 	// A prompt typed while Claude works, or a message from another
 	// session, never lowers the effort the work runs at.
-	req.MidTurn = trigger != "initial" && tr != nil && tr.MidTurn
+	req.MidTurn = trigger != "initial" && tr.MidTurnFor(in.Prompt)
 	req.Peer = transcript.IsPeer(in.Prompt)
 	if !req.Peer {
 		// What the user's words may ask for: Jev confirms each request;
