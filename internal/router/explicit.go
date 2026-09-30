@@ -28,13 +28,22 @@ func words(alt string) *regexp.Regexp {
 	return regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])(?:` + alt + `)(?:[^\pL\pN_]|$)`)
 }
 
+// levelWords are the effort names the regexes find only next to a word
+// that makes them an effort, in English and French.
+const levelWords = `low|medium|high|[ée]lev[ée]e?|haut|faible|bas|moyen`
+
 var (
 	// xhigh and max anywhere; low, medium and high only next to a word
 	// that makes them an effort ("en high", "switch to low", "high effort",
 	// "set the effort to medium", "mets l'effort à low", "effort élevé").
 	effortAnyRE  = words(`(x-?high|max)`)
-	effortNearRE = words(`(?:(?:effort|niveau|reasoning|raisonnement)(?:\s*[:=]\s*|\s+(?:\S+\s+){0,2})|(?:en|in|at|mode|passe[rz]?(?:\s+(?:en|à|a))?|switch(?:\s+to)?|set(?:\s+it)?\s+to|use|utilise[rz]?)\s+(?:the\s+|le\s+|l'|du\s+)?)(low|medium|high|[ée]lev[ée]e?|haut|faible|bas|moyen)`)
+	effortNearRE = words(`(?:(?:effort|niveau|reasoning|raisonnement)(?:\s*[:=]\s*|\s+(?:\S+\s+){0,2})|(?:en|in|at|mode|passe[rz]?(?:\s+(?:en|à|a))?|switch(?:\s+to)?|set(?:\s+it)?\s+to|use|utilise[rz]?)\s+(?:the\s+|le\s+|l'|du\s+)?)(` + levelWords + `)`)
 	effortPostRE = words(`(low|medium|high)[\s-]+(?:reasoning[\s-]+)?(?:effort|reasoning)`)
+	// effortDownRE finds the words of a lowering or a cap: "drop to
+	// medium", "go down to low", "redescends à medium", "medium is
+	// enough", "low suffit", "high, ça suffit", "moyen c'est assez" ("pour
+	// la suite en low" is effortNearRE's "en").
+	effortDownRE = words(`(?:drop|down|descends?|redescends?|descendre|redescendre)\s+(?:to|à|a|en)\s+(?:the\s+|le\s+)?(` + levelWords + `)|(` + levelWords + `)\s*,?\s+(?:(?:is|should\s+be|will\s+be)\s+enough|(?:ça\s+|ca\s+)?suffi(?:t|ra)|c['’]est\s+assez)`)
 	// moreRE finds the words that may ask for more thinking, for Jev to
 	// confirm; narrowMoreRE the forms that ask for it whatever the context,
 	// which count without Jev in metadata mode (it never sees the words).
@@ -75,9 +84,14 @@ func ExplicitCandidates(c *catalog.Catalog, prompt, model string) []Candidate {
 	for _, m := range effortAnyRE.FindAllStringSubmatch(prompt, -1) {
 		efforts[strings.ReplaceAll(strings.ToLower(m[1]), "-", "")] = true
 	}
-	for _, re := range []*regexp.Regexp{effortNearRE, effortPostRE} {
+	for _, re := range []*regexp.Regexp{effortNearRE, effortPostRE, effortDownRE} {
 		for _, m := range re.FindAllStringSubmatch(prompt, -1) {
-			efforts[effortName(m[1])] = true
+			for _, w := range m[1:] { // the group of the form that matched
+				if w != "" {
+					efforts[effortName(w)] = true
+					break
+				}
+			}
 		}
 	}
 	for _, e := range []string{"low", "medium", "high", "xhigh", "max"} {
