@@ -32,6 +32,34 @@ func TestWhy(t *testing.T) {
 	if strings.Index(out, "  low ") > strings.Index(out, "  high ") {
 		t.Errorf("tiers not in rank order:\n%s", out)
 	}
+
+	// The work in progress: held at its level, or a separate prompt's own.
+	ds = []Decision{
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "xhigh", Probs: map[string]float64{"medium": 0.85, "xhigh": 0.15},
+			Chosen: "xhigh", JevChoice: "medium", Model: "claude-opus-5-5", Effort: "xhigh", Confidence: 0.7, Kept: true, KeepReason: "same tier",
+			Relation: map[string]float64{"extend": 0.94, "continue": 0.04, "new_task": 0.02}, WorkTier: "xhigh", Hold: "follow-up of the work in progress (extend 0.94)"},
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "xhigh", Probs: map[string]float64{"low": 0.95, "medium": 0.05},
+			Chosen: "low", JevChoice: "low", Model: "claude-opus-5-5", Effort: "low", Confidence: 0.9,
+			Relation: map[string]float64{"wrap_up": 0.97, "continue": 0.03}, WorkTier: "xhigh"},
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "low", Kept: false, Skipped: true,
+			Hold: "go-ahead: back to the work in progress", WorkTier: "xhigh", Chosen: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh"},
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "xhigh", Probs: map[string]float64{"low": 0.9, "medium": 0.1},
+			Chosen: "low", JevChoice: "low", Model: "claude-opus-5-5", Effort: "low", Confidence: 0.8, Explicit: map[string]float64{"effort_low": 0.93},
+			Relation: map[string]float64{"extend": 0.9}, WorkTier: "xhigh", Hold: "explicit effort low", Work: "set"},
+	}
+	b.Reset()
+	WriteWhy(&b, ds, WhyOptions{Rank: func(_, t string) int { return rank[t] }})
+	out = b.String()
+	for _, want := range []string{
+		"relation: extend 0.94, continue 0.04 · follow-up of the work in progress (extend 0.94) · work in progress xhigh",
+		"relation: wrap_up 0.97, continue 0.03 · separate from the work in progress (xhigh): its own level, lower",
+		"→ opus-5.5·xhigh (was low) without asking Jev: go-ahead: back to the work in progress",
+		"asks in words: effort_low 0.93 · explicit effort low · work in progress xhigh · sets the work in progress",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
 	if ShortModel("claude-haiku-4-5-20251001") != "haiku-4.5" || ShortModel("claude-opus-5-5") != "opus-5.5" {
 		t.Error("ShortModel")
 	}

@@ -111,6 +111,9 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	case d.Trigger == "pinned":
 		fmt.Fprintf(w, "  → %s, pinned by %s (routing paused until released)\n", result, d.Cause)
 		return
+	case d.Skipped && !d.Kept && d.Hold != "":
+		fmt.Fprintf(w, "  → %s (was %s) without asking Jev: %s\n", result, d.From, d.Hold)
+		return
 	case d.Skipped:
 		fmt.Fprintf(w, "  → keeps %s without asking Jev: %s\n", result, d.KeepReason)
 		return
@@ -198,6 +201,66 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	if len(why) > 0 {
 		fmt.Fprintln(w, "  "+strings.Join(why, " · "))
 	}
+	if l := workLine(d, o); l != "" {
+		fmt.Fprintln(w, "  "+l)
+	}
+}
+
+// workLine says how the prompt relates to the work in progress, what it
+// asked for in words, and why the tier was held at the work's level or
+// left to the prompt's own.
+func workLine(d Decision, o WhyOptions) string {
+	var parts []string
+	if len(d.Relation) > 0 {
+		parts = append(parts, "relation: "+ranked(d.Relation, 2))
+	}
+	if len(d.Explicit) > 0 {
+		parts = append(parts, "asks in words: "+ranked(d.Explicit, 3))
+	}
+	switch {
+	case d.Hold != "" && d.WorkTier != "":
+		parts = append(parts, d.Hold+" · work in progress "+d.WorkTier)
+	case d.Hold != "":
+		parts = append(parts, d.Hold)
+	case d.WorkTier != "" && len(d.Relation) > 0:
+		s := "separate from the work in progress (" + d.WorkTier + "): its own level"
+		if o.Rank != nil && o.Rank(d.Scope, d.Chosen) < o.Rank(d.Scope, d.WorkTier) {
+			s += ", lower"
+		}
+		parts = append(parts, s)
+	}
+	switch d.Work {
+	case "new":
+		parts = append(parts, "starts a new work in progress")
+	case "set":
+		parts = append(parts, "sets the work in progress")
+	case "raised":
+		parts = append(parts, "raises the work in progress")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// ranked lists the n likeliest entries of a probability map ("extend 0.94,
+// continue 0.04"), leaving out those under 0.01.
+func ranked(p map[string]float64, n int) string {
+	keys := make([]string, 0, len(p))
+	for k := range p {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if p[keys[i]] != p[keys[j]] {
+			return p[keys[i]] > p[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	var out []string
+	for i, k := range keys {
+		if i >= n || (i > 0 && p[k] < 0.01) {
+			break
+		}
+		out = append(out, fmt.Sprintf("%s %.2f", k, p[k]))
+	}
+	return strings.Join(out, ", ")
 }
 
 // FollowFrom prints the decisions of a session appended after the first
