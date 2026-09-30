@@ -49,14 +49,15 @@ var (
 	effortNearRE = words(`(?:effort|niveau|reasoning|raisonnement)(?:\s*[:=]\s*|\s+(?:\S+\s+){0,2})(` + levelWords + `)|(?:en|in|at|mode|passe[rz]?(?:\s+(?:en|à|a))?|switch(?:\s+to)?|set(?:\s+it)?\s+to|use|utilise[rz]?)\s+(?:the\s+|le\s+|l'|du\s+)?(low|medium|high|[ée]lev[ée]e?|faible|moyen)`)
 	effortPostRE = words(`(low|medium|high)[\s-]+(?:reasoning[\s-]+)?(?:effort|reasoning)`)
 	// effortDownRE finds the words of a lowering: "drop to medium", "go
-	// down to low for the rest", "redescends à medium", "descends en low
-	// pour la suite" ("pour la suite en low" is effortNearRE's "en"). The
+	// down to low for the rest", "lower it to medium", "redescends à
+	// medium", "tu peux baisser à medium", "descends en low pour la suite"
+	// ("pour la suite en low" is effortNearRE's "en"). The
 	// effort has to end the clause, or come before a word that can't be
 	// the noun it would qualify: "comes down to high availability", "boils
 	// down to low latency", "narrow it down to low-level functions",
 	// "scroll down to the high score", "descend à faible charge" make no
 	// request (the pre-filter only picks the questions: Jev confirms).
-	effortDownRE = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])(?:(?:drop|down)\s+to|(?:re)?descend(?:s|re|ez)?\s+(?:à|a|en))\s+(?:the\s+|le\s+)?(` + levelWords + `)` + levelEnd)
+	effortDownRE = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])(?:(?:drop|down|lower(?:\s+it)?)\s+to|(?:re)?descend(?:s|re|ez)?\s+(?:à|a|en)|baisse[rz]?\s+(?:à|a|en))\s+(?:the\s+|le\s+)?(` + levelWords + `)` + levelEnd)
 	// effortCapRE finds a cap: "medium is enough", "low suffit", "high,
 	// ça suffit", "moyen c'est assez". A French adjective only at the start
 	// of a clause: "un seuil bas suffit" is a threshold.
