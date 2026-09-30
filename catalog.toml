@@ -53,8 +53,13 @@ relation_separate_threshold = 0.55
 # ("Anything else?", "Shall I carry on?", "Ça te va ?") and offers to go
 # back 0.04 to 0.18 (eleven of the fourteen closers are not in the
 # wording); offers of a wrap-up step or more of the detour 0.80 to 0.96.
-# 0.5: the middle of that gap.
-detour_offer_threshold = 0.5
+# 0.5: the middle of that gap. Second review (2026-10-01): answered with
+# an acknowledgement ("ok", "perfect", "lgtm", "nickel", "parfait"), live
+# offers read 0.27 to 0.44 and went back to the paused work. With
+# acknowledgements in the yes wording and 16 new train cases (two runs of
+# 3): offers 0.51 and up, closing questions and offers to go back at most
+# 0.20. 0.35: the middle of that gap.
+detour_offer_threshold = 0.35
 # A request in the prompt's words (an effort, more thinking, ultracode or
 # its refusal) counts from this yes-probability; an effort below the work
 # in progress needs 0.9 (router.LowerEffortP). Train split (two runs of
@@ -1385,11 +1390,15 @@ examples = ["now rename the config loader", "next: design how to shard the job q
 # Round 4's review: the relation question alone read "go" after "Anything
 # else?" as continue up to 0.62 and "Shall I carry on?" 0.77-0.81, while
 # offers of more of the detour read continue from 0.45 and a changelog
-# step wrap_up from 0.38: no bar on the relation told them apart.
+# step wrap_up from 0.38: no bar on the relation told them apart. Second
+# review: a bare acknowledgement ("nickel", "lgtm") read as no; the yes
+# wording says it accepts the offer, and the no wording that the message
+# decides, whatever the go-ahead's words ("Can I go on?" paraphrases the
+# train's "Shall I carry on?": those cases are in-sample).
 [questions.offer]
 question = "The new prompt `task` is a go-ahead after a detour (`work_in_progress.goal`) that set bigger work aside (`paused_work.goal`). Does the assistant's last message (`last_assistant`) offer or ask to do one more specific thing for the detour itself, which that go-ahead accepts?"
-yes = "Near its end the message names one more thing it would do for the detour, and the go-ahead says yes to it: a wrap-up step of the detour ('Shall I open a PR for it?', 'Je pousse la branche ?') or more of it ('The same null check is missing in the export handler: want me to add it there too?', 'Je fais pareil dans le module d'import ?'), also when a remark follows the offer ('Shall I push the branch? CI takes about ten minutes.') or when the offer has no question mark ('dis-moi si je lance aussi le linter')."
-no = "The message names nothing more to do for the detour: it reports the detour done and closes on a general question or a check that offers no step of it ('Anything else?', 'Is that OK?', 'Autre chose ?'); or it offers to go back to the paused work ('Shall I get back to the migration?', 'On reprend la migration ?'); or the go-ahead answers something else."
+yes = "Near its end the message names one more specific thing it would do for the detour, and the go-ahead says yes to it: a wrap-up step of the detour ('Shall I open a PR for it?', 'Je pousse la branche ?') or more of it ('The same null check is missing in the export handler: want me to add it there too?', 'Je fais pareil dans le module d'import ?'), also when a remark follows the offer ('Shall I push the branch? CI takes about ten minutes.'), when the offer has no question mark ('dis-moi si je lance aussi le linter'), or when the go-ahead is only an acknowledgement ('ok', 'perfect', 'lgtm', 'super', 'top', 'nickel', 'parfait'): right after an offer, it accepts it."
+no = "The message names nothing more to do for the detour: it reports the detour done or where it stands and closes on a general question or a check that names no step of it ('Anything else?', 'Is that OK?', 'Can I go on?', 'Autre chose ?'); or it offers to go back to the paused work ('Shall I get back to the migration?', 'On reprend la migration ?'); or the go-ahead answers something else. The message decides, whatever the go-ahead's words."
 
 # Requests in prose ("passe en xhigh", "fais ça en ultracode", "think
 # harder"). A regex finds the words that may make one (an effort name, the
