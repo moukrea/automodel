@@ -3,6 +3,7 @@ package catalog
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -140,9 +141,51 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 		}
 	}
 
-	for name, q := range map[string]*Noul{"questions.continues": c.Questions.Continues, "questions.informs": c.Questions.Informs} {
-		if q != nil && (q.Question == "" || q.Yes == "" || q.No == "") {
-			errf("%s: question, yes and no are all required", name)
+	if q := c.Questions.Relation; q != nil {
+		if q.Question == "" {
+			errf("questions.relation: question is required")
+		}
+		for _, id := range sortedKeys(q.Options) {
+			switch o := q.Options[id]; {
+			case !contains(Relations, id):
+				errf("questions.relation: unknown option %s (want %v)", id, Relations)
+			case o == nil || o.What == "":
+				errf("questions.relation.options.%s: what is required", id)
+			}
+		}
+		for _, id := range Relations {
+			if _, ok := q.Options[id]; !ok {
+				errf("questions.relation: option %s is missing", id)
+			}
+		}
+	}
+	if x := c.Questions.Explicit; x != nil {
+		for _, f := range []struct{ name, v, want string }{
+			{"question", x.Question, "{x}"}, {"off_question", x.OffQuestion, "{x}"}, {"model_question", x.ModelQuestion, "{x}"},
+			{"effort", x.Effort, "{v}"}, {"mode", x.Mode, "{v}"}, {"model", x.Model, "{v}"},
+		} {
+			if f.v != "" && !strings.Contains(f.v, f.want) {
+				errf("questions.explicit.%s must contain %s", f.name, f.want)
+			}
+		}
+	}
+	for _, t := range []struct {
+		name string
+		v    float64
+	}{{"relation_separate_threshold", m.RelationSeparateP}, {"explicit_threshold", m.ExplicitP}, {"explicit_model_threshold", m.ExplicitModelP}} {
+		if t.v < 0 || t.v > 1 {
+			errf("meta.%s must be between 0 and 1", t.name)
+		}
+	}
+	for _, d := range []struct {
+		name string
+		set  bool
+	}{
+		{"meta.continues_threshold", m.ContinuesThresholdP != 0}, {"meta.informs_threshold", m.InformsThresholdP != 0},
+		{"questions.continues", c.Questions.Continues != nil}, {"questions.informs", c.Questions.Informs != nil},
+	} {
+		if d.set {
+			warnf("%s: deprecated, ignored (the relation question replaced it)", d.name)
 		}
 	}
 	for sc := range c.Questions.Level {

@@ -74,9 +74,10 @@ func SessionStart(ctx context.Context, env *router.Env, in *Input) (*Output, err
 }
 
 // compactDecision re-decides right after a compaction, from its summary:
-// the status line shows the pick for the work ahead at once. The next
-// prompt still re-decides for free (the cache is rebuilt anyway), with the
-// prompt itself.
+// the status line shows the pick for the work ahead at once. The work in
+// progress survives the compaction, and this decision can't go below it.
+// The next prompt still re-decides for free (the cache is rebuilt anyway),
+// with the prompt itself.
 func compactDecision(ctx context.Context, env *router.Env, in *Input, at time.Time) {
 	var tr *transcript.Info
 	for deadline := time.Now().Add(compactWait); ; time.Sleep(200 * time.Millisecond) {
@@ -97,6 +98,7 @@ func compactDecision(ctx context.Context, env *router.Env, in *Input, at time.Ti
 	pin := *in
 	pin.Prompt = ""
 	req := mainRequest(env, &pin, sess, tr, sess.Repo, "compact")
+	req.FollowUp = router.FollowUpCompaction
 	dec, out := env.Decide(ctx, req)
 	if !out.Changed || dec == nil {
 		return
@@ -105,6 +107,10 @@ func compactDecision(ctx context.Context, env *router.Env, in *Input, at time.Ti
 		if s.LastPromptAt.After(at) {
 			return false
 		}
+		if s.Work == nil {
+			s.Work = s.WorkInProgress() // a session from before: the decision in force was its work
+		}
+		out.Work.Apply(s, "", env.Now())
 		dec.Epoch = 1
 		if s.Main != nil {
 			dec.Epoch = s.Main.Epoch + 1

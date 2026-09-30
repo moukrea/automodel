@@ -32,10 +32,10 @@ openrouter_api_key = ""
 # decisions only when the prompt cache is already lost (first prompt,
 # compaction, cold cache), with the confidence-escalation policy.
 [features]
-# Re-evaluate the tier on warm turns too. A switch has to beat its cost
-# (see cost_aware); one that costs something (a cache rebuild) must also clear
-# warm_min_confidence and not downgrade work in progress. A free per-turn
-# effort change follows Jev's answer.
+# Re-evaluate the tier on warm turns too. A follow-up of the work in
+# progress keeps at least its tier; separate work gets its own level. A
+# switch has to beat its cost (see cost_aware), and a downgrade that costs
+# something (a cache rebuild) must also clear warm_min_confidence.
 warm_decisions = true
 # Change effort mid-conversation without losing the prompt cache
 # (effort-only system messages; models with per_turn_effort in the catalog).

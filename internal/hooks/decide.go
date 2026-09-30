@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/moukrea/automodel/internal/policy"
 	"log"
 	"os"
@@ -27,10 +28,16 @@ const UltracodeOn = `Ultracode is on for this session. The user enabled automati
 
 const UltracodeOff = `Ultracode is now off for this session (the automatic router moved back to single-thread work). Revert to the opt-in rule in the Workflow tool description.`
 
+// UltracodeOffTurn is injected instead of UltracodeOff when the prompt is
+// answered alone (a wrap-up, a side question, an aside) and the work in
+// progress keeps the mode for its next follow-up.
+const UltracodeOffTurn = `Ultracode is off for this turn only (the automatic router answers this prompt single-thread; the work in progress keeps ultracode, and a reminder will say when it is back on). For this answer, revert to the opt-in rule in the Workflow tool description.`
+
 // Decide is the UserPromptSubmit hook. It decides the main-session tier at
 // the moments the prompt cache is already lost (first prompt, compaction,
 // cold cache) and, with features.warm_decisions, on warm turns too, where a
-// switch has to beat its cost and clear the confidence bar.
+// switch has to beat its cost and clear the confidence bar. A prompt that
+// follows the work in progress up keeps at least its tier (router.Judge).
 func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	now := env.Now()
 	sess, err := env.State.Load(in.SessionID)
@@ -38,6 +45,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, err
 	}
 	synthetic := transcript.IsSynthetic(in.Prompt) || ownCommand(in.Prompt)
+	// A message from another Claude session is routed, but its words are
+	// not the user's: no tag, no request in prose, no go-ahead.
+	peer := transcript.IsPeer(in.Prompt)
 	lateTrigger, lateAt, late := lateMode()
 	if late && sess.LastPromptAt.UnixNano() != lateAt {
 		return nil, nil // a newer prompt came in: its own decision stands
@@ -82,13 +92,14 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// [model:auto] releases the pin (and this prompt is routed). Only
 	// prompts the user typed count: subagent results and notifications can
 	// quote a tag.
+	typed := !synthetic && !peer
 	etag, mtag := "", ""
-	if !synthetic {
+	if typed {
 		etag, mtag = effortTag(in.Prompt), modelTag(env.Catalog, in.Prompt)
 	}
-	curModel, curEffort := env.Catalog.DefaultTier(catalog.ScopeMain).Model, ""
+	curModel, curEffort, curMode := env.Catalog.DefaultTier(catalog.ScopeMain).Model, "", ""
 	if sess.Main != nil {
-		curModel, curEffort = sess.Main.Model, sess.Main.Effort
+		curModel, curEffort, curMode = sess.Main.Model, sess.Main.Effort, sess.Main.Mode
 	}
 	pin, pinModel, pinSource := sess.Pin, sess.PinModel, sess.PinSource
 	// An effort on a model without efforts (a session on Haiku) means the
@@ -103,22 +114,23 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			trigger = "warm"
 		}
 	case mtag != "":
-		m := env.Catalog.Model(mtag)
-		eff := etag
-		for _, e := range []string{etag, curEffort, env.Catalog.DefaultTier(catalog.ScopeMain).Effort, "high"} {
-			if e != "" && m.SupportsEffort(e) {
-				eff = e
-				break
-			}
-		}
-		if m.SupportsEffort(eff) {
+		if eff := modelEffort(env, mtag, etag, curEffort); eff != "" {
 			pin, pinModel, pinSource = eff, mtag, "prompt"
 		}
 	case etag != "":
+		w := sess.Work
 		switch {
-		case pinModel != "" && env.Catalog.Model(pinModel).SupportsEffort(etag):
-			pin, pinSource = etag, "prompt"
-		case pinModel == "" && env.Catalog.TierFor(catalog.ScopeMain, curModel, etag) != nil:
+		case pinModel != "":
+			if m := env.Catalog.Model(pinModel); m != nil && m.SupportsEffort(etag) {
+				pin, pinSource = etag, "prompt"
+			}
+		case w != nil && w.Model != "" && w.Model == curModel:
+			// On the model a work asked for in words: the tag pins it there
+			// (unless the catalog no longer has it).
+			if m := env.Catalog.Model(w.Model); m != nil && m.SupportsEffort(etag) {
+				pin, pinModel, pinSource = etag, w.Model, "prompt"
+			}
+		case env.Catalog.TierFor(catalog.ScopeMain, curModel, etag) != nil:
 			pin, pinSource = etag, "prompt"
 		} // else: an effort this model doesn't have: ignored
 	}
@@ -126,40 +138,57 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 
 	var dec *state.Decision
 	var signals *state.RepoSignals
-	spawnTrigger := "" // Jev timed out: decide again in the background
+	var work *router.WorkUpdate // what the decision makes of the work in progress
+	var asked *router.Asked     // an effort or a model the prompt asked for in words
+	spawnTrigger := ""          // Jev timed out: decide again in the background
+	// A pin keeps the ultracode mode unless its effort is below the mode's.
 	if pin != "" && !synthetic {
 		redecide := tagged || trigger == "initial" || trigger == "compact" || trigger == "cold" || sess.Main == nil
 		if pinModel != "" {
 			if redecide || sess.Main.Model != pinModel || sess.Main.Effort != pin {
-				dec = env.PinnedModel(in.SessionID, repoRoot(sess, in.Cwd), pinModel, pin, pinSource)
+				dec = env.PinnedModel(in.SessionID, repoRoot(sess, in.Cwd), pinModel, pin, curMode, pinSource)
 				trigger = "pinned-" + trigger
 			}
 		} else if t := env.Catalog.TierFor(catalog.ScopeMain, curModel, pin); t == nil {
 			pin, pinSource = "", "" // no such effort on this model: ignore the pin
 		} else if redecide || sess.Main.Tier != t.ID {
-			dec = env.Pinned(in.SessionID, repoRoot(sess, in.Cwd), t, pinSource)
+			dec = env.Pinned(in.SessionID, repoRoot(sess, in.Cwd), t, curMode, pinSource)
 			trigger = "pinned-" + trigger
 		}
 	}
-	// A bare go-ahead continues the work in progress: its tier is kept
-	// without asking Jev, which rates the bare word as trivial. Warm turns
-	// keep the decision; after a compaction or a pause it is carried over.
-	// A go-ahead to a proposal ("Want me to fix it?") starts that work,
-	// which may be bigger: it is routed.
-	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && goAhead(in.Prompt) &&
+	// A bare go-ahead continues the work in progress, without asking Jev,
+	// which rates the bare word as trivial: the tier and mode the work was
+	// decided at come back (a side question since may have lowered them),
+	// on a warm turn, after a compaction or after a pause; after a detour,
+	// the paused work when it needs more. A go-ahead to a proposal ("Want
+	// me to fix it?") starts that work, which may be bigger: it is routed,
+	// not below the work in progress (nor the paused work). Once a wrap-up
+	// closed the work, "ok" or "looks good" mostly acknowledges it: routed,
+	// Jev's relation says whether it reopens the work; unless that work was
+	// a detour and the paused work needs more, which the go-ahead goes
+	// back to.
+	followUp := ""
+	wip := sess.WorkInProgress()
+	back, _ := env.GoAheadWork(sess.Main, wip, sess.PausedWork(now), false)
+	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) && !env.Acknowledges(wip, sess.PausedWork(now)) &&
 		(trigger == "warm" || trigger == "compact" || trigger == "cold") &&
-		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) {
+		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) &&
+		(back == nil || !env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, back.Tier))) {
 		if tr == nil {
 			tr = readTranscript(in.TranscriptPath)
 		}
 		switch {
 		case trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant):
-		case trigger == "warm":
-			env.LogKept(in.SessionID, sess.Main, "go-ahead: continues the work in progress")
-			trigger = ""
+			followUp = router.FollowUpProposal
 		default:
-			dec = env.Carry(in.SessionID, sess.Main, trigger)
-			trigger = "carried-" + trigger
+			// Typed mid-turn, it lowers nothing.
+			if dec, work = env.Carry(router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger, RepoDir: in.Cwd,
+				Context: sess.ContextTokens, Current: sess.Main, Work: wip, Paused: sess.PausedWork(now),
+				MidTurn: tr.MidTurnFor(in.Prompt)}); dec == nil {
+				trigger = "" // kept
+			} else {
+				trigger = "carried-" + trigger
+			}
 		}
 	}
 	if trigger != "" && pin == "" && dec == nil { // no routing while pinned or carried
@@ -171,6 +200,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			signals = repo.Signals(ctx, in.Cwd)
 		}
 		req := mainRequest(env, in, sess, tr, signals, trigger)
+		req.FollowUp = followUp
 		// [model:auto] / [effort:auto] handing a pin back: say so in the
 		// ledger (and to Jev) — the move off a pinned model is the user's call.
 		if (etag == "auto" || mtag == "auto") && sess.Pin != "" {
@@ -195,13 +225,17 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if out.TimedOut && !late {
 			spawnTrigger = trigger
 		}
+		work, asked = out.Work, out.Asked
 		if !out.Changed || (late && out.TimedOut) {
 			dec = nil
+		}
+		if late && out.TimedOut {
+			work = nil
 		}
 	}
 
 	var notice string
-	if late && dec == nil {
+	if late && dec == nil && work == nil {
 		return nil, nil
 	}
 	_, err = env.State.Update(in.SessionID, func(s *state.Session) bool {
@@ -210,7 +244,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				dec = nil // a newer prompt came in while Jev answered
 				return false
 			}
-			log.Printf("late decision %s: %s", in.SessionID, dec.Tier)
+			if dec != nil {
+				log.Printf("late decision %s: %s", in.SessionID, dec.Tier)
+			}
 		} else {
 			s.LastPromptAt = now
 		}
@@ -226,6 +262,13 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if !synthetic {
 			s.Pin, s.PinModel, s.PinSource = pin, pinModel, pinSource
 		}
+		if s.Work == nil && (dec != nil || work != nil) {
+			s.Work = s.WorkInProgress() // a session from before: the decision in force was its work
+		}
+		if s.Paused != nil && s.PausedWork(now) == nil {
+			s.Paused = nil // paused too long ago to be resumed
+		}
+		work.Apply(s, in.Prompt, now)
 		if dec != nil {
 			prev := s.Main
 			epoch := 1
@@ -258,6 +301,12 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			notice, s.UltracodeOn, s.UltracodeEpoch = UltracodeOn, true, s.Main.Epoch
 		case !want && s.UltracodeOn:
 			notice, s.UltracodeOn = UltracodeOff, false
+			if w := s.Work; w != nil && env.Catalog.Modes[w.Mode] != nil && env.Catalog.Modes[w.Mode].Workflows {
+				notice = UltracodeOffTurn
+			}
+		}
+		if n := askedNotice(env.Catalog, asked, s.Main); n != "" {
+			notice = strings.TrimSpace(notice + "\n\n" + n)
 		}
 		return true
 	})
@@ -274,6 +323,50 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, nil
 	}
 	return &Output{HookSpecificOutput: &Specific{HookEventName: "UserPromptSubmit", AdditionalContext: notice}}, nil
+}
+
+// askedNotice tells Claude that the effort or the model the user asked
+// for in words runs (d: the decision in force): without it Claude answers
+// that it can't change its own effort, or hands the work to a subagent on
+// the model asked. "" when nothing was asked, or the decision doesn't run
+// it (the budget cap, the repo's bounds).
+func askedNotice(c *catalog.Catalog, a *router.Asked, d *state.Decision) string {
+	if a == nil || d == nil {
+		return ""
+	}
+	var on []string
+	after := "(the automatic router already applied it)"
+	if a.Model != "" {
+		m := c.Model(a.Model)
+		if m == nil || d.Model != a.Model {
+			return ""
+		}
+		on = append(on, "on "+m.Label)
+		after = "(the automatic router already switched the model: no subagent is needed for that)"
+	}
+	if a.Effort != "" {
+		if d.Effort != a.Effort {
+			return ""
+		}
+		on = append(on, "at "+a.Effort+" effort")
+	}
+	what := "this work now runs"
+	if a.Turn {
+		what = "this answer runs"
+	}
+	return fmt.Sprintf("automodel: %s %s, as the user asked %s.", what, strings.Join(on, " "), after)
+}
+
+// modelEffort is the effort a model pin runs at: the first of efforts the
+// model supports, else its default tier's, else high ("" if none).
+func modelEffort(env *router.Env, model string, efforts ...string) string {
+	m := env.Catalog.Model(model)
+	for _, e := range append(efforts, env.Catalog.DefaultTier(catalog.ScopeMain).Effort, "high") {
+		if e != "" && m.SupportsEffort(e) {
+			return e
+		}
+	}
+	return ""
 }
 
 // perTurnOK reports whether an effort change on model keeps the prompt
@@ -342,15 +435,41 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	left := budget - reserve
 	st := map[string]any{"phase": phase}
 	signals := map[string]any{}
-	if asksMoreThinking(in.Prompt) {
-		signals["asks_more_thinking"] = true
-	}
 	task := tokens.Truncate(in.Prompt, left/3)
 	if task == "" && trigger == "compact" {
 		task = "(no new prompt yet: the work the compaction summary says comes next)"
 	}
 	st["task"] = task
 	left -= tokens.Estimate(task)
+	// The work in progress, for Jev to relate the prompt to: the prompt that
+	// started it (also after a compaction, when recent prompts are gone)
+	// and the level it was decided at; and the work a detour paused, which
+	// the prompt may go back to.
+	var work, paused *state.Work
+	if trigger != "initial" {
+		work, paused = sess.WorkInProgress(), sess.PausedWork(env.Now())
+	}
+	for _, w := range []struct {
+		key  string
+		work *state.Work
+	}{{"work_in_progress", work}, {"paused_work", paused}} {
+		if w.work == nil {
+			continue
+		}
+		m := map[string]any{}
+		if lv := router.WorkLevel(env.Catalog, w.work.Tier); lv != "" {
+			m["level"] = lv
+		}
+		if w.work.Done {
+			m["done"] = true // a wrap-up closed it
+		}
+		if w.work.Goal != "" {
+			g := tokens.Truncate(w.work.Goal, left/8)
+			m["goal"] = g
+			left -= tokens.Estimate(g)
+		}
+		st[w.key] = m
+	}
 	ctxTokens := sess.ContextTokens
 	if trigger == "compact" {
 		ctxTokens = 0 // the pre-compaction size is peak_context_tokens
@@ -392,6 +511,10 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		if sess.Main.Mode != "" {
 			cur["mode"] = sess.Main.Mode
 		}
+		if m := env.Catalog.Model(sess.Main.Model); sess.Main.Tier == state.PinnedTier && m != nil {
+			delete(cur, "tier") // a model outside the tiers, asked for this work
+			cur["model"] = m.Label
+		}
 		st["current"] = cur
 	}
 	session := map[string]any{}
@@ -413,7 +536,7 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		st["repo"] = r
 	}
 	req := router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger,
-		State: st, RepoDir: in.Cwd, Context: ctxTokens, RepoRoot: repoRoot(sess, in.Cwd)}
+		State: st, RepoDir: in.Cwd, Context: ctxTokens, RepoRoot: repoRoot(sess, in.Cwd), Work: work, Paused: paused}
 	if repoSignals != nil && repoSignals.Root != "" {
 		req.RepoRoot = repoSignals.Root
 	}
@@ -421,15 +544,20 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		st["user_signals"] = signals
 		req.Signals = signals
 	}
-	// Asking for more thinking is a floor: one tier above the current one.
-	if signals["asks_more_thinking"] == true && sess.Main != nil {
-		if cur := env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier); cur != nil {
-			for _, t := range env.Catalog.TiersByRank(catalog.ScopeMain) {
-				if t.Rank > cur.Rank {
-					req.MinTier = t.ID
-					break
-				}
-			}
+	// A prompt typed while Claude works, or a message from another
+	// session, never lowers the effort the work runs at.
+	req.MidTurn = trigger != "initial" && tr.MidTurnFor(in.Prompt)
+	req.Peer = transcript.IsPeer(in.Prompt)
+	if !req.Peer {
+		// What the user's words may ask for: Jev confirms each request;
+		// ultrathink is a keyword, a floor at xhigh.
+		model := env.Catalog.DefaultTier(catalog.ScopeMain).Model
+		if sess.Main != nil {
+			model = sess.Main.Model
+		}
+		req.Explicit = router.ExplicitCandidates(env.Catalog, in.Prompt, model)
+		if t := router.EffortTier(env.Catalog, model, "xhigh"); t != nil && router.Ultrathink(in.Prompt) {
+			req.MinTier = t.ID
 		}
 	}
 	return req
@@ -454,12 +582,6 @@ func repoRoot(sess *state.Session, cwd string) string {
 
 // goAhead reports whether a prompt is only a go-ahead.
 func goAhead(prompt string) bool { return router.GoAhead(prompt) }
-
-var moreThinkingRE = regexp.MustCompile(`(?i)\b(think (harder|more|deeply|carefully|it through)|ultrathink|take your time|be thorough|dig deeper|r[ée]fl[ée]chis (plus|bien|davantage|en profondeur)|prends (ton|le) temps|creuse (plus|bien|davantage))\b`)
-
-// asksMoreThinking reports whether a prompt explicitly asks for more
-// thinking.
-func asksMoreThinking(prompt string) bool { return moreThinkingRE.MatchString(prompt) }
 
 // ownCommand reports automodel's own slash commands (/why, /flag): they
 // only print what automodel knows, so they are neither routed nor logged,
@@ -488,12 +610,7 @@ func modelTag(c *catalog.Catalog, prompt string) string {
 	if want == "auto" {
 		return "auto"
 	}
-	for key, md := range c.Models {
-		if (key == want || md.Alias == want || md.APIID == want) && md.APIID != "" && md.Context >= c.Meta.MinMainContext() {
-			return key
-		}
-	}
-	return ""
+	return router.MainModel(c, want)
 }
 
 var effortTagRE = regexp.MustCompile(`(?i)\[effort:\s*(low|medium|high|xhigh|max|auto)\s*\]`)

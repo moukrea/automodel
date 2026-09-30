@@ -3,7 +3,9 @@ package eval
 import (
 	"fmt"
 	"io"
+	"maps"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/moukrea/automodel/internal/catalog"
@@ -24,8 +26,12 @@ type ScopeStats struct {
 	// MAE is the mean absolute rank distance between the label and Jev's
 	// top level (MAEDecision: the router's decision). Under/Over count
 	// decisions below/above the label.
-	MAE, MAEDecision   float64
-	Under, Over        int
+	MAE, MAEDecision float64
+	Under, Over      int
+	// FollowUnder counts the decisions below every acceptable tier on
+	// cases that hold the work (continue, extend, inform, side_question,
+	// resume, mid-turn, peer): the lowering the owner rejects.
+	FollowUnder        int
 	MeanPWant, MeanTop float64
 	// ECE is the expected calibration error of Jev's top probability
 	// against exact correctness (10 equal-width bins).
@@ -121,6 +127,9 @@ func ScopeMetrics(cat *catalog.Catalog, scope string, rs []Result) *ScopeStats {
 			switch {
 			case d < 0:
 				s.Under++
+				if r.holds() && rank[r.Decision] < minRank(rank, r.acceptSet()) {
+					s.FollowUnder++
+				}
 			case d > 0:
 				s.Over++
 			}
@@ -193,6 +202,14 @@ type Gate struct {
 	MinLabels   int
 	MaxShareGap float64 // |decision share − label share| of any tier
 	MaxMAE      float64 // router decision mean absolute rank error
+	// MaxFollowUnder is how many decisions may fall below the label on
+	// cases that hold the work in progress (none).
+	MaxFollowUnder int
+	// MaxBelowWork is how many decisions may fall below the work a case
+	// holds, efforts asked in words aside; MaxExplicitFalse how many
+	// requests of each kind (effort, mode, model) Jev may confirm on cases
+	// that don't make them. None: the owner's requirement (2026-09-30).
+	MaxBelowWork, MaxExplicitFalse int
 }
 
 // DefaultGate is set from the 2026-09 routing-quality work: the fixed
@@ -211,6 +228,9 @@ func (s *ScopeStats) Check(g Gate) []string {
 	if s.MAEDecision > g.MaxMAE {
 		out = append(out, fmt.Sprintf("%s: decision rank error %.2f > %.2f", s.Scope, s.MAEDecision, g.MaxMAE))
 	}
+	if s.FollowUnder > g.MaxFollowUnder {
+		out = append(out, fmt.Sprintf("%s: %d decisions below the label on follow-ups of the work in progress", s.Scope, s.FollowUnder))
+	}
 	for _, t := range s.Tiers {
 		c := s.Class[t]
 		if c.Labels >= g.MinLabels && c.RecallDecision < g.MinRecall {
@@ -221,6 +241,50 @@ func (s *ScopeStats) Check(g Gate) []string {
 		}
 	}
 	return out
+}
+
+// Check lists the gate's failures over a whole run: the main scope's tier
+// metrics, each mode's on/off decision (its recall on the cases labeled
+// on, and on those labeled off, held to the tiers' MinRecall from
+// MinLabels answers), the decisions below the work a case holds and the
+// requests confirmed where none was made.
+func (s Summary) Check(g Gate) []string {
+	st := s.Scopes[catalog.ScopeMain]
+	if st == nil {
+		return []string{"no main-scope answers"}
+	}
+	out := st.Check(g)
+	for _, m := range slices.Sorted(maps.Keys(s.ModeDecision)) {
+		c := s.ModeDecision[m]
+		for _, side := range []struct {
+			name string
+			n    Count
+		}{{"on", c.On}, {"off", c.Off}} {
+			if side.n.N >= g.MinLabels && float64(side.n.Right) < g.MinRecall*float64(side.n.N) {
+				out = append(out, fmt.Sprintf("main: mode %s %s right on %d/%d cases labeled %s", m, side.name, side.n.Right, side.n.N, side.name))
+			}
+		}
+	}
+	if n := s.Follow.N - s.Follow.Right; n > g.MaxBelowWork {
+		out = append(out, fmt.Sprintf("main: %d decisions below the work in progress they follow up", n))
+	}
+	for _, k := range ExplicitKinds {
+		if c := s.Explicit.ByKind[k]; c != nil && c.FP > g.MaxExplicitFalse {
+			out = append(out, fmt.Sprintf("main: %d %s requests confirmed on prompts that don't make them", c.FP, k))
+		}
+	}
+	return out
+}
+
+// minRank is the lowest rank of tiers (the acceptable ones of a case).
+func minRank(rank map[string]int, tiers []string) int {
+	lo := math.MaxInt
+	for _, t := range tiers {
+		if r, ok := rank[t]; ok {
+			lo = min(lo, r)
+		}
+	}
+	return lo
 }
 
 func inc(m map[string]map[string]int, a, b string) {
@@ -246,7 +310,7 @@ func PrintScope(w io.Writer, s *ScopeStats) {
 	fmt.Fprintf(w, "| | Jev top | router decision |\n|---|---:|---:|\n")
 	fmt.Fprintf(w, "| exact | %.0f%% | %.0f%% |\n| acceptable | %.0f%% | %.0f%% |\n", 100*s.Exact, 100*s.DecisionExact, 100*s.Acceptable, 100*s.DecisionOK)
 	fmt.Fprintf(w, "| mean abs rank error | %.2f | %.2f |\n", s.MAE, s.MAEDecision)
-	fmt.Fprintf(w, "\ndecisions below the label %d, above %d; mean p(label) %.2f, mean top p %.2f, ECE %.2f", s.Under, s.Over, s.MeanPWant, s.MeanTop, s.ECE)
+	fmt.Fprintf(w, "\ndecisions below the label %d (on follow-ups %d), above %d; mean p(label) %.2f, mean top p %.2f, ECE %.2f", s.Under, s.FollowUnder, s.Over, s.MeanPWant, s.MeanTop, s.ECE)
 	if s.Unstable > 0 {
 		fmt.Fprintf(w, "; top changed across runs on %.0f%% of cases", 100*s.Unstable)
 	}

@@ -61,6 +61,60 @@ func TestClientEffortPins(t *testing.T) {
 	}
 }
 
+// /effort keeps the ultracode mode unless the effort is below the mode's.
+func TestClientEffortPinKeepsTheMode(t *testing.T) {
+	p, _, _ := setup(t)
+	cat, _ := p.Catalog.Get()
+	p.State.Update("u", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh", Mode: "ultracode", Workflows: true}
+		return true
+	})
+	get := func() *state.Decision { s, _ := p.State.Load("u"); return s.Main }
+	p.observeClientEffort(cat, "u", "medium") // Claude Code's default
+	p.observeClientEffort(cat, "u", "max")
+	if d := get(); d.Tier != "max" || d.Mode != "ultracode" || !d.Workflows {
+		t.Fatalf("/effort max: %+v", d)
+	}
+	p.observeClientEffort(cat, "u", "high")
+	if d := get(); d.Tier != "high" || d.Mode != "" || d.Workflows {
+		t.Fatalf("/effort high: %+v", d)
+	}
+}
+
+// /effort on the model a work asked for in words pins that model at that
+// effort: a model outside the tiers has no tier to pin.
+func TestClientEffortPinsTheWorkModel(t *testing.T) {
+	p, _, _ := setup(t)
+	cat, _ := p.Catalog.Get()
+	p.State.Update("w", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: state.PinnedTier, Model: "claude-sonnet-5-5", APIID: "claude-sonnet-5-5", Effort: "high"}
+		s.Work = &state.Work{Tier: "high", Model: "claude-sonnet-5-5"}
+		return true
+	})
+	p.observeClientEffort(cat, "w", "medium") // Claude Code's default
+	p.observeClientEffort(cat, "w", "xhigh")
+	if s, _ := p.State.Load("w"); s.Pin != "xhigh" || s.PinModel != "claude-sonnet-5-5" || s.Main.Model != "claude-sonnet-5-5" || s.Main.Effort != "xhigh" {
+		t.Fatalf("/effort xhigh on the work's model: pin %q/%q, %+v", s.Pin, s.PinModel, s.Main)
+	}
+}
+
+// /effort below the mode's own effort on the work's model drops the mode,
+// as on the tiers.
+func TestClientEffortOnTheWorkModelKeepsModeRule(t *testing.T) {
+	p, _, _ := setup(t)
+	cat, _ := p.Catalog.Get()
+	p.State.Update("w", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: state.PinnedTier, Model: "claude-sonnet-5-5", APIID: "claude-sonnet-5-5", Effort: "xhigh", Mode: "ultracode", Workflows: true}
+		s.Work = &state.Work{Tier: "xhigh", Mode: "ultracode", Model: "claude-sonnet-5-5"}
+		return true
+	})
+	p.observeClientEffort(cat, "w", "medium") // Claude Code's default
+	p.observeClientEffort(cat, "w", "low")
+	if s, _ := p.State.Load("w"); s.Main.Effort != "low" || s.Main.Mode != "" || s.Main.Workflows || s.PinModel != "claude-sonnet-5-5" {
+		t.Fatalf("/effort low on the work's model: %+v", s.Main)
+	}
+}
+
 func ledgerDecisions(p *Proxy) ([]ledger.Decision, error) { return ledger.Decisions(p.Ledger.Path) }
 
 func TestPinnedModelRewrite(t *testing.T) {

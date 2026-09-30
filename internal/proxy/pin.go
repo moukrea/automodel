@@ -67,11 +67,20 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 		if s.Main == nil {
 			return true
 		}
-		if s.PinModel != "" { // pinned model: /effort changes its effort
-			if m := cat.Model(s.PinModel); m != nil && m.SupportsEffort(effort) && s.Main.Effort != effort {
+		// A pinned model, or the model a work asked for in words runs on:
+		// /effort changes its effort (and pins it there).
+		pm := s.PinModel
+		if w := s.Work; pm == "" && w != nil && w.Model != "" && w.Model == s.Main.Model {
+			pm = w.Model
+		}
+		if pm != "" {
+			if m := cat.Model(pm); m != nil && m.SupportsEffort(effort) && s.Main.Effort != effort {
 				d := *s.Main
 				d.Effort, d.Cause, d.DecidedAt = effort, "/effort", time.Now()
-				s.Main, s.Pin, s.PinSource = &d, effort, "/effort"
+				if !cat.KeepsMode(d.Mode, effort) { // the mode would raise the pinned effort
+					d.Mode, d.Workflows = "", false
+				}
+				s.Main, s.Pin, s.PinModel, s.PinSource = &d, effort, pm, "/effort"
 				if perTurn(cat, m) && !s.PerTurnRejected && s.EffortBase != "" {
 					s.PendingEffort = &state.PendingEffort{Effort: effort, CreatedAt: time.Now()}
 				}
@@ -90,7 +99,11 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 		s.Pin, s.PinSource = effort, "/effort"
 		if s.Main.Tier != t.ID {
 			d := *s.Main
-			d.Tier, d.Model, d.Effort, d.Trigger, d.Cause, d.Mode, d.Workflows = t.ID, t.Model, t.Effort, "pinned", "/effort", "", false
+			d.Tier, d.Model, d.Effort, d.Trigger, d.Cause = t.ID, t.Model, t.Effort, "pinned", "/effort"
+			// The mode stays on unless the pinned effort is below its own.
+			if !cat.KeepsMode(d.Mode, t.Effort) {
+				d.Mode, d.Workflows = "", false
+			}
 			if m := cat.Model(t.Model); m != nil {
 				d.APIID = m.APIID
 			}
@@ -110,7 +123,7 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 	}
 	if pinned != nil {
 		rec := ledger.Decision{TS: pinned.DecidedAt, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain,
-			Trigger: "pinned", Cause: "/effort", Chosen: pinned.Tier, Model: pinned.APIID, Effort: pinned.Effort, Confidence: 1}
+			Trigger: "pinned", Cause: "/effort", Chosen: pinned.Tier, Model: pinned.APIID, Effort: pinned.Effort, Mode: pinned.Mode, Confidence: 1}
 		if err := p.Ledger.Append(rec); err != nil {
 			log.Printf("ledger: %v", err)
 		}

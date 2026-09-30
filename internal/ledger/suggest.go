@@ -67,7 +67,7 @@ func Suggest(ds []Decision, o SuggestOptions) []Suggestion {
 			if in == "" {
 				in = pick
 			}
-			if rank(in) < floor && d.Signals["asks_more_thinking"] == true {
+			if rank(in) < floor && d.AskedMoreThinking() {
 				h.think++
 			}
 			if rank(in) < floor && d.Signals["previous_turn_interrupted"] == true {

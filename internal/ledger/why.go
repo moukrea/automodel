@@ -111,8 +111,11 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	case d.Trigger == "pinned":
 		fmt.Fprintf(w, "  → %s, pinned by %s (routing paused until released)\n", result, d.Cause)
 		return
+	case d.Skipped && !d.Kept && d.Hold != "":
+		fmt.Fprintf(w, "  → %s (was %s) without asking Jev: %s%s\n", result, d.From, d.Hold, goAheadWork(d))
+		return
 	case d.Skipped:
-		fmt.Fprintf(w, "  → keeps %s without asking Jev: %s\n", result, d.KeepReason)
+		fmt.Fprintf(w, "  → keeps %s without asking Jev: %s%s\n", result, d.KeepReason, goAheadWork(d))
 		return
 	case d.Trigger == "fallback":
 		fmt.Fprintf(w, "  ⚠ Jev failed (%s): default tier %s\n", d.Error, result)
@@ -198,6 +201,104 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 	if len(why) > 0 {
 		fmt.Fprintln(w, "  "+strings.Join(why, " · "))
 	}
+	if l := workLine(d, o); l != "" {
+		fmt.Fprintln(w, "  "+l)
+	}
+}
+
+// workLine says how the prompt relates to the work in progress, what it
+// asked for in words, and why the tier was held at the work's level or
+// left to the prompt's own.
+func workLine(d Decision, o WhyOptions) string {
+	var parts []string
+	if len(d.Relation) > 0 {
+		parts = append(parts, "relation: "+ranked(d.Relation, 2))
+	}
+	if len(d.Explicit) > 0 {
+		parts = append(parts, "asks in words: "+ranked(d.Explicit, 3))
+	}
+	switch {
+	case d.Hold != "" && d.WorkTier != "":
+		parts = append(parts, d.Hold+" · work in progress "+d.WorkTier)
+	case d.Hold != "":
+		parts = append(parts, d.Hold)
+	case d.WorkTier != "" && len(d.Relation) > 0:
+		s := "separate from the work in progress (" + d.WorkTier + "): its own level"
+		switch {
+		case likeliest(d.Relation) == "aside":
+			s = "an aside: its own level for this turn, the work in progress (" + d.WorkTier + ") unchanged"
+		case d.WorkDone && d.Work == "":
+			s = "the work in progress (" + d.WorkTier + ") was wrapped up: its own level"
+		}
+		if o.Rank != nil && o.Rank(d.Scope, d.Chosen) < o.Rank(d.Scope, d.WorkTier) {
+			s += ", lower"
+		}
+		parts = append(parts, s)
+	}
+	switch d.Work {
+	case "new":
+		if d.Pauses && d.WorkTier != "" {
+			parts = append(parts, "starts a new work in progress, pausing the one at "+d.WorkTier)
+		} else {
+			parts = append(parts, "starts a new work in progress")
+		}
+	case "set":
+		parts = append(parts, "sets the work in progress")
+	case "raised":
+		parts = append(parts, "raises the work in progress")
+	case "resumed":
+		parts = append(parts, "resumes the paused work ("+d.PausedTier+")")
+	case "done":
+		parts = append(parts, "marks the work in progress done")
+	case "reopened":
+		parts = append(parts, "reopens the work in progress")
+	}
+	return strings.Join(parts, " · ")
+}
+
+// goAheadWork says what a go-ahead made of the work in progress.
+func goAheadWork(d Decision) string {
+	switch d.Work {
+	case "resumed":
+		return " (resumes the paused work)"
+	case "reopened":
+		return " (reopens the work in progress)"
+	}
+	return ""
+}
+
+// likeliest is the likeliest entry of a probability map.
+func likeliest(p map[string]float64) string {
+	best, bp := "", -1.0
+	for k, v := range p {
+		if v > bp || (v == bp && k < best) {
+			best, bp = k, v
+		}
+	}
+	return best
+}
+
+// ranked lists the n likeliest entries of a probability map ("extend 0.94,
+// continue 0.04"), leaving out those under 0.01.
+func ranked(p map[string]float64, n int) string {
+	keys := make([]string, 0, len(p))
+	for k := range p {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if p[keys[i]] != p[keys[j]] {
+			return p[keys[i]] > p[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	var out []string
+	for i, k := range keys {
+		if i >= n || (i > 0 && p[k] < 0.01) {
+			break
+		}
+		out = append(out, fmt.Sprintf("%s %.2f", k, p[k]))
+	}
+	return strings.Join(out, ", ")
 }
 
 // FollowFrom prints the decisions of a session appended after the first

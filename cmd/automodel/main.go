@@ -62,7 +62,7 @@ Usage:
   automodel tuning [use default|custom | init [--full] | diff | show [--default] | path]
                                        the routing tuning: automodel's default, or your custom file over it
   automodel catalog check [--json] [--catalog path]
-  automodel eval [--catalog path] [--cases file] [--format score|choice] [--json]
+  automodel eval [--catalog path] [--cases file] [--split train|test] [--repeat n] [--answers run.json] [--check] [--json]
                                        measure Jev's routing answers on labeled cases
   automodel install [--dry-run] [--catalog path] [--settings path]
                                        print (or apply) the Claude Code settings, config and service
@@ -261,7 +261,8 @@ func evalCmd(cfg *config.Config, args []string) error {
 	repeat := fs.Int("repeat", 1, "ask every case this many times (Jev varies a little between calls)")
 	split := fs.String("split", "all", "cases to run: train, test (held out) or all")
 	summary := fs.Bool("summary", false, "print the summary only, without the per-case table")
-	check := fs.Bool("check", false, "fail unless the main scope passes the regression gate (exact accuracy, recall per tier, tier share vs label share, rank error)")
+	answers := fs.String("answers", "", "re-judge the answers of a saved --json run with this catalog, without asking Jev")
+	check := fs.Bool("check", false, "fail unless the main scope passes the regression gate (exact accuracy, recall per tier, tier share vs label share, rank error, the mode's on/off recall, no follow-up below its work, no request confirmed where none was made)")
 	fs.Parse(args)
 	if *catPath != "" {
 		// A whole catalog is evaluated alone; a partial file (a custom
@@ -288,8 +289,20 @@ func evalCmd(cfg *config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
-	cs = eval.Filter(cs, *split)
-	rs := eval.Run(context.Background(), env, cs, *format, *parallel, *repeat)
+	var rs []eval.Result
+	if *answers != "" {
+		var saved struct{ Results []eval.Result }
+		b, err := os.ReadFile(*answers)
+		if err == nil {
+			err = json.Unmarshal(b, &saved)
+		}
+		if err != nil {
+			return fmt.Errorf("answers: %w", err)
+		}
+		rs = eval.Rejudge(env, saved.Results)
+	} else {
+		rs = eval.Run(context.Background(), env, eval.Filter(cs, *split), *format, *parallel, *repeat)
+	}
 	sum := eval.Summarize(env.Catalog, rs)
 	if *asJSON {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"results": rs, "summary": sum})
@@ -300,11 +313,7 @@ func evalCmd(cfg *config.Config, args []string) error {
 		eval.Print(os.Stdout, env.Catalog, rs, sum)
 	}
 	if *check {
-		st := sum.Scopes[catalog.ScopeMain]
-		if st == nil {
-			return fmt.Errorf("check: no main-scope answers")
-		}
-		if fails := st.Check(eval.DefaultGate); len(fails) > 0 {
+		if fails := sum.Check(eval.DefaultGate); len(fails) > 0 {
 			return fmt.Errorf("regression gate failed:\n  %s", strings.Join(fails, "\n  "))
 		}
 		fmt.Println("regression gate: pass")

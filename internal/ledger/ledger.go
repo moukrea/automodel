@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/moukrea/automodel/internal/flock"
@@ -61,6 +62,23 @@ type Decision struct {
 	Signals    map[string]any     `json:"signals,omitempty"`    // user signals (interrupted turn, asked for more thinking)
 	Repo       string             `json:"repo,omitempty"`       // repository root, when known
 	BudgetCap  string             `json:"budget_cap,omitempty"` // tier lowered to the budget cap
+
+	// v3: the work in progress. ContinuesP and InformsP above are only in
+	// older records (the relation question replaced both).
+	Relation   map[string]float64 `json:"relation,omitempty"`    // the prompt's relation to the work in progress: Jev's probabilities
+	Explicit   map[string]float64 `json:"explicit,omitempty"`    // requests found in the prompt's words (effort_xhigh, mode_off...): Jev's yes-probability
+	WorkTier   string             `json:"work_tier,omitempty"`   // the work in progress's tier when deciding
+	WorkDone   bool               `json:"work_done,omitempty"`   // a wrap-up had closed it
+	PausedTier string             `json:"paused_tier,omitempty"` // the paused work's tier, when a detour paused some
+	Work       string             `json:"work,omitempty"`        // what the decision made of it: new, set, raised, resumed, done, reopened
+	Pauses     bool               `json:"pauses,omitempty"`      // new work below the work in progress, which it paused
+	Hold       string             `json:"hold,omitempty"`        // what set the tier besides the pick (the work in progress, a request)
+}
+
+// AskedMoreThinking reports a prompt that asked for more thinking: the
+// user signal of older records, or what raised the tier since (Hold).
+func (d Decision) AskedMoreThinking() bool {
+	return d.Signals["asks_more_thinking"] == true || strings.Contains(d.Hold, "more thinking") || strings.Contains(d.Hold, "ultrathink")
 }
 
 type Usage struct {

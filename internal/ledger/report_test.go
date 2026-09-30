@@ -41,3 +41,21 @@ func TestBuildReport(t *testing.T) {
 		t.Errorf("markdown:\n%s", b.String())
 	}
 }
+
+// A go-ahead that carried the work on (skipped, not kept) is a switch;
+// one that changed nothing is skipped.
+func TestReportCountsCarriedSwitches(t *testing.T) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	lines := []string{
+		`{"ts":"` + now + `","kind":"decision","session_id":"a","scope":"main","trigger":"warm","warm":true,"from":"low","chosen":"xhigh","mode":"ultracode","skipped":true,"hold":"go-ahead: back to the work in progress"}`,
+		`{"ts":"` + now + `","kind":"decision","session_id":"a","scope":"main","trigger":"warm","warm":true,"from":"xhigh","chosen":"xhigh","kept":true,"skipped":true,"keep_reason":"go-ahead: continues the work in progress"}`,
+	}
+	rep, err := BuildReport(strings.NewReader(strings.Join(lines, "\n")), time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := rep.Scopes["main"]
+	if w := m.Warm; w.Evaluated != 2 || w.Switched != 1 || w.Skipped != 1 || w.Transition["low→xhigh"] != 1 || m.Tiers["xhigh"] != 1 || m.Modes["ultracode"] != 1 {
+		t.Errorf("main = %+v, warm %+v", m, m.Warm)
+	}
+}

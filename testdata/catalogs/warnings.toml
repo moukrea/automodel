@@ -8,6 +8,7 @@ jev_model = "typesafe/jev-1.13"
 default_main_tier = "cheap"
 default_subagent_tier = "sub"
 long_context_beta = "context-1m-2025-08-07"
+continues_threshold = 0.8
 
 [models.a]
 status = "active"
@@ -82,3 +83,9 @@ rank = 3
 model = "a"
 effort = "high"
 criteria = "sub3"
+
+# Replaced by [questions.relation]: read, ignored.
+[questions.informs]
+question = "Does it only inform?"
+yes = "A fact."
+no = "A request."

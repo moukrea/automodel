@@ -96,13 +96,14 @@ type Features struct {
 	// effort against the cost of switching (cache rebuild), and only switches
 	// on a warm turn when the decision is confident enough.
 	CostAware bool `toml:"cost_aware"`
-	// FastPath keeps the current tier without asking Jev on warm turns whose
-	// prompt is a bare go-ahead ("yes", "continue", "vas-y"): it continues
-	// the work in progress.
+	// FastPath brings back the work in progress's tier and mode without
+	// asking Jev when the prompt is a bare go-ahead ("yes", "continue",
+	// "oui, vas-y"): it continues that work.
 	FastPath bool `toml:"fast_path"`
 
-	// WarmMinConfidence is the confidence a warm switch that costs something
-	// (a cache rebuild) needs; a free per-turn effort change follows Jev.
+	// WarmMinConfidence is the confidence a warm downgrade that costs
+	// something (a cache rebuild) needs; a free per-turn effort change only
+	// answers to the work in progress (router.Judge).
 	WarmMinConfidence float64 `toml:"warm_min_confidence"`
 	// WarmTimeout bounds the Jev call on warm turns (on timeout nothing changes).
 	// 4s like the initial call: on 2026-09-28 Jev's latency on OpenRouter went

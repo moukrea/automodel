@@ -13,7 +13,7 @@ import (
 // Over the daily cap, routing stays at or below max_tier_when_over, even on
 // a go-ahead; a pin still wins; the status line and the ledger say so.
 func TestBudgetCap(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.95, ultra: 0.9, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.95, ultra: 0.9}}}
 	env := setup(t, fj)
 	env.Cfg.Budget.USDPerDay = 5
 	markJev(t, env, "s1")

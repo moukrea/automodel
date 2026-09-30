@@ -25,6 +25,8 @@ STANDARD_CONTEXT = 200_000
 DEFAULT_MAIN_MIN_CONTEXT = 1_000_000
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 SCOPES = ["main", "subagent"]
+# Options of the relation question (mirrors catalog.Relations).
+RELATIONS = ["continue", "extend", "inform", "side_question", "aside", "resume", "wrap_up", "new_task"]
 META_REQUIRED = ["last_refresh", "benchmark", "benchmark_version", "jev_model",
                  "default_main_tier", "default_subagent_tier"]
 
@@ -211,6 +213,36 @@ def validate(cat: dict, today: dt.date, stale_days: int, dom: dict) -> list[dict
             prev = (tid, c)
     if meta.get("underprovision_penalty", 0) < 0:
         err("meta.underprovision_penalty must be >= 0")
+
+    questions = cat.get("questions", {})
+    rel = questions.get("relation")
+    if rel is not None:
+        if not rel.get("question"):
+            err("questions.relation: question is required")
+        opts = rel.get("options", {})
+        for oid in sorted(opts):
+            if oid not in RELATIONS:
+                err(f"questions.relation: unknown option {oid} (want {RELATIONS})")
+            elif not opts[oid].get("what"):
+                err(f"questions.relation.options.{oid}: what is required")
+        for oid in RELATIONS:
+            if oid not in opts:
+                err(f"questions.relation: option {oid} is missing")
+    expl = questions.get("explicit")
+    if expl is not None:
+        for name, want in (("question", "{x}"), ("off_question", "{x}"), ("model_question", "{x}"),
+                           ("effort", "{v}"), ("mode", "{v}"), ("model", "{v}")):
+            if expl.get(name) and want not in expl[name]:
+                err(f"questions.explicit.{name} must contain {want}")
+    for name in ("relation_separate_threshold", "explicit_threshold", "explicit_model_threshold"):
+        if not 0 <= meta.get(name, 0) <= 1:
+            err(f"meta.{name} must be between 0 and 1")
+    for name, present in (("meta.continues_threshold", bool(meta.get("continues_threshold"))),
+                          ("meta.informs_threshold", bool(meta.get("informs_threshold"))),
+                          ("questions.continues", "continues" in questions),
+                          ("questions.informs", "informs" in questions)):
+        if present:
+            warn(f"{name}: deprecated, ignored (the relation question replaced it)")
 
     version = meta.get("benchmark_version", "")
     for scope in sorted(tiers):

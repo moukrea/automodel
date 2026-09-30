@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,17 +27,21 @@ import (
 )
 
 // fa is a scripted Jev reading: the tier Jev leans to, its confidence,
-// the ultracode yes-probability and the continuation yes-probability.
+// the ultracode yes-probability, the prompt's relation to the work in
+// progress (rel at relP: new_task at 0.95 by default, separate work that
+// gets its own level) and the yes-probability of the explicit requests
+// (x, by request: effort_xhigh, mode_off...; 0.02 by default).
 type fa struct {
 	tier  string
 	conf  float64
 	ultra float64
-	cont  float64
-	inf   float64
 	asked float64 // asked tiers (tier_*)
+	rel   string
+	relP  float64
+	x     map[string]float64
 }
 
-func answer(tier string, conf float64) fa { return fa{tier: tier, conf: conf, ultra: 0.05, cont: 0.1} }
+func answer(tier string, conf float64) fa { return fa{tier: tier, conf: conf, ultra: 0.05} }
 
 // fakeJev answers every request with the next queued reading (the last one
 // repeats), shaped like Jev's Score and Noul answers.
@@ -106,17 +111,28 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			answers[id] = map[string]any{"type": "score", "probabilities": probs, "confidence": a.conf}
 		case "noul":
 			v := a.ultra
-			if id == jev.QContinues {
-				v = a.cont
-			}
-			if id == jev.QInforms {
-				v = a.inf
-			}
 			if strings.HasPrefix(id, jev.QTierPfx) {
 				v = a.asked
 			}
+			if x, ok := strings.CutPrefix(id, jev.QExplicitPfx); ok {
+				v = 0.02
+				if p, ok := a.x[x]; ok {
+					v = p
+				}
+			}
 			answers[id] = map[string]any{"type": "noul", "noul": v}
 		case "choice":
+			if id == jev.QRelation {
+				rel, p := cmp.Or(a.rel, catalog.RelationNewTask), cmp.Or(a.relP, 0.95)
+				opts, _ := q.Criteria.(map[string]any) // the options asked
+				probs := map[string]float64{}
+				for r := range opts {
+					probs[r] = (1 - p) / float64(len(opts)-1)
+				}
+				probs[rel] = p
+				answers[id] = map[string]any{"type": "choice", "choice": rel, "confidence": p, "probabilities": probs}
+				continue
+			}
 			answers[id] = map[string]any{"type": "choice", "choice": a.tier, "confidence": a.conf, "probabilities": map[string]float64{a.tier: a.conf}}
 		}
 	}
@@ -193,7 +209,7 @@ func markJev(t *testing.T, env *router.Env, sid string) {
 }
 
 func TestDecideLifecycle(t *testing.T) {
-	ultra := fa{tier: "xhigh", conf: 0.9, ultra: 0.9, cont: 0.1}
+	ultra := fa{tier: "xhigh", conf: 0.9, ultra: 0.9}
 	fj := &fakeJev{answers: []fa{ultra}}
 	env := setup(t, fj)
 	sid := "s1"
@@ -212,21 +228,26 @@ func TestDecideLifecycle(t *testing.T) {
 	if st := fj.last().State.(map[string]any); st["phase"] != "initial" || !strings.Contains(st["task"].(string), "Audit") {
 		t.Errorf("state = %v", st)
 	}
-	if q := fj.last().Questions; q[jev.QLevel].Type != "score" || q[jev.QModePfx+"ultracode"].Type != "noul" || q[jev.QContinues].Type != "" || q[jev.QInforms].Type != "" {
+	if q := fj.last().Questions; q[jev.QLevel].Type != "score" || q[jev.QModePfx+"ultracode"].Type != "noul" || q[jev.QRelation].Type != "" {
 		t.Errorf("initial questions = %+v", q)
 	}
 	sess, _ := env.State.Load(sid)
 	if sess.Main.Tier != "xhigh" || sess.Main.Mode != "ultracode" || sess.Main.Effort != "xhigh" || !sess.Main.Workflows || sess.Main.Epoch != 1 {
 		t.Fatalf("main = %+v", sess.Main)
 	}
+	if w := sess.Work; w == nil || w.Tier != "xhigh" || w.Mode != "ultracode" || !strings.Contains(w.Goal, "Audit") {
+		t.Fatalf("work in progress = %+v", w)
+	}
 
-	// warm "continue": Jev is asked (with the continuation question), the
-	// tier is kept, no second notice.
-	fj.answers = []fa{{tier: "xhigh", conf: 0.9, ultra: 0.5, cont: 0.9}}
+	// warm "continue": Jev is asked (with the relation question and the
+	// work in progress), the tier is kept, no second notice.
+	fj.answers = []fa{{tier: "medium", conf: 0.9, ultra: 0.1, rel: "continue"}}
 	if out := prompt("continue with the remaining modules"); out != nil {
 		t.Errorf("unexpected output %+v", out)
 	}
-	if fj.calls() != 2 || fj.last().Questions[jev.QContinues].Type != "noul" || fj.last().State.(map[string]any)["phase"] != "warm" {
+	st := fj.last().State.(map[string]any)
+	if wip, _ := st["work_in_progress"].(map[string]any); fj.calls() != 2 || fj.last().Questions[jev.QRelation].Type != "choice" || st["phase"] != "warm" ||
+		wip["level"] != "xhigh" || !strings.Contains(fmt.Sprint(wip["goal"]), "Audit") {
 		t.Errorf("warm call: %d calls, %+v", fj.calls(), fj.last())
 	}
 	if sess, _ = env.State.Load(sid); sess.Main.Epoch != 1 || sess.Main.Mode != "ultracode" {
@@ -243,7 +264,7 @@ func TestDecideLifecycle(t *testing.T) {
 	if out == nil || !strings.Contains(out.HookSpecificOutput.AdditionalContext, "Ultracode is now off") {
 		t.Fatalf("expected off notice, got %+v", out)
 	}
-	st := fj.last().State.(map[string]any)
+	st = fj.last().State.(map[string]any)
 	if st["phase"] != "post_compact" || !strings.Contains(st["compaction_summary"].(string), "fixed three SQL injections") ||
 		st["current"].(map[string]any)["tier"] != "xhigh" {
 		t.Errorf("compact state = %v", st)
@@ -282,7 +303,8 @@ func TestDecideLifecycle(t *testing.T) {
 	}
 }
 
-// warm sets up a session already on tier (epoch 1, context ctx tokens).
+// warm sets up a session already on tier (epoch 1, context ctx tokens),
+// from before the work in progress was recorded (it is the decision).
 func warmSession(t *testing.T, env *router.Env, sid, tier string, ctx int) {
 	// A calibrated session: 10 prompts at $0.30 each.
 	t.Helper()
@@ -292,7 +314,7 @@ func warmSession(t *testing.T, env *router.Env, sid, tier string, ctx int) {
 	d.Tier, d.Effort, d.Epoch = tt.ID, tt.Effort, 1
 	env.State.Update(sid, func(s *state.Session) bool {
 		s.Main, s.ContextTokens, s.LastPromptAt, s.EffortBase = d, ctx, time.Now(), tier
-		s.Prompts, s.SpendUSD = 10, 3
+		s.Prompts, s.SpendUSD, s.Work = 10, 3, nil
 		return true
 	})
 }
@@ -308,25 +330,25 @@ func TestWarmDecisions(t *testing.T) {
 	// A confident switch to a separate, lighter step: effort changes via a
 	// pending per-turn mark (the cache is kept).
 	warmSession(t, env, "w1", "xhigh", 300_000)
-	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.1, ultra: 0.05}}
+	fj.answers = []fa{{tier: "low", conf: 0.9, ultra: 0.05, rel: "wrap_up"}}
 	decide("w1", "Now write the commit message")
 	if s := main("w1"); s.Main.Tier != "low" || s.PendingEffort == nil || s.PendingEffort.Effort != "low" || s.EffortBase != "xhigh" {
 		t.Errorf("per-turn switch: %+v / pending %+v / base %q", s.Main, s.PendingEffort, s.EffortBase)
 	}
 
-	// A free switch (per-turn effort) follows Jev even when it is unsure
-	// or the prompt continues the work: holding the tier made sessions sticky.
+	// A free switch (per-turn effort) on separate work follows Jev even
+	// when it is unsure; a follow-up of the work keeps its tier.
 	warmSession(t, env, "w2", "xhigh", 300_000)
-	fj.answers = []fa{{tier: "low", conf: 0.5, cont: 0.1}}
+	fj.answers = []fa{{tier: "low", conf: 0.5}}
 	decide("w2", "hmm")
 	if s := main("w2"); s.Main.Tier == "xhigh" || s.PendingEffort == nil {
 		t.Errorf("free switch held by the confidence gate: %+v", s.Main)
 	}
 	warmSession(t, env, "w3", "xhigh", 300_000)
-	fj.answers = []fa{{tier: "medium", conf: 0.9, cont: 0.9}}
+	fj.answers = []fa{{tier: "medium", conf: 0.9, rel: "extend"}}
 	decide("w3", "ok fix that typo in the test fixture too")
-	if s := main("w3"); s.Main.Tier != "medium" {
-		t.Errorf("free switch held by the continuation gate: %+v", s.Main)
+	if s := main("w3"); s.Main.Tier != "xhigh" {
+		t.Errorf("a follow-up lowered the work in progress: %+v", s.Main)
 	}
 
 	// A switch that costs something (no per-turn effort: the cache is
@@ -334,13 +356,13 @@ func TestWarmDecisions(t *testing.T) {
 	// continues.
 	env.Cfg.Features.PerTurnEffort = false
 	warmSession(t, env, "w2c", "xhigh", 2_000)
-	fj.answers = []fa{{tier: "low", conf: 0.5, cont: 0.1}}
+	fj.answers = []fa{{tier: "low", conf: 0.5}}
 	decide("w2c", "hmm")
 	if s := main("w2c"); s.Main.Tier != "xhigh" {
 		t.Errorf("costly switch on low confidence: %+v", s.Main)
 	}
 	warmSession(t, env, "w3c", "xhigh", 2_000)
-	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.9}}
+	fj.answers = []fa{{tier: "low", conf: 0.9, rel: "continue"}}
 	decide("w3c", "ok and the other one")
 	if s := main("w3c"); s.Main.Tier != "xhigh" {
 		t.Errorf("costly downgrade of continuing work: %+v", s.Main)
@@ -350,28 +372,28 @@ func TestWarmDecisions(t *testing.T) {
 	// A prompt that only informs the work in progress keeps the decision,
 	// even where the switch would be free.
 	warmSession(t, env, "w5", "xhigh", 300_000)
-	fj.answers = []fa{{tier: "low", conf: 0.9, cont: 0.9, inf: 0.9}}
+	fj.answers = []fa{{tier: "low", conf: 0.9, rel: "inform"}}
 	decide("w5", "env vars win")
 	if s := main("w5"); s.Main.Tier != "xhigh" || s.PendingEffort != nil {
 		t.Errorf("informing prompt switched: %+v", s.Main)
 	}
-	if q := fj.last().Questions; q[jev.QInforms].Type != "noul" {
-		t.Errorf("warm questions lack informs: %+v", q)
+	if q := fj.last().Questions; q[jev.QRelation].Type != "choice" {
+		t.Errorf("warm questions lack the relation: %+v", q)
 	}
-	// ...unless it asks for more thinking.
+	// ...and asking for more thinking raises it (one tier above the work).
 	warmSession(t, env, "w6", "medium", 300_000)
-	fj.answers = []fa{{tier: "medium", conf: 0.9, cont: 0.9, inf: 0.9}}
+	fj.answers = []fa{{tier: "medium", conf: 0.9, rel: "inform", x: map[string]float64{"effort_more": 0.95}}}
 	decide("w6", "FYI it only fails on ARM. Think harder about it.")
-	if s := main("w6"); s.Main.Tier == "medium" {
-		t.Errorf("informing prompt held the tier despite asking for more thinking: %+v", s.Main)
+	if s := main("w6"); s.Main.Tier != "high" || s.Work.Tier != "high" {
+		t.Errorf("more thinking asked on a follow-up: %+v, work %+v", s.Main, s.Work)
 	}
 
-	// A continuation may upgrade.
+	// A continuation may upgrade, and raises the work in progress.
 	warmSession(t, env, "w4", "low", 50_000)
-	fj.answers = []fa{{tier: "high", conf: 0.9, cont: 0.9}}
+	fj.answers = []fa{{tier: "high", conf: 0.9, rel: "continue"}}
 	decide("w4", "yes, apply the fix")
-	if s := main("w4"); s.Main.Tier != "high" {
-		t.Errorf("continuation did not upgrade: %+v", s.Main)
+	if s := main("w4"); s.Main.Tier != "high" || s.Work.Tier != "high" {
+		t.Errorf("continuation did not upgrade: %+v, work %+v", s.Main, s.Work)
 	}
 
 	// Without per-turn effort an effort change rebuilds the cache: on a big
@@ -379,7 +401,7 @@ func TestWarmDecisions(t *testing.T) {
 	env.Cfg.Features.PerTurnEffort = false
 	warmSession(t, env, "w5", "xhigh", 800_000)
 	n := fj.calls()
-	fj.answers = []fa{{tier: "low", conf: 0.99, cont: 0}}
+	fj.answers = []fa{{tier: "low", conf: 0.99}}
 	decide("w5", "Now write the commit message")
 	if s := main("w5"); s.Main.Tier != "xhigh" || fj.calls() != n {
 		t.Errorf("expensive switch: tier %s, jev calls %d", s.Main.Tier, fj.calls()-n)
@@ -419,7 +441,7 @@ func TestDecideFallbackAndNonJev(t *testing.T) {
 	}
 	// Jev answers again: the issue clears.
 	fj.fail = false
-	fj.answers = []fa{{tier: "low", conf: 0.95, cont: 0.1}}
+	fj.answers = []fa{{tier: "low", conf: 0.95}}
 	run(t, env, "decide", map[string]any{"session_id": "s2", "prompt": "thanks, what does 409 mean?", "cwd": t.TempDir()})
 	if sess, _ = env.State.Load("s2"); sess.JevIssue != "" {
 		t.Errorf("jev issue not cleared: %q", sess.JevIssue)
@@ -615,7 +637,7 @@ func TestProxyRestartedByHook(t *testing.T) {
 }
 
 func TestEffortTagPins(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95}}}
 	env := setup(t, fj)
 	sid := "s1"
 	markJev(t, env, sid)
@@ -654,7 +676,7 @@ func TestEffortTagPins(t *testing.T) {
 }
 
 func TestGoAheadFastPath(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9}}}
 	env := setup(t, fj)
 	markJev(t, env, "s1")
 	cwd := t.TempDir()
@@ -699,7 +721,7 @@ func TestGoAheadFastPath(t *testing.T) {
 }
 
 func TestRepoPolicyPrivacyAndModes(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, ultra: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "xhigh", conf: 0.9, ultra: 0.95}}}
 	env := setup(t, fj)
 	markJev(t, env, "s1")
 	cwd := t.TempDir()
@@ -716,7 +738,7 @@ func TestRepoPolicyPrivacyAndModes(t *testing.T) {
 }
 
 func TestUserSignals(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95}}}
 	env := setup(t, fj)
 	markJev(t, env, "s1")
 	cwd := t.TempDir()
@@ -743,9 +765,11 @@ func TestUserSignals(t *testing.T) {
 			t.Fatal("the interruption marker was sent as a prompt")
 		}
 	}
-	// "Think harder": at least one tier up, even if Jev says low.
+	// "Think harder" (Jev confirms the request): at least one tier up, even
+	// if Jev says low.
 	sess, _ := env.State.Load("s1")
 	before := sess.Main.Tier
+	fj.answers = []fa{{tier: "low", conf: 0.95, x: map[string]float64{"effort_more": 0.93}}}
 	prompt("Hmm, think harder about the retry path")
 	sess, _ = env.State.Load("s1")
 	if sess.Main.Tier == before || sess.Main.Tier == "low" {
@@ -756,7 +780,7 @@ func TestUserSignals(t *testing.T) {
 func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }
 
 func TestTagsFromSyntheticPromptsIgnored(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95}}}
 	env := setup(t, fj)
 	markJev(t, env, "s1")
 	cwd := t.TempDir()
@@ -774,7 +798,7 @@ func TestTagsFromSyntheticPromptsIgnored(t *testing.T) {
 }
 
 func TestRepoBoundsWinOverSignalsAndPrivacyOnlyTightens(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "high", conf: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "high", conf: 0.95}}}
 	env := setup(t, fj)
 	env.Cfg.Privacy = "metadata"
 	markJev(t, env, "s1")
@@ -793,7 +817,7 @@ func TestRepoBoundsWinOverSignalsAndPrivacyOnlyTightens(t *testing.T) {
 }
 
 func TestModelTagPins(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95}}}
 	env := setup(t, fj)
 	markJev(t, env, "s1")
 	cwd := t.TempDir()
@@ -829,13 +853,13 @@ func TestModelTagPins(t *testing.T) {
 // Leaving a pinned model that no tier runs (Sonnet in the main session)
 // costs a cache rebuild: the ledger records it.
 func TestReleasedModelPinCost(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95}}}
 	env := setup(t, fj)
 	warmSession(t, env, "s2", "high", 60_000)
 	cwd := t.TempDir()
 	prompt := func(p string) { run(t, env, "decide", map[string]any{"session_id": "s2", "prompt": p, "cwd": cwd}) }
 	prompt("[model:sonnet] summarize the README")
-	fj.answers = []fa{{tier: "xhigh", conf: 0.9, cont: 0.1}}
+	fj.answers = []fa{{tier: "xhigh", conf: 0.9}}
 	prompt("[model:auto] think harder about the race")
 	all, _ := ledger.Decisions(env.Cfg.Ledger)
 	var last *ledger.Decision
@@ -850,7 +874,7 @@ func TestReleasedModelPinCost(t *testing.T) {
 }
 
 func TestOwnCommandsNotRouted(t *testing.T) {
-	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95, cont: 0.1}}}
+	fj := &fakeJev{answers: []fa{{tier: "low", conf: 0.95}}}
 	env := setup(t, fj)
 	markJev(t, env, "s1")
 	cwd := t.TempDir()
@@ -941,7 +965,7 @@ func TestLateDecision(t *testing.T) {
 	in := map[string]any{"session_id": "l1", "prompt": "Now write the commit message", "cwd": t.TempDir()}
 
 	// Jev is slow: the prompt goes on at xhigh, and a late decision is started.
-	fj.delay, fj.answers = 300*time.Millisecond, []fa{{tier: "low", conf: 0.95, cont: 0.1}}
+	fj.delay, fj.answers = 300*time.Millisecond, []fa{{tier: "low", conf: 0.95}}
 	run(t, env, "decide", in)
 	if s, _ := env.State.Load("l1"); s.Main.Tier != "xhigh" || got.trigger != "warm" || got.in == nil {
 		t.Fatalf("timeout: main %+v, late %q", s.Main, got.trigger)
@@ -955,7 +979,7 @@ func TestLateDecision(t *testing.T) {
 	}
 	// A late decision for an older prompt is dropped.
 	env.State.Update("l1", func(s *state.Session) bool { s.LastPromptAt = time.Now(); return true })
-	fj.answers = []fa{{tier: "max", conf: 0.95, cont: 0.1}}
+	fj.answers = []fa{{tier: "max", conf: 0.95}}
 	run(t, env, "decide", in)
 	if s, _ := env.State.Load("l1"); s.Main.Tier != "low" {
 		t.Errorf("stale late decision applied: %+v", s.Main)
