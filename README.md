@@ -151,7 +151,9 @@ natively instead: the routed model and effort in place of Claude Code's
 `Jev (auto)`, then the confidence and flags in its own `route` segment, fitted
 to the terminal width. A status line whose command contains `agentline` is
 left in place by `install`, the self-update and `uninstall` (never
-chained), and `doctor` reports `agentline shows the automodel segment`.
+chained), and `doctor` reports `agentline shows the automodel segment`. The same goes for a wrapper script that runs the automodel status line
+itself (jaunt's rich view does this): it is kept as is, never replaced or
+chained.
 
 **Other status line authors**: `automodel [--config path] statusline --json`
 reads Claude Code's status line JSON on stdin, records model switches like

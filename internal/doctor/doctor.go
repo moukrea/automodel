@@ -220,6 +220,8 @@ func (e Env) settings() []Result {
 		out = append(out, Result{OK, "statusline", "automodel segment set", ""})
 	case "agentline":
 		out = append(out, Result{OK, "statusline", "agentline shows the automodel segment", ""})
+	case "wrapper":
+		out = append(out, Result{OK, "statusline", "a wrapper script runs the automodel status line (left in place)", ""})
 	default:
 		out = append(out, Result{Fail, "statusline", "not the automodel statusline", fix})
 	}

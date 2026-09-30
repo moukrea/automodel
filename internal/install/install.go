@@ -63,7 +63,54 @@ func (o Options) statuslineCmd() string {
 // automodel-agentline, a config under ~/.config/agentline/): it is retargeted
 // by install and removed by uninstall like any other.
 func delegating(cmd string) bool {
-	return !owned(cmd) && strings.Contains(cmd, "agentline")
+	return !owned(cmd) && (strings.Contains(cmd, "agentline") || wrapper(cmd))
+}
+
+// wrapper reports whether a statusLine command is a script that runs the
+// automodel status line itself (jaunt's rich view wraps the status line
+// this way and restores it when the view is off). Replacing it would start
+// a tug of war with the tool that wrote it, and chaining it would loop:
+// the wrapper calls automodel, which would call the wrapper back.
+func wrapper(cmd string) bool {
+	for _, f := range shellFields(cmd) {
+		st, err := os.Stat(f)
+		if err != nil || !st.Mode().IsRegular() || st.Size() > 64<<10 {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			return false
+		}
+		s := string(b)
+		return strings.Contains(s, "automodel") && strings.Contains(s, "statusline")
+	}
+	return false
+}
+
+// shellFields splits a command line on spaces, keeping quoted parts whole.
+func shellFields(cmd string) []string {
+	var out []string
+	var cur strings.Builder
+	quote := rune(0)
+	for _, r := range cmd {
+		switch {
+		case quote != 0 && r == quote:
+			quote = 0
+		case quote == 0 && (r == '"' || r == '\''):
+			quote = r
+		case quote == 0 && r == ' ':
+			if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // statuslineCommand is settings.json's statusLine command ("" if none).
@@ -135,7 +182,7 @@ func Apply(o Options) error {
 		return err
 	}
 	if c := statuslineCommand(settings); delegating(c) {
-		o.Log("statusline kept: agentline shows the automodel segment (%s)", c)
+		o.Log("statusline kept: it shows the automodel segment (%s)", c)
 	}
 	if err := writeConfig(o, chainable(settings)); err != nil {
 		return err
@@ -250,8 +297,10 @@ func InspectSettings(o Options, cfg *config.Config) (*SettingsReport, error) {
 	switch c := statuslineCommand(s); {
 	case c == o.statuslineCmd():
 		r.StatuslineBy = "automodel"
-	case delegating(c):
+	case strings.Contains(c, "agentline") && delegating(c):
 		r.StatuslineBy = "agentline"
+	case delegating(c):
+		r.StatuslineBy = "wrapper"
 	}
 	r.Statusline = r.StatuslineBy != ""
 	return r, nil
