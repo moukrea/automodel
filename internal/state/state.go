@@ -38,6 +38,33 @@ type Decision struct {
 // catalog's tiers ([model:X]): the proxy applies its model and effort as is.
 const PinnedTier = "pinned"
 
+// Work is the work in progress of the main session: the tier and mode it
+// needs and the prompt that started it. It is set by the first decision, a
+// prompt that starts separate work, or an effort or mode asked in words;
+// raised when a follow-up needs more; kept across side questions, wrap-ups,
+// pins and compactions.
+type Work struct {
+	Tier  string    `json:"tier"`
+	Mode  string    `json:"mode,omitempty"`
+	Goal  string    `json:"goal,omitempty"` // head of the prompt that started it
+	Since time.Time `json:"since,omitzero"`
+}
+
+// WorkGoalChars bounds the goal kept for the work in progress.
+const WorkGoalChars = 400
+
+// WorkInProgress is the session's work in progress; a session from before
+// it was recorded takes its decision in force (nil: none, or a model pin).
+func (s *Session) WorkInProgress() *Work {
+	if s.Work != nil {
+		return s.Work
+	}
+	if s.Main == nil || s.Main.Tier == PinnedTier || s.Main.Tier == "" {
+		return nil
+	}
+	return &Work{Tier: s.Main.Tier, Mode: s.Main.Mode}
+}
+
 // PendingAgent is registered by the agent hook and bound by the proxy to the
 // X-Claude-Code-Agent-Id of the subagent whose first message contains Prompt.
 type PendingAgent struct {
@@ -56,6 +83,9 @@ type Session struct {
 	ModelSource string `json:"model_source,omitempty"`
 
 	Main *Decision `json:"main,omitempty"`
+	// Work is the work in progress: follow-ups of it (go-aheads, additions,
+	// side questions, mid-turn remarks) keep at least its tier and mode.
+	Work *Work `json:"work,omitempty"`
 
 	LastPromptAt  time.Time `json:"last_prompt_at,omitzero"`
 	LastAPIAt     time.Time `json:"last_api_at,omitzero"`
