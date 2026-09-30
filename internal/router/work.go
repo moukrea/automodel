@@ -127,7 +127,10 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 	case done && top != catalog.RelationContinue && top != catalog.RelationExtend:
 		return nil, "" // a question or a fact after the work was wrapped up
 	}
-	return work, fmt.Sprintf("follow-up of the work in progress (%s %.2f)", top, p)
+	// The relation that holds: the likeliest that follows the work up (a
+	// separate one may be likelier on its own, below the threshold).
+	rel, q := rd.followTop()
+	return work, fmt.Sprintf("follow-up of the work in progress (%s %.2f)", rel, q)
 }
 
 // resumes reports a prompt that goes back to the paused work: resume is

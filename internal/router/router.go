@@ -699,6 +699,18 @@ func (rd Reading) relationTop() (string, float64) {
 	return top, bp
 }
 
+// followTop is the most likely relation that follows the work up (none of
+// the separate ones) and its probability.
+func (rd Reading) followTop() (string, float64) {
+	top, bp := "", 0.0
+	for _, r := range catalog.Relations {
+		if p := rd.relation[r]; p > bp && !catalog.Separate(r) {
+			top, bp = r, p
+		}
+	}
+	return top, bp
+}
+
 func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Reading {
 	lv := ans[jev.QLevel]
 	rd := Reading{probs: jev.LevelProbs(lv, ids), conf: lv.Confidence}
