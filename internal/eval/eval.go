@@ -7,7 +7,6 @@ package eval
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,9 +36,10 @@ type Case struct {
 	Modes  map[string]bool `json:"modes"`
 	// Relation labels how the prompt relates to the work in progress (one
 	// of catalog.Relations); Explicit what it asks for in words. The work
-	// in progress is state.work_in_progress ({goal, level, mode, model}),
-	// else the decision in state.current; state.paused_work the work a
-	// detour paused; Jev sees their goal and level, as the hooks send them.
+	// in progress is state.work_in_progress ({goal, level, mode, model,
+	// done: a wrap-up closed it}), else the decision in state.current;
+	// state.paused_work the work a detour paused; Jev sees their goal,
+	// level and done, as the hooks send them.
 	// state.mid_turn marks a prompt typed while Claude worked (it is not
 	// sent to Jev).
 	Relation string    `json:"relation,omitempty"`
@@ -114,9 +114,13 @@ func modelKey(cat *catalog.Catalog, name string) string {
 
 // holds reports a case whose decision must not fall below the work it
 // follows up: a follow-up relation (resume included), a prompt typed
-// mid-turn, a message from another session.
+// mid-turn, a message from another session; once a wrap-up closed the
+// work, only more work on it (continue, extend, resume).
 func (c Case) holds() bool {
 	task, _ := c.State["task"].(string)
+	if wip, _ := c.State["work_in_progress"].(map[string]any); wip["done"] == true {
+		return c.Relation == catalog.RelationContinue || c.Relation == catalog.RelationExtend || c.Relation == catalog.RelationResume
+	}
 	return FollowUp(c.Relation) || c.State["mid_turn"] == true || transcript.IsPeer(task)
 }
 
@@ -239,7 +243,6 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 	cs, _ := c.State["current"].(map[string]any)
 	curTier, _ := cs["tier"].(string)
 	curMode, _ := cs["mode"].(string)
-	curEffort, _ := cs["effort"].(string)
 	model := c.sessionModel(cat)
 	if c.State["phase"] != "initial" {
 		// The work in progress: as labeled, else the decision in force
@@ -261,22 +264,39 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 			req.MinTier = t.ID
 		}
 	}
-	switch t := cat.Tier(c.Scope, curTier); {
-	case !c.Warm:
-	case t != nil:
-		req.Current = &state.Decision{Tier: curTier, Model: t.Model, Effort: t.Effort, Mode: curMode}
-	case model != cat.DefaultTier(catalog.ScopeMain).Model:
-		req.Current = &state.Decision{Tier: state.PinnedTier, Model: model, Effort: curEffort, Mode: curMode}
+	if c.Warm {
+		req.Current = current(cat, c)
 	}
 	return st, req
 }
 
-// labeledWork reads a labeled work ({goal, level, mode, model}; mode
-// defaults to mode) and what the hooks would send Jev of it ({goal, level}).
+// current is the decision in force a main case describes (state.current):
+// its tier, else the model a work asked for in words runs on, else the
+// default tier.
+func current(cat *catalog.Catalog, c Case) *state.Decision {
+	cs, _ := c.State["current"].(map[string]any)
+	tier, _ := cs["tier"].(string)
+	mode, _ := cs["mode"].(string)
+	effort, _ := cs["effort"].(string)
+	model := c.sessionModel(cat)
+	if t := cat.Tier(c.Scope, tier); t != nil {
+		return &state.Decision{Scope: c.Scope, Tier: tier, Model: t.Model, Effort: t.Effort, Mode: mode}
+	}
+	if model != cat.DefaultTier(catalog.ScopeMain).Model {
+		return &state.Decision{Scope: c.Scope, Tier: state.PinnedTier, Model: model, Effort: effort, Mode: mode}
+	}
+	t := cat.DefaultTier(c.Scope)
+	return &state.Decision{Scope: c.Scope, Tier: t.ID, Model: t.Model, Effort: t.Effort}
+}
+
+// labeledWork reads a labeled work ({goal, level, mode, model, done};
+// mode defaults to mode) and what the hooks would send Jev of it ({goal,
+// level, done}).
 func labeledWork(cat *catalog.Catalog, model string, w map[string]any, mode string) (*state.Work, map[string]any) {
 	lv, _ := w["level"].(string)
 	goal, _ := w["goal"].(string)
 	wm, _ := w["model"].(string)
+	done, _ := w["done"].(bool)
 	if m, ok := w["mode"].(string); ok {
 		mode = m
 	}
@@ -284,11 +304,14 @@ func labeledWork(cat *catalog.Catalog, model string, w map[string]any, mode stri
 	if goal != "" {
 		sent["goal"] = goal
 	}
+	if done {
+		sent["done"] = true
+	}
 	t := levelTier(cat, model, lv)
 	if t == nil {
 		return nil, sent
 	}
-	return &state.Work{Tier: t.ID, Mode: mode, Model: modelKey(cat, wm), Goal: goal}, sent
+	return &state.Work{Tier: t.ID, Mode: mode, Model: modelKey(cat, wm), Goal: goal, Done: done}, sent
 }
 
 // levelTier is the main tier a work_in_progress level names: a tier ID or
@@ -304,7 +327,7 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	cat, cl := env.Catalog, env.Jev
 	r := Result{Case: c}
 	st, req := setup(cat, c)
-	ask := jev.Ask{Relation: req.Work != nil}
+	ask := jev.Ask{Relation: req.Work != nil && fastPath(env, c, req) == ""}
 	ask.Resume = ask.Relation && req.Paused != nil
 	for _, x := range req.Explicit {
 		ask.Explicit = append(ask.Explicit, x.Explicit)
@@ -373,11 +396,10 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 	// (the hooks' fast path on warm turns, and after a compaction or a
 	// pause), unless it answers a proposal: then it is routed, not below
 	// the work in progress.
-	task, _ := c.State["task"].(string)
-	last, _ := c.State["last_assistant"].(string)
-	goAhead := env.Cfg.Features.FastPath && req.Work != nil && !req.Peer && router.GoAhead(task)
-	if goAhead && c.State["phase"] != "post_compact" && router.Proposes(last) {
-		req.FollowUp, goAhead = "go-ahead to a proposal", false
+	fp := fastPath(env, c, req)
+	goAhead := fp == "go-ahead"
+	if fp == router.FollowUpProposal {
+		req.FollowUp = fp
 	}
 	var cur *catalog.Tier
 	if req.Current != nil {
@@ -387,12 +409,37 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 	v := env.Judge(req, env.Read(ans, ids, c.Scope), cur, policy.RepoPolicy{}, policy.Params{Penalty: cat.Meta.UnderprovisionPenalty, Scale: 1})
 	r.Decision, r.Mode, r.Model, r.Kept, r.Hold = v.Tier.ID, v.Mode, v.Model, v.Keep, v.Hold
 	if goAhead {
-		w := *req.Work
-		if req.MidTurn && cur != nil && cur.Rank > cat.Tier(c.Scope, w.Tier).Rank {
-			w.Tier, w.Mode = cur.ID, cmp.Or(w.Mode, req.Current.Mode) // a go-ahead typed mid-turn lowers nothing
+		// The hooks' own fast path (router.Carried).
+		req.Current, req.Trigger = current(cat, c), map[string]string{"warm": "warm", "post_compact": "compact"}[fmt.Sprint(c.State["phase"])]
+		if req.Trigger == "" {
+			req.Trigger = "cold"
 		}
-		r.Decision, r.Mode, r.Model, r.Kept, r.Hold = w.Tier, w.Mode, w.Model, "go-ahead", ""
+		d, _ := env.Carried(req, policy.RepoPolicy{})
+		r.Decision, r.Mode, r.Model, r.Kept, r.Hold = d.Tier, d.Mode, "", "go-ahead", ""
+		if cat.Tier(c.Scope, d.Tier) == nil { // on a model outside the tiers: its level
+			if t := router.EffortTier(cat, d.Model, d.Effort); t != nil {
+				r.Decision = t.ID
+			}
+		}
+		if d.Model != cat.DefaultTier(catalog.ScopeMain).Model {
+			r.Model = d.Model
+		}
 	}
+}
+
+// fastPath says how the hooks take a case's prompt without the relation
+// question: a bare go-ahead carried on without asking Jev ("go-ahead"), or
+// a go-ahead to a proposal routed without it (router.FollowUpProposal).
+func fastPath(env *router.Env, c Case, req router.Request) string {
+	task, _ := c.State["task"].(string)
+	last, _ := c.State["last_assistant"].(string)
+	switch {
+	case !env.Cfg.Features.FastPath || req.Work == nil || req.Peer || !router.GoAhead(task):
+		return ""
+	case c.State["phase"] != "post_compact" && router.Proposes(last):
+		return router.FollowUpProposal
+	}
+	return "go-ahead"
 }
 
 // Rejudge applies the policy of env's catalog (thresholds, penalty, rules)
@@ -448,7 +495,7 @@ type Summary struct {
 	Buckets                      []Bucket
 	Modes                        map[string]*Binary
 	// ModeDecision scores the router's mode (on or off) against the labels.
-	ModeDecision map[string]*Count
+	ModeDecision map[string]*ModeCount
 	// Relation scores the relation Choice, Explicit the requests confirmed
 	// in words; Follow counts the decisions below the work in progress on
 	// cases that hold it (a follow-up relation, mid-turn, a peer message);
@@ -474,6 +521,13 @@ type Bucket struct {
 // Count is N answers of which Right were right (Follow: Right counts the
 // decisions not below the work in progress).
 type Count struct{ N, Right int }
+
+// ModeCount scores a mode's on/off decision: over all cases, and on the
+// cases labeled on and off.
+type ModeCount struct {
+	Count
+	On, Off Count
+}
 
 // Binary scores a yes/no question against its labels at a threshold.
 type Binary struct {
@@ -514,7 +568,7 @@ func (b *Binary) finish() {
 }
 
 func Summarize(cat *catalog.Catalog, rs []Result) Summary {
-	s := Summary{Modes: map[string]*Binary{}, ModeDecision: map[string]*Count{}}
+	s := Summary{Modes: map[string]*Binary{}, ModeDecision: map[string]*ModeCount{}}
 	bounds := []float64{0, 0.35, 0.6, 0.8, 1.01}
 	for i := 0; i+1 < len(bounds); i++ {
 		s.Buckets = append(s.Buckets, Bucket{Lo: bounds[i], Hi: bounds[i+1]})
@@ -571,12 +625,18 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 			if r.Decision != "" {
 				c := s.ModeDecision[m]
 				if c == nil {
-					c = &Count{}
+					c = &ModeCount{}
 					s.ModeDecision[m] = c
 				}
+				side := &c.Off
+				if want {
+					side = &c.On
+				}
 				c.N++
+				side.N++
 				if (r.Mode == m) == want {
 					c.Right++
+					side.Right++
 				}
 			}
 		}
@@ -703,7 +763,7 @@ func PrintSummary(w io.Writer, s Summary) {
 			m, b.Threshold, b.Right, b.N, b.FalseYes, b.FalseNos, b.MeanYesP, b.MeanNoP)
 	}
 	for m, c := range s.ModeDecision {
-		fmt.Fprintf(w, "mode %s on/off (router decision): %d/%d right\n", m, c.Right, c.N)
+		fmt.Fprintf(w, "mode %s on/off (router decision): %d/%d right (on %d/%d, off %d/%d)\n", m, c.Right, c.N, c.On.Right, c.On.N, c.Off.Right, c.Off.N)
 	}
 	if f := s.Follow; f.N > 0 {
 		fmt.Fprintf(w, "follow-ups (continue, extend, inform, side_question, resume, mid-turn, peer): %d/%d decisions below the work they hold\n", f.N-f.Right, f.N)

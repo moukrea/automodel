@@ -10,6 +10,7 @@ import (
 
 	"github.com/moukrea/automodel/internal/catalog"
 	"github.com/moukrea/automodel/internal/config"
+	"github.com/moukrea/automodel/internal/jev"
 	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/state"
 )
@@ -259,5 +260,128 @@ func TestFilter(t *testing.T) {
 	}
 	if got := Filter(cs, "all"); len(got) != 3 {
 		t.Errorf("all %v", got)
+	}
+}
+
+// A follow-up counts as below the work's level only below every tier its
+// label accepts: a bare "continue" after a compaction, labeled max with
+// xhigh acceptable, decided at xhigh (the go-ahead fast path) is fine.
+func TestFollowUnderUsesAccept(t *testing.T) {
+	c := testCatalog(t)
+	r := res("jepsen", "max", "max", "xhigh", 1, 0)
+	r.Accept, r.Relation = []string{"xhigh", "max"}, catalog.RelationContinue
+	low := res("below", "xhigh", "low", "high", 1, 0)
+	low.Accept, low.Relation = []string{"xhigh", "max"}, catalog.RelationExtend
+	s := ScopeMetrics(c, catalog.ScopeMain, []Result{r, low})
+	if s.Under != 2 || s.FollowUnder != 1 {
+		t.Errorf("under %d, on follow-ups %d", s.Under, s.FollowUnder)
+	}
+}
+
+// The mode's on/off decision is part of the gate: its recall on the cases
+// labeled on, and on those labeled off, is held to MinRecall.
+func TestModeGate(t *testing.T) {
+	c := testCatalog(t)
+	var rs []Result
+	for i := 0; i < 24; i++ {
+		on, off := res(fmt.Sprint("on", i), "xhigh", "xhigh", "xhigh", 1, 0), res(fmt.Sprint("off", i), "high", "high", "high", 1, 0)
+		on.Modes, off.Modes = map[string]bool{"ultracode": true}, map[string]bool{"ultracode": false}
+		if i < 12 {
+			on.Mode = "ultracode"
+		}
+		rs = append(rs, on, off)
+	}
+	s := Summarize(c, rs)
+	fails := strings.Join(s.Check(DefaultGate), "; ")
+	if !strings.Contains(fails, "mode ultracode on right on 12/24 cases labeled on") || strings.Contains(fails, "labeled off") {
+		t.Errorf("gate: %s", fails)
+	}
+}
+
+// The eval runs the hooks' own go-ahead fast path (router.Carried): typed
+// mid-turn it keeps the mode the turn runs with; on a warm cache it
+// doesn't move to the work's model; after a detour it goes back to the
+// paused work.
+func TestEvalGoAhead(t *testing.T) {
+	c := testCatalog(t)
+	env := &router.Env{Cfg: config.Default(), Catalog: c}
+	judge := func(cs Case) Result {
+		t.Helper()
+		_, req := setup(c, cs)
+		ans, ids := levelAnswer(c, "low")
+		r := Result{Case: cs}
+		r.judge(env, req, ans, ids)
+		return r
+	}
+	st := func(kv ...any) map[string]any {
+		m := map[string]any{"phase": "warm", "task": "go", "last_assistant": "Porting handler 7 of 18."}
+		for i := 0; i < len(kv); i += 2 {
+			m[kv[i].(string)] = kv[i+1]
+		}
+		return m
+	}
+	r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st("mid_turn", true,
+		"current", map[string]any{"tier": "xhigh", "mode": "ultracode"}, "work_in_progress", map[string]any{"goal": "migrate the handlers", "level": "xhigh", "mode": ""})})
+	if r.Decision != "xhigh" || r.Mode != "ultracode" || r.Kept != "go-ahead" {
+		t.Errorf("mid-turn go-ahead: %+v", r)
+	}
+	r = judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st(
+		"current", map[string]any{"tier": "low"}, "work_in_progress", map[string]any{"goal": "export the invoices", "level": "high", "model": "sonnet"})})
+	if r.Decision != "low" || r.Model != "" {
+		t.Errorf("go-ahead on a warm cache, work on another model: %+v", r)
+	}
+	r = judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st(
+		"current", map[string]any{"tier": "low"}, "work_in_progress", map[string]any{"goal": "fix the README typo", "level": "low"},
+		"paused_work", map[string]any{"goal": "migrate the handlers", "level": "xhigh", "mode": "ultracode"})})
+	if r.Decision != "xhigh" || r.Mode != "ultracode" {
+		t.Errorf("go-ahead after a detour: %+v", r)
+	}
+}
+
+// Talking about an effort for something else, with Jev half-reading it as
+// a request (effort_low 0.88, as live): below the work it needs 0.9, so
+// the xhigh work stays, and the eval scores no request.
+func TestEvalLowerEffortNeedsMore(t *testing.T) {
+	c := testCatalog(t)
+	env := &router.Env{Cfg: config.Default(), Catalog: c}
+	cs := Case{ID: "tuning", Scope: catalog.ScopeMain, Warm: true, Want: "xhigh", Relation: "extend", State: map[string]any{
+		"phase": "warm", "task": "set it to low in the tuning file for the subagents, then keep going on the deadlock",
+		"current": map[string]any{"tier": "xhigh"}, "work_in_progress": map[string]any{"goal": "find the scheduler deadlock", "level": "xhigh"}}}
+	_, req := setup(c, cs)
+	ans, ids := levelAnswer(c, "high")
+	ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: map[string]float64{"extend": 0.9, "new_task": 0.1}, Confidence: 0.9}
+	p := 0.88
+	ans[jev.QExplicitPfx+"effort_low"] = jev.Answer{Type: "noul", Noul: &p}
+	r := Result{Case: cs, ExplicitP: map[string]float64{"effort_low": p}}
+	r.judge(env, req, ans, ids)
+	if r.Decision != "xhigh" {
+		t.Errorf("decision %s (%s)", r.Decision, r.Hold)
+	}
+	if e := ExplicitMetrics(c, []Result{r}); e.FP != 0 || e.TP != 0 {
+		t.Errorf("explicit = %+v", e)
+	}
+}
+
+// levelAnswer is Jev certain of level, as the router reads it.
+func levelAnswer(c *catalog.Catalog, level string) (map[string]jev.Answer, []string) {
+	_, ids := jev.Questions(c, catalog.ScopeMain, jev.Ask{})
+	lv := jev.Answer{Type: "score", Probabilities: map[string]float64{}, Confidence: 1}
+	for i, id := range ids {
+		lv.Probabilities[fmt.Sprint(i)] = map[bool]float64{true: 1}[id == level]
+	}
+	return map[string]jev.Answer{jev.QLevel: lv}, ids
+}
+
+// Once a wrap-up closed the work, a question gets its own level: it holds
+// nothing; more work on it does.
+func TestDoneWorkHolds(t *testing.T) {
+	done := map[string]any{"work_in_progress": map[string]any{"goal": "fix the race", "level": "xhigh", "done": true}}
+	for rel, want := range map[string]bool{"side_question": false, "inform": false, "aside": false, "extend": true, "continue": true} {
+		if got := (Case{Relation: rel, State: done}).holds(); got != want {
+			t.Errorf("%s after a wrap-up: holds %v", rel, got)
+		}
+	}
+	if !(Case{Relation: "side_question", State: map[string]any{}}).holds() || (Case{Relation: "aside", State: map[string]any{}}).holds() {
+		t.Error("open work")
 	}
 }

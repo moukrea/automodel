@@ -815,7 +815,7 @@ func (e *Env) PinnedModel(sessionID, repoRoot, model, effort, mode, source strin
 	return d
 }
 
-// GoAhead is what a bare go-ahead does, without asking Jev (which rates
+// Carried is what a bare go-ahead does, without asking Jev (which rates
 // the bare word as trivial): it carries on the work in progress, or the
 // paused work when that needs more (the detour is over), at the tier, mode
 // and model it was decided at (a wrap-up since may have lowered the
@@ -824,7 +824,7 @@ func (e *Env) PinnedModel(sessionID, repoRoot, model, effort, mode, source strin
 // another model: that rebuilds the whole context (the asked Haiku tier,
 // see asked). It returns the decision (a copy of req.Current when nothing
 // changes) and what becomes of the work.
-func (e *Env) GoAhead(req Request, rp policy.RepoPolicy) (*state.Decision, *WorkUpdate) {
+func (e *Env) Carried(req Request, rp policy.RepoPolicy) (*state.Decision, *WorkUpdate) {
 	cur := req.Current
 	d := *cur
 	w, resumed := e.GoAheadWork(cur, req.Work, req.Paused, req.MidTurn)
@@ -850,13 +850,13 @@ func (e *Env) GoAhead(req Request, rp policy.RepoPolicy) (*state.Decision, *Work
 	return &d, u
 }
 
-// Carry applies GoAhead. At a moment that would otherwise be decided
+// Carry applies Carried. At a moment that would otherwise be decided
 // (compaction, cold cache) it is logged like a decision, with the go-ahead
 // as reason; on a warm turn that changes nothing it is only logged as
 // kept, and the decision returned is nil.
 func (e *Env) Carry(req Request) (*state.Decision, *WorkUpdate) {
 	cur := req.Current
-	d, u := e.GoAhead(req, policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile))
+	d, u := e.Carried(req, policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile))
 	same := d.Tier == cur.Tier && d.Model == cur.Model && d.Effort == cur.Effort && d.Mode == cur.Mode
 	d.Trigger, d.Cause, d.DecidedAt = req.Trigger, "go-ahead", e.Now()
 	rec := ledger.Decision{TS: d.DecidedAt, Kind: "decision", SessionID: req.SessionID, Scope: cur.Scope, Trigger: req.Trigger,

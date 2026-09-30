@@ -3,7 +3,9 @@ package eval
 import (
 	"fmt"
 	"io"
+	"maps"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/moukrea/automodel/internal/catalog"
@@ -26,9 +28,9 @@ type ScopeStats struct {
 	// decisions below/above the label.
 	MAE, MAEDecision float64
 	Under, Over      int
-	// FollowUnder counts the decisions below the label on cases that hold
-	// the work (continue, extend, inform, side_question, resume, mid-turn,
-	// peer): the lowering the owner rejects.
+	// FollowUnder counts the decisions below every acceptable tier on
+	// cases that hold the work (continue, extend, inform, side_question,
+	// resume, mid-turn, peer): the lowering the owner rejects.
 	FollowUnder        int
 	MeanPWant, MeanTop float64
 	// ECE is the expected calibration error of Jev's top probability
@@ -125,7 +127,7 @@ func ScopeMetrics(cat *catalog.Catalog, scope string, rs []Result) *ScopeStats {
 			switch {
 			case d < 0:
 				s.Under++
-				if r.holds() {
+				if r.holds() && rank[r.Decision] < minRank(rank, r.acceptSet()) {
 					s.FollowUnder++
 				}
 			case d > 0:
@@ -242,14 +244,27 @@ func (s *ScopeStats) Check(g Gate) []string {
 }
 
 // Check lists the gate's failures over a whole run: the main scope's tier
-// metrics, the decisions below the work a case holds and the requests
-// confirmed where none was made.
+// metrics, each mode's on/off decision (its recall on the cases labeled
+// on, and on those labeled off, held to the tiers' MinRecall from
+// MinLabels answers), the decisions below the work a case holds and the
+// requests confirmed where none was made.
 func (s Summary) Check(g Gate) []string {
 	st := s.Scopes[catalog.ScopeMain]
 	if st == nil {
 		return []string{"no main-scope answers"}
 	}
 	out := st.Check(g)
+	for _, m := range slices.Sorted(maps.Keys(s.ModeDecision)) {
+		c := s.ModeDecision[m]
+		for _, side := range []struct {
+			name string
+			n    Count
+		}{{"on", c.On}, {"off", c.Off}} {
+			if side.n.N >= g.MinLabels && float64(side.n.Right) < g.MinRecall*float64(side.n.N) {
+				out = append(out, fmt.Sprintf("main: mode %s %s right on %d/%d cases labeled %s", m, side.name, side.n.Right, side.n.N, side.name))
+			}
+		}
+	}
 	if n := s.Follow.N - s.Follow.Right; n > g.MaxBelowWork {
 		out = append(out, fmt.Sprintf("main: %d decisions below the work in progress they follow up", n))
 	}
@@ -259,6 +274,17 @@ func (s Summary) Check(g Gate) []string {
 		}
 	}
 	return out
+}
+
+// minRank is the lowest rank of tiers (the acceptable ones of a case).
+func minRank(rank map[string]int, tiers []string) int {
+	lo := math.MaxInt
+	for _, t := range tiers {
+		if r, ok := rank[t]; ok {
+			lo = min(lo, r)
+		}
+	}
+	return lo
 }
 
 func inc(m map[string]map[string]int, a, b string) {
