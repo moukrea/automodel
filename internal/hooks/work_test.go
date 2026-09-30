@@ -390,9 +390,13 @@ func TestPausedWork(t *testing.T) {
 		t.Errorf("ledger = %+v", d)
 	}
 
-	// Another new task drops the paused work, and so does time.
+	// Another new task drops the paused work, unless it is below it too
+	// (the detour goes on); and so does time.
 	workSession(t, env, "d2", "xhigh", "", "xhigh")
 	decide("d2", "quick one: fix the typo in the README title", fa{tier: "low", conf: 0.95, rel: "new_task"})
+	if s = decide("d2", "and the broken link in the install section too", fa{tier: "low", conf: 0.95, rel: "new_task"}); s.Paused == nil || s.Paused.Goal != workGoal || s.Work.Tier != "low" {
+		t.Fatalf("a detour of the detour: work %+v, paused %+v", s.Work, s.Paused)
+	}
 	if s = decide("d2", "now design how to shard the job queue", fa{tier: "xhigh", conf: 0.9, rel: "new_task"}); s.Paused != nil || s.Work.Tier != "xhigh" {
 		t.Fatalf("second new task: work %+v, paused %+v", s.Work, s.Paused)
 	}

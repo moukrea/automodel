@@ -525,6 +525,13 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	if req.Scope == catalog.ScopeMain {
 		reopen := followed != nil && followed.Done && hold != nil && (top == catalog.RelationContinue || top == catalog.RelationExtend || req.FollowUp == FollowUpProposal)
 		v.Work = workUpdate(v, followed, work, hold, x, top, fresh, back, reopen)
+		// New work below the paused work: a longer detour, the paused work
+		// waits on (unless the work it replaces needs more and waits instead).
+		if u := v.Work; u != nil && u.Kind == WorkNew && req.Paused != nil {
+			if p := c.Tier(req.Scope, req.Paused.Tier); p != nil && v.Tier.Rank < p.Rank && (!u.Pause || e.HigherWork(req.Work, req.Paused) == req.Paused) {
+				u.Pause, u.KeepPaused = false, true
+			}
+		}
 		// More thinking read from the words alone raises this turn only:
 		// the work in progress is what it would be without it.
 		if x.more && rd.guessedMore {

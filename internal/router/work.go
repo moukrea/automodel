@@ -22,7 +22,9 @@ import (
 // typo in the README" in the middle of a migration): the work it replaces
 // is kept, paused, and a prompt that goes back to it ("back to the
 // migration", or a bare "continue" once the detour is done) brings back
-// its tier, mode and model. Another new task, or two hours, drop it.
+// its tier, mode and model. Another new task drops it, unless it is below
+// it too (the detour goes on: "and the broken link in the install section
+// too"); so do two hours.
 //
 // An aside (a question unrelated to the work) gets its own level for that
 // turn and changes nothing. A wrap-up marks the work done: from then on a
@@ -36,7 +38,9 @@ type WorkUpdate struct {
 	Mode  string
 	Model string // the model it runs on besides the tiers' ("": the tier's)
 	// Pause: new work below the work in progress, which waits, paused.
-	Pause bool
+	// KeepPaused: new work below the work already paused, which waits on
+	// (a detour of a detour); of the two, the one that needs more waits.
+	Pause, KeepPaused bool
 	// Done: a wrap-up closed the work (any other update opens it).
 	Done bool
 }
@@ -64,7 +68,9 @@ func (u *WorkUpdate) Apply(s *state.Session, prompt string, now time.Time) {
 		w.Goal, w.Since = prev.Goal, prev.Since
 	default:
 		w.Goal = head(state.NormalizePrompt(prompt), state.WorkGoalChars)
-		s.Paused = nil
+		if !u.KeepPaused {
+			s.Paused = nil
+		}
 		if u.Pause && prev != nil {
 			p := *prev
 			p.Since = now
