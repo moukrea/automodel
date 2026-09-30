@@ -1216,3 +1216,25 @@ func TestNoticesSayWhatRuns(t *testing.T) {
 	}
 	env.Cfg.Budget.USDPerSession = 0
 }
+
+// More thinking on a prompt that takes its own level is one rank above
+// the level Jev scores it at, also when the Haiku question says yes: "take
+// your time" on a typo fix Jev rates low is medium.
+func TestMoreThinkingOnAHaikuFirstPrompt(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	for _, tc := range []struct {
+		sid, prompt, want string
+		a                 fa
+	}{
+		{"k1", "Take your time: fix the typo 'recieve' in README.md.", "medium", fa{tier: "low", conf: 0.95, asked: 0.97, x: map[string]float64{"effort_more": 0.95}}},
+		{"k2", "Fix the typo 'recieve' in README.md.", "haiku", fa{tier: "low", conf: 0.95, asked: 0.97}},
+	} {
+		markJev(t, env, tc.sid)
+		fj.answers = []fa{tc.a}
+		run(t, env, "decide", map[string]any{"session_id": tc.sid, "prompt": tc.prompt, "cwd": t.TempDir()})
+		if s, _ := env.State.Load(tc.sid); s.Main.Tier != tc.want {
+			t.Errorf("%q: %s, want %s", tc.prompt, s.Main.Tier, tc.want)
+		}
+	}
+}

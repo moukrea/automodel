@@ -424,6 +424,7 @@ type Verdict struct {
 func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPolicy, params policy.Params) Verdict {
 	c, f := e.Catalog, e.Cfg.Features
 	tier, pk := e.pick(req, rd, cur, params)
+	scored := tier // Jev's level, before an asked tier (Haiku) replaces it
 	if a := e.asked(req, rd, cur, tier, rp); a != nil {
 		tier = a
 	}
@@ -496,10 +497,12 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 			// alone: Jev's level rates the words asking for it ("think
 			// harder" reads as hard work), unless the prompt adds work
 			// (extend) and Jev is sure of its level; then the pick stands if
-			// it is higher (asking for more thinking never gets less).
+			// it is higher (asking for more thinking never gets less). The
+			// level Jev gives is its scored one: "take your time" on a typo
+			// fix Jev rates low is medium, not one rank above Haiku.
 			base := higher(work, cur)
 			if hold == nil {
-				base = tier
+				base = scored
 			}
 			more := e.above(req.Scope, base)
 			if hold != nil && (top != catalog.RelationExtend || rd.conf < f.WarmMinConfidence) {
