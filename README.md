@@ -447,6 +447,6 @@ and the transcript reader. Spike results are in `docs/spikes.md`.
 
 ## License
 
-[MIT](LICENSE) © 2026 Emeric Favarel (moukrea). The demo videos use "Night
+[MIT](LICENSE) © 2026 Emeric Commenge (moukrea). The demo videos use "Night
 Owl" by Broke For Free, licensed under
 [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).
