@@ -218,7 +218,7 @@ func ExplicitQuestion(c *catalog.Catalog, x Explicit) Question {
 // catalog's questions.relation and questions.explicit override them).
 var (
 	DefaultRelation = catalog.Relation{
-		Question: "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`)?",
+		Question: "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`; `work_in_progress.done` once it was wrapped up)?",
 		Options: map[string]*catalog.Option{
 			catalog.RelationContinue: {
 				What:     "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, or to carry out what it just proposed or offered for that work (possibly picking one of its options), and asks for nothing more.",
@@ -236,9 +236,14 @@ var (
 				Examples: []string{"FYI it only fails on ARM", "env vars win", "camelCase", "c'est la v2 de l'API", "la clé est dans le .env"},
 			},
 			catalog.RelationSideQuestion: {
-				What:     "Asks a question or a quick check aside while the work in progress is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: about that work (progress, status, a detail, a doubt) or about anything else (a command, a fact, a comparison).",
-				NotFor:   "A question that starts real work of its own, such as an investigation or a change (new_task); a question about work that is finished, which only recalls or explains it (wrap_up).",
-				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "which Go version do we target again?", "unrelated: how do I list open ports on macOS?", "t'en es où ?", "le build passe ?", "au fait, c'est quoi la différence entre rebase et merge ?"},
+				What:     "Asks a question or a quick check about the work in progress while it is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: its progress or status, a detail, a choice it made, a doubt, a check of its result.",
+				NotFor:   "A question unrelated to the work in progress (aside); a question that starts real work of its own, such as an investigation or a change (new_task); a question about work that is finished, which only recalls or explains it (wrap_up).",
+				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "does that cover the retry path too?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi un mutex et pas un channel ?"},
+			},
+			catalog.RelationAside: {
+				What:     "A question or a remark unrelated to the work in progress that starts no work of its own: general knowledge, a command or a flag, another topic, news, a comment in passing.",
+				NotFor:   "A question about the work in progress, its code or its result (side_question); something that starts real work, even small (new_task).",
+				Examples: []string{"unrelated: how do I list open ports on macOS?", "what does HTTP 409 mean again?", "Fable 5.1 is out, have you seen the benchmarks?", "au fait, c'est quoi la différence entre rebase et merge ?", "ça veut dire quoi idempotent, déjà ?", "haha, nice"},
 			},
 			catalog.RelationResume: {
 				What:     "Goes back to the paused work (`paused_work.goal`), which a detour set aside, now that the detour is done or dropped.",
@@ -252,7 +257,7 @@ var (
 			},
 			catalog.RelationNewTask: {
 				What:     "Starts a separate piece of work (a change, a fix, a feature, an investigation) that the work in progress doesn't include, even one that repeats its pattern on another target (another endpoint, page or module).",
-				NotFor:   "More work on the work in progress itself (extend); carrying out what the assistant just proposed for it (continue); a question that only needs an answer while that work is pending (side_question).",
+				NotFor:   "More work on the work in progress itself (extend); carrying out what the assistant just proposed for it (continue); a question that starts no work (side_question, aside).",
 				Examples: []string{"now rename the config loader", "next: design how to shard the job queue", "now the same retry logic for the email sender", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"},
 			},
 		},

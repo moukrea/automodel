@@ -57,18 +57,20 @@ type Noul struct {
 	No       string `toml:"no" json:"no"`
 }
 
-// Relations are the options of the relation question. new_task and
-// wrap_up are separate from the work in progress (the prompt gets its own
-// level); the others follow it up (they keep at least its level), and
+// Relations are the options of the relation question. new_task, wrap_up
+// and aside are separate from the work in progress (the prompt gets its
+// own level; an aside, a question unrelated to the work, for that turn
+// only); the others follow it up (they keep at least its level), and
 // resume goes back to the work a detour paused (only offered when there is
 // one).
-var Relations = []string{RelationContinue, RelationExtend, RelationInform, RelationSideQuestion, RelationResume, RelationWrapUp, RelationNewTask}
+var Relations = []string{RelationContinue, RelationExtend, RelationInform, RelationSideQuestion, RelationAside, RelationResume, RelationWrapUp, RelationNewTask}
 
 const (
 	RelationContinue     = "continue"
 	RelationExtend       = "extend"
 	RelationInform       = "inform"
 	RelationSideQuestion = "side_question"
+	RelationAside        = "aside"
 	RelationResume       = "resume"
 	RelationWrapUp       = "wrap_up"
 	RelationNewTask      = "new_task"
@@ -76,7 +78,7 @@ const (
 
 // Separate reports whether a relation is separate from the work in progress.
 func Separate(relation string) bool {
-	return relation == RelationWrapUp || relation == RelationNewTask
+	return relation == RelationWrapUp || relation == RelationNewTask || relation == RelationAside
 }
 
 // Relation is the relation question: its instructions and one option per

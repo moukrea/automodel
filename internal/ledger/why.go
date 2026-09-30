@@ -112,10 +112,10 @@ func writeOne(w io.Writer, d Decision, o WhyOptions) {
 		fmt.Fprintf(w, "  → %s, pinned by %s (routing paused until released)\n", result, d.Cause)
 		return
 	case d.Skipped && !d.Kept && d.Hold != "":
-		fmt.Fprintf(w, "  → %s (was %s) without asking Jev: %s\n", result, d.From, d.Hold)
+		fmt.Fprintf(w, "  → %s (was %s) without asking Jev: %s%s\n", result, d.From, d.Hold, goAheadWork(d))
 		return
 	case d.Skipped:
-		fmt.Fprintf(w, "  → keeps %s without asking Jev: %s\n", result, d.KeepReason)
+		fmt.Fprintf(w, "  → keeps %s without asking Jev: %s%s\n", result, d.KeepReason, goAheadWork(d))
 		return
 	case d.Trigger == "fallback":
 		fmt.Fprintf(w, "  ⚠ Jev failed (%s): default tier %s\n", d.Error, result)
@@ -224,6 +224,12 @@ func workLine(d Decision, o WhyOptions) string {
 		parts = append(parts, d.Hold)
 	case d.WorkTier != "" && len(d.Relation) > 0:
 		s := "separate from the work in progress (" + d.WorkTier + "): its own level"
+		switch {
+		case likeliest(d.Relation) == "aside":
+			s = "an aside: its own level for this turn, the work in progress (" + d.WorkTier + ") unchanged"
+		case d.WorkDone && d.Work == "":
+			s = "the work in progress (" + d.WorkTier + ") was wrapped up: its own level"
+		}
 		if o.Rank != nil && o.Rank(d.Scope, d.Chosen) < o.Rank(d.Scope, d.WorkTier) {
 			s += ", lower"
 		}
@@ -242,8 +248,34 @@ func workLine(d Decision, o WhyOptions) string {
 		parts = append(parts, "raises the work in progress")
 	case "resumed":
 		parts = append(parts, "resumes the paused work ("+d.PausedTier+")")
+	case "done":
+		parts = append(parts, "marks the work in progress done")
+	case "reopened":
+		parts = append(parts, "reopens the work in progress")
 	}
 	return strings.Join(parts, " · ")
+}
+
+// goAheadWork says what a go-ahead made of the work in progress.
+func goAheadWork(d Decision) string {
+	switch d.Work {
+	case "resumed":
+		return " (resumes the paused work)"
+	case "reopened":
+		return " (reopens the work in progress)"
+	}
+	return ""
+}
+
+// likeliest is the likeliest entry of a probability map.
+func likeliest(p map[string]float64) string {
+	best, bp := "", -1.0
+	for k, v := range p {
+		if v > bp || (v == bp && k < best) {
+			best, bp = k, v
+		}
+	}
+	return best
 }
 
 // ranked lists the n likeliest entries of a probability map ("extend 0.94,

@@ -149,11 +149,13 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// A bare go-ahead continues the work in progress, without asking Jev,
 	// which rates the bare word as trivial: the tier and mode the work was
 	// decided at come back (a wrap-up since may have lowered them), on a
-	// warm turn, after a compaction or after a pause. A go-ahead to a
-	// proposal ("Want me to fix it?") starts that work, which may be
-	// bigger: it is routed, not below the work in progress.
+	// warm turn, after a compaction or after a pause; after a detour, the
+	// paused work when it needs more. A go-ahead to a proposal ("Want me
+	// to fix it?") starts that work, which may be bigger: it is routed, not
+	// below the work in progress (nor the paused work).
 	followUp := ""
-	if back := sess.WorkInProgress(); pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) &&
+	back, _ := env.GoAheadWork(sess.Main, sess.WorkInProgress(), sess.PausedWork(now), false)
+	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) &&
 		(trigger == "warm" || trigger == "compact" || trigger == "cold") &&
 		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) &&
 		(back == nil || !env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, back.Tier))) {
@@ -162,12 +164,12 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		}
 		switch {
 		case trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant):
-			followUp = "go-ahead to a proposal"
+			followUp = router.FollowUpProposal
 		default:
-			if tr.MidTurnFor(in.Prompt) {
-				back = keepRunning(env, sess, back) // a mid-turn go-ahead lowers nothing
-			}
-			if dec = env.Carry(in.SessionID, sess.Main, back, trigger); dec == nil {
+			// Typed mid-turn, it lowers nothing.
+			if dec, work = env.Carry(router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger, RepoDir: in.Cwd,
+				Context: sess.ContextTokens, Current: sess.Main, Work: sess.WorkInProgress(), Paused: sess.PausedWork(now),
+				MidTurn: tr.MidTurnFor(in.Prompt)}); dec == nil {
 				trigger = "" // kept
 			} else {
 				trigger = "carried-" + trigger
@@ -212,10 +214,13 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if !out.Changed || (late && out.TimedOut) {
 			dec = nil
 		}
+		if late && out.TimedOut {
+			work = nil
+		}
 	}
 
 	var notice string
-	if late && dec == nil {
+	if late && dec == nil && work == nil {
 		return nil, nil
 	}
 	_, err = env.State.Update(in.SessionID, func(s *state.Session) bool {
@@ -224,7 +229,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				dec = nil // a newer prompt came in while Jev answered
 				return false
 			}
-			log.Printf("late decision %s: %s", in.SessionID, dec.Tier)
+			if dec != nil {
+				log.Printf("late decision %s: %s", in.SessionID, dec.Tier)
+			}
 		} else {
 			s.LastPromptAt = now
 		}
@@ -307,24 +314,6 @@ func modelEffort(env *router.Env, model string, efforts ...string) string {
 		}
 	}
 	return ""
-}
-
-// keepRunning is what a go-ahead typed while Claude works carries on: the
-// work in progress, or the decision the turn runs at when that is higher
-// (a prompt typed mid-turn never lowers the effort or drops the mode).
-func keepRunning(env *router.Env, sess *state.Session, work *state.Work) *state.Work {
-	cur := env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)
-	if work == nil || cur == nil {
-		return work
-	}
-	w := *work
-	if t := env.Catalog.Tier(catalog.ScopeMain, w.Tier); t == nil || cur.Rank > t.Rank {
-		w.Tier = cur.ID
-	}
-	if w.Mode == "" {
-		w.Mode = sess.Main.Mode
-	}
-	return &w
 }
 
 // perTurnOK reports whether an effort change on model keeps the prompt
@@ -417,6 +406,9 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 		m := map[string]any{}
 		if lv := router.WorkLevel(env.Catalog, w.work.Tier); lv != "" {
 			m["level"] = lv
+		}
+		if w.work.Done {
+			m["done"] = true // a wrap-up closed it
 		}
 		if w.work.Goal != "" {
 			g := tokens.Truncate(w.work.Goal, left/8)

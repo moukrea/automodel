@@ -98,7 +98,7 @@ func TestWorkInProgress(t *testing.T) {
 		{name: "a hard new task on a low session goes up", tier: "low", prompt: "Next: find why refunds are counted twice under load",
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "new_task"}, want: "xhigh", wantWork: "xhigh", newGoal: true},
 		{name: "unsure between follow-up and separate: holds", tier: "high", prompt: "et le cas où le worker meurt ?",
-			jev: fa{tier: "low", conf: 0.9, rel: "new_task", relP: 0.35}, want: "high", wantWork: "high"}, // new_task + wrap_up 0.48
+			jev: fa{tier: "low", conf: 0.9, rel: "new_task", relP: 0.2}, want: "high", wantWork: "high"}, // new_task + wrap_up + aside 0.47
 		{name: "an effort asked in words raises", tier: "high", prompt: "fais la suite en xhigh", ask: "explicit_effort_xhigh",
 			jev: fa{tier: "high", conf: 0.9, rel: "extend", x: x("effort_xhigh", 0.95)}, want: "xhigh", wantWork: "xhigh"},
 		{name: "a mention of an effort doesn't", tier: "high", prompt: "pourquoi c'est resté en xhigh tout à l'heure ?", ask: "explicit_effort_xhigh",
@@ -113,8 +113,10 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "low", conf: 0.9, ultra: 0.1, rel: "extend", x: x("mode_off", 0.9)}, want: "xhigh", wantWork: "xhigh"},
 		{name: "a follow-up keeps the mode on", tier: "xhigh", mode: "ultracode", prompt: "et vérifie aussi le module de facturation",
 			jev: fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "extend"}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode"},
-		{name: "a mode kept on a tier drop raises the tier to what it runs", tier: "xhigh", mode: "ultracode", prompt: "now write the migration notes for ops",
-			jev: fa{tier: "low", conf: 0.9, ultra: 0.4, rel: "new_task"}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode", newGoal: true},
+		{name: "a small new task in an ultracode session gets no mode", tier: "xhigh", mode: "ultracode", prompt: "now write the migration notes for ops",
+			jev: fa{tier: "low", conf: 0.9, ultra: 0.4, rel: "new_task"}, want: "low", wantWork: "low", newGoal: true},
+		{name: "a mode kept on a wrap-up raises the tier to what it runs", tier: "xhigh", mode: "ultracode", prompt: "write the commit message",
+			jev: fa{tier: "low", conf: 0.9, ultra: 0.4, rel: "wrap_up"}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode"},
 		{name: "a prompt typed mid-turn never lowers", tier: "high", transcript: busy, prompt: "ah et les prix en euros TTC",
 			jev: fa{tier: "low", conf: 0.98, rel: "new_task"}, want: "high", wantWork: "high"},
 		{name: "typed before the turn's first entries: mid-turn", tier: "high", transcript: started, prompt: "au fait, garde les messages d'erreur en anglais",
@@ -564,5 +566,177 @@ func TestMoreThinkingInMetadataMode(t *testing.T) {
 	}
 	if q := fj.last().Questions; len(q) == 0 || q["explicit_effort_more"].Type != "" {
 		t.Errorf("questions in metadata mode: %v", q)
+	}
+}
+
+// After a detour, a bare go-ahead goes back to the paused work when it
+// needs more: its tier, mode, model and goal come back, without asking
+// Jev; a go-ahead to a proposal is routed, not below it. Jev's resume
+// needs relation_separate_threshold.
+func TestDetourThenGoAhead(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	decide := func(sid, p, tp string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd, "transcript_path": tp})
+		s, _ := env.State.Load(sid)
+		return s
+	}
+	detour := func(sid string) {
+		t.Helper()
+		workSession(t, env, sid, "xhigh", "ultracode", "xhigh")
+		if s := decide(sid, "quick one: fix the typo in the README title", "", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"}); s.Paused == nil || s.Main.Tier != "low" {
+			t.Fatalf("detour: %+v, paused %+v", s.Main, s.Paused)
+		}
+	}
+	for i, p := range []string{"ok, continue", "vas-y", "go"} {
+		sid := fmt.Sprint("dg", i)
+		detour(sid)
+		n := fj.calls()
+		s := decide(sid, p, "", fa{tier: "low", conf: 0.95, rel: "continue"})
+		if fj.calls() != n || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal || s.Work.Mode != "ultracode" {
+			t.Fatalf("%q after a detour (%d calls): %+v, work %+v, paused %+v", p, fj.calls()-n, s.Main, s.Work, s.Paused)
+		}
+		// The next follow-up holds the resumed work.
+		if s = decide(sid, "and handle the case where the pool is empty", "", fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "extend"}); s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" {
+			t.Errorf("extension after the go-ahead: %+v", s.Main)
+		}
+	}
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-2]; d.Work != router.WorkResumed || d.Chosen != "xhigh" || d.Mode != "ultracode" {
+		t.Errorf("ledger of the go-ahead = %+v", d)
+	}
+
+	// A go-ahead to a proposal after a detour: routed, floored at the
+	// paused work, which it resumes.
+	tp := filepath.Join(cwd, "t.jsonl")
+	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Typo fixed. Want me to get back to the pool race?"}]}}`+"\n"), 0o600)
+	detour("dp")
+	n := fj.calls()
+	s := decide("dp", "yes", tp, fa{tier: "low", conf: 0.9, ultra: 0.05})
+	if fj.calls() != n+1 || fj.last().Questions[jev.QRelation].Type != "" || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal {
+		t.Fatalf("go-ahead to a proposal after a detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+
+	// A resume Jev is unsure of (0.30, the other options at 0.10) is a
+	// follow-up of the detour; a sure one goes back.
+	detour("dw")
+	if s = decide("dw", "and the one in CONTRIBUTING.md too", "", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.3}); s.Main.Tier != "low" || s.Paused == nil || s.Work.Goal == workGoal {
+		t.Errorf("weak resume: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	if s = decide("dw", "ok, back to the pool race", "", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.6}); s.Main.Tier != "xhigh" || s.Paused != nil || s.Work.Goal != workGoal {
+		t.Errorf("resume at 0.60: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+}
+
+// An aside (a question unrelated to the work) gets its own level for that
+// turn and changes nothing; a wrap-up marks the work done, after which a
+// question gets its own level too, and more work on it reopens it.
+func TestAsideAndDoneWork(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	decide := func(sid, p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load(sid)
+		return s
+	}
+	workSession(t, env, "a1", "xhigh", "ultracode", "xhigh")
+	s := decide("a1", "autre chose : que veut dire le code HTTP 409 ?", fa{tier: "low", conf: 0.95, ultra: 0.02, rel: "aside"})
+	if opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any); opts[catalog.RelationAside] == nil {
+		t.Errorf("aside not offered: %v", opts)
+	}
+	if s.Main.Tier != "low" || s.Main.Mode != "" || s.Work.Tier != "xhigh" || s.Work.Mode != "ultracode" || s.Work.Goal != workGoal || s.Work.Done || s.Paused != nil {
+		t.Fatalf("aside: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; d.Work != "" || d.Hold != "" || d.WorkTier != "xhigh" {
+		t.Errorf("ledger of an aside = %+v", d)
+	}
+	if s = decide("a1", "ok, go", fa{}); s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" {
+		t.Errorf("go-ahead after an aside: %+v", s.Main)
+	}
+
+	workSession(t, env, "w1", "xhigh", "", "xhigh")
+	if s = decide("w1", "write the commit message", fa{tier: "low", conf: 0.95, rel: "wrap_up"}); s.Main.Tier != "low" || !s.Work.Done || s.Work.Tier != "xhigh" || s.Work.Goal != workGoal {
+		t.Fatalf("wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+	if s = decide("w1", "is CI green on main now?", fa{tier: "low", conf: 0.95, rel: "side_question"}); s.Main.Tier != "low" || !s.Work.Done {
+		t.Errorf("question after a wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+	if wip, _ := fj.last().State.(map[string]any)["work_in_progress"].(map[string]any); wip["done"] != true || wip["level"] != "xhigh" {
+		t.Errorf("work_in_progress sent = %v", wip)
+	}
+	if s = decide("w1", "FYI the release is tomorrow", fa{tier: "low", conf: 0.95, rel: "inform"}); s.Main.Tier != "low" || !s.Work.Done {
+		t.Errorf("fact after a wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+	// A new task below a done work pauses nothing.
+	workSession(t, env, "w2", "xhigh", "", "xhigh")
+	decide("w2", "write the commit message", fa{tier: "low", conf: 0.95, rel: "wrap_up"})
+	if s = decide("w2", "now fix the typo in the README title", fa{tier: "low", conf: 0.95, rel: "new_task"}); s.Paused != nil || s.Work.Done || s.Work.Tier != "low" {
+		t.Errorf("new task after a wrap-up: work %+v, paused %+v", s.Work, s.Paused)
+	}
+	// More work on it reopens it, at its level.
+	if s = decide("w1", "also add a test for the empty pool", fa{tier: "medium", conf: 0.9, rel: "extend"}); s.Main.Tier != "xhigh" || s.Work.Done {
+		t.Errorf("extension after a wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+	all, _ = ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; d.Work != router.WorkReopened {
+		t.Errorf("ledger of a reopening = %+v", d)
+	}
+	decide("w1", "write the commit message", fa{tier: "low", conf: 0.95, rel: "wrap_up"})
+	if s = decide("w1", "ok, go", fa{}); s.Main.Tier != "xhigh" || s.Work.Done {
+		t.Errorf("go-ahead after a wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+}
+
+// A session that started pinned ([effort:max]) has no work in progress
+// taken from that pin: once released, the prompt gets its own level.
+func TestPinnedStartIsNoWork(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	markJev(t, env, "p1")
+	decide := func(p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": "p1", "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load("p1")
+		return s
+	}
+	if s := decide("[effort:max] find the deadlock in the scheduler", fa{tier: "xhigh", conf: 0.9}); s.Main.Tier != "max" || s.Work != nil {
+		t.Fatalf("pinned start: %+v, work %+v", s.Main, s.Work)
+	}
+	s := decide("[effort:auto] ok, and add a test for it", fa{tier: "medium", conf: 0.9, rel: "extend"})
+	if s.Main.Tier != "medium" || s.Pin != "" || s.Work == nil || s.Work.Tier != "medium" || fj.last().Questions[jev.QRelation].Type != "" {
+		t.Errorf("after [effort:auto]: %+v, work %+v", s.Main, s.Work)
+	}
+}
+
+// A late decision that keeps the tier still records what it makes of the
+// work in progress (a new task at the same level: its goal).
+func TestLateDecisionKeepsItsWork(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	var got struct {
+		trigger string
+		at      time.Time
+	}
+	spawnLate = func(in *Input, trigger string, at time.Time) { got.trigger, got.at = trigger, at }
+	t.Cleanup(func() { spawnLate = func(*Input, string, time.Time) {} })
+	env.Cfg.Features.WarmTimeout.Duration = 50 * time.Millisecond
+	workSession(t, env, "lw", "xhigh", "", "xhigh")
+	in := map[string]any{"session_id": "lw", "prompt": "Next: design how to shard the job queue across regions", "cwd": t.TempDir()}
+	fj.delay, fj.answers = 300*time.Millisecond, []fa{{tier: "xhigh", conf: 0.95, rel: "new_task"}}
+	run(t, env, "decide", in)
+	fj.delay = 0
+	t.Setenv(LateEnv, fmt.Sprintf("%s:%d", got.trigger, got.at.UnixNano()))
+	run(t, env, "decide", in)
+	if s, _ := env.State.Load("lw"); s.Main.Tier != "xhigh" || s.Work.Goal != in["prompt"] {
+		t.Errorf("late decision: %+v, work %+v", s.Main, s.Work)
 	}
 }

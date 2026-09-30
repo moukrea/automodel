@@ -180,7 +180,7 @@ func TestRelationAndExplicitMetrics(t *testing.T) {
 	}
 	var b strings.Builder
 	PrintSummary(&b, s)
-	for _, want := range []string{"relation: 4/5 right (80%)", "| side_question | 0 | 0 | 0 | 0 | 0 | 1 | 0 |", "explicit requests: precision 50%, recall 33%",
+	for _, want := range []string{"relation: 4/5 right (80%)", "| side_question | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |", "explicit requests: precision 50%, recall 33%",
 		"model @0.90: precision 0%, recall 0% (0 right, 0 false, 1 missed)", "2/4 decisions below the work they hold", "model the work runs on (router decision): 1/2 right",
 		"mode ultracode on/off (router decision): 0/1 right"} {
 		if !strings.Contains(b.String(), want) {

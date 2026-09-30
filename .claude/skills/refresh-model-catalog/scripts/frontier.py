@@ -26,7 +26,7 @@ DEFAULT_MAIN_MIN_CONTEXT = 1_000_000
 EFFORTS = ["low", "medium", "high", "xhigh", "max"]
 SCOPES = ["main", "subagent"]
 # Options of the relation question (mirrors catalog.Relations).
-RELATIONS = ["continue", "extend", "inform", "side_question", "resume", "wrap_up", "new_task"]
+RELATIONS = ["continue", "extend", "inform", "side_question", "aside", "resume", "wrap_up", "new_task"]
 META_REQUIRED = ["last_refresh", "benchmark", "benchmark_version", "jev_model",
                  "default_main_tier", "default_subagent_tier"]
 

@@ -98,7 +98,7 @@ func compactDecision(ctx context.Context, env *router.Env, in *Input, at time.Ti
 	pin := *in
 	pin.Prompt = ""
 	req := mainRequest(env, &pin, sess, tr, sess.Repo, "compact")
-	req.FollowUp = "compaction"
+	req.FollowUp = router.FollowUpCompaction
 	dec, out := env.Decide(ctx, req)
 	if !out.Changed || dec == nil {
 		return

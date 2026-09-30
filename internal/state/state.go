@@ -42,15 +42,18 @@ const PinnedTier = "pinned"
 // needs and the prompt that started it. It is set by the first decision, a
 // prompt that starts separate work, or an effort, a mode or a model asked
 // in words; raised when a follow-up needs more; kept across side
-// questions, wrap-ups, pins and compactions. Model is another model than
-// the tiers' the user asked for in words: the work runs on it (the tier
-// is then only its level) until separate new work starts.
+// questions, asides, wrap-ups, pins and compactions. Model is another
+// model than the tiers' the user asked for in words: the work runs on it
+// (the tier is then only its level) until separate new work starts. Done:
+// a wrap-up closed it; only more work on it (a go-ahead, an addition)
+// reopens it and holds its level.
 type Work struct {
 	Tier  string    `json:"tier"`
 	Mode  string    `json:"mode,omitempty"`
 	Model string    `json:"model,omitempty"`
 	Goal  string    `json:"goal,omitempty"` // head of the prompt that started it
 	Since time.Time `json:"since,omitzero"` // started; for paused work, paused
+	Done  bool      `json:"done,omitempty"`
 }
 
 // WorkGoalChars bounds the goal kept for the work in progress.
@@ -69,12 +72,13 @@ func (s *Session) PausedWork(now time.Time) *Work {
 }
 
 // WorkInProgress is the session's work in progress; a session from before
-// it was recorded takes its decision in force (nil: none, or a model pin).
+// it was recorded takes its decision in force (nil: none, or a decision
+// the user pinned: that level was their call, not the work's).
 func (s *Session) WorkInProgress() *Work {
 	if s.Work != nil {
 		return s.Work
 	}
-	if s.Main == nil || s.Main.Tier == PinnedTier || s.Main.Tier == "" {
+	if s.Main == nil || s.Main.Tier == PinnedTier || s.Main.Tier == "" || s.Main.Trigger == "pinned" {
 		return nil
 	}
 	return &Work{Tier: s.Main.Tier, Mode: s.Main.Mode}

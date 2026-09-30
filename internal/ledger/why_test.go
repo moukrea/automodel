@@ -52,6 +52,17 @@ func TestWhy(t *testing.T) {
 		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "low", Probs: map[string]float64{"low": 0.9, "medium": 0.1},
 			Chosen: "pinned", JevChoice: "low", Model: "claude-sonnet-5-5", Effort: "xhigh", Confidence: 0.8,
 			Relation: map[string]float64{"resume": 0.93}, WorkTier: "low", PausedTier: "xhigh", Hold: "back to the paused work (resume 0.93)", Work: "resumed"},
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "xhigh", Probs: map[string]float64{"low": 0.95, "medium": 0.05},
+			Chosen: "low", JevChoice: "low", Model: "claude-opus-5-5", Effort: "low", Confidence: 0.9,
+			Relation: map[string]float64{"aside": 0.9, "side_question": 0.1}, WorkTier: "xhigh"},
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "xhigh", Probs: map[string]float64{"low": 0.95, "medium": 0.05},
+			Chosen: "low", JevChoice: "low", Model: "claude-opus-5-5", Effort: "low", Confidence: 0.9,
+			Relation: map[string]float64{"wrap_up": 0.95}, WorkTier: "xhigh", Work: "done"},
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "xhigh", Probs: map[string]float64{"low": 0.95, "medium": 0.05},
+			Chosen: "low", JevChoice: "low", Model: "claude-opus-5-5", Effort: "low", Confidence: 0.9,
+			Relation: map[string]float64{"side_question": 0.95}, WorkTier: "xhigh", WorkDone: true},
+		{TS: time.Now(), SessionID: "cccc3333", Scope: "main", Trigger: "warm", Warm: true, From: "low", Kept: false, Skipped: true,
+			Hold: "go-ahead: back to the work in progress", WorkTier: "low", PausedTier: "xhigh", Work: "resumed", Chosen: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh"},
 	}
 	b.Reset()
 	WriteWhy(&b, ds, WhyOptions{Rank: func(_, t string) int { return rank[t] }})
@@ -64,6 +75,10 @@ func TestWhy(t *testing.T) {
 		"relation: new_task 0.96 · separate from the work in progress (xhigh): its own level, lower · starts a new work in progress, pausing the one at xhigh",
 		"sonnet-5.5·xhigh",
 		"relation: resume 0.93 · back to the paused work (resume 0.93) · work in progress low · resumes the paused work (xhigh)",
+		"relation: aside 0.90, side_question 0.10 · an aside: its own level for this turn, the work in progress (xhigh) unchanged, lower",
+		"relation: wrap_up 0.95 · separate from the work in progress (xhigh): its own level, lower · marks the work in progress done",
+		"relation: side_question 0.95 · the work in progress (xhigh) was wrapped up: its own level, lower",
+		"without asking Jev: go-ahead: back to the work in progress (resumes the paused work)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
