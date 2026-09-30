@@ -45,7 +45,8 @@ const levelEnd = `(?:` + clauseEnd + `|\s+(?:level|niveau)(?:` + clauseEnd + `))
 const clauseEnd = `\s*$|\s*[^\pL\pN\s_-]|\s+-\s|\s+(?:` + functionWords + `)(?:[^\pL\pN_]|$)`
 
 // functionWords can follow an effort that ends its noun phrase, in
-// English and French.
+// English and French, informal ones too ("drop to low tbh", "baisse à
+// medium histoire d'économiser").
 const functionWords = `for|pour|par|now|right|then|here|there|please|pls|again|instead|anyway|only|just|maybe|effort|` +
 	`reasoning|thinking|mode|and|et|but|mais|so|donc|since|as|because|car|parce|puisque|vu|given|on|in|` +
 	`at|by|sur|from|until|till|jusqu['’]|dès|des|du|de|d['’]|à|a|au|aux|en|y|maintenant|alors|ici|là|` +
@@ -54,7 +55,7 @@ const functionWords = `for|pour|par|now|right|then|here|there|please|pls|again|i
 	`cette|ces|the|le|la|les|un|une|an|what|with|avec|without|sans|too|also|aussi|even|même|when|quand|` +
 	`once|to|or|ou|is|est|will|would|should|can|could|peut|doit|devrait|i|we|you|they|je|tu|nous|vous|il|` +
 	`elle|ils|elles|all|everything|tout|tous|toute|toutes|going|onwards|are|sont|was|étai[st]|` +
-	`suffi(?:t|ra|sent)|works|marche|fine|good|bien|enough|assez`
+	`suffi(?:t|ra|sent)|works|marche|fine|good|bien|enough|assez|tbh|imo|imho|lol|though|tho|cause|cuz|coz|bc|histoire|genre`
 
 // capWords say an effort is enough: "is enough", "suffit", "c'est assez".
 const capWords = `(?:(?:is|should\s+be|will\s+be)\s+enough|(?:ça\s+|ca\s+)?suffi(?:t|ra)|c['’]est\s+assez)`
