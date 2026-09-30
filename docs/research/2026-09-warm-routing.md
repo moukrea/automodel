@@ -13,7 +13,7 @@ Section 8 is round 3: the first fresh held-out run (79% exact), what it
 found and the fixes. Section 9 is the final review, the second held-out
 run and the repo's test split, and the fixes before the release. Section
 10 is round 4: held-out run 2 analysed and merged, and the fixes after the
-release review. Every
+release review. Section 11 is the review of round 4 and its fixes. Every
 prompt quoted here is an invented paraphrase; no real prompt is
 reproduced.
 
@@ -834,3 +834,120 @@ cases 0.066 against 0.074); too small to overturn the cost argument of
 - Parallel agents asked in English plain words, without a question of
   their own that keeps precision.
 - Live sessions for the notices (turn-only, late) and detour proposals.
+
+## 11. Round 4 review: the fixes (2026-09-30)
+
+An adversarial review of round 4 (unit tests, about 130 live Jev calls)
+and a live run in four real Claude Code sessions (32 prompts, dev binary,
+isolated config) found one major regression, one major issue already on
+main, and smaller ones.
+
+### What they found, and the fixes
+
+| id | finding | fix |
+|---|---|---|
+| F1 (major, round-4 regression) | after a detour, a bare go-ahead to any message ending in "?" went to Jev's relation question; "go" after "Anything else?" or "Ready to continue?" read continue 0.39-0.62, so the xhigh ultracode migration ran at low, medium or high (11 of 45 live answers below the paused work) | when the paused work needs more, the go-ahead goes back to it, as a bare go-ahead does, unless a yes/no of its own says the assistant offered one more thing for the detour (`[questions.offer]`, `meta.detour_offer_threshold` 0.5). No bar on the relation question could do it: closing questions read continue up to 0.81 ("Shall I carry on?") and offers of more of the detour from 0.45. On a Jev error it goes back too |
+| L4-1 (major, live) | the proposal check only looked for a final "?": "Should I push the branch? Pushing it would also push the README fix." took the bare go-ahead path and resumed the paused audit at xhigh with ultracode | `router.Proposes` reads the end of the message: a sentence ending in "?" in the last paragraph (and the one before when the last is a short remark), or an offer in words ("let me know if", "if you want", "dis-moi si", "si tu veux"); code is left out |
+| F3 | with paused work, "yes" read as a new task took its own level below the detour, and "yes" became the new work's goal | a go-ahead to a proposal after a detour holds the detour's level for every reading but resume, a wrap-up step and an aside; it never starts a work of its own |
+| F2 (major, on main) | "for the docs part, the review subagent can run at low effort" read aside 0.44-0.49 plus new_task, over the separate bar, and lowered high work to medium | `inform` covers how a part of the work may run when nothing is to be changed (a subagent's effort or model for one step); its `not_for` sends setting it in a file or a config to new_task or extend. The probe now reads inform 0.84-0.86 and holds high; four train cases where Jev's own level is below the work's |
+| F4 | the round-4 lowering pre-filter lost real requests: "redescends à medium du coup", "go down to medium given the rest is mechanical", "drop to medium level for the rest", a request ending in an emoji, and French caps after "que", "reste", "suite", "franchement" | what may follow the effort is a sign (an emoji too, not a hyphen) or a function word (a closed list, "du", "là", "given" added); "level" or "niveau" may come between; the French cap form also follows "que", "reste", "suite", "franchement", "là", "bon"... "haut" and "bas" are no lowering targets ("descend en bas de la page"). Every lost phrasing is back, the idioms still ask nothing, no train case changed its candidates |
+| F5 | "across … agents" made candidates of other agents ("across 4 build agents", "entre les agents du support") | only subagents or a count of agents ("across 4 agents") |
+| F6 | "take your time" on a first prompt that qualifies for Haiku went one rank above Haiku (low) | one rank above Jev's scored level, before the Haiku tier replaces it (medium) |
+| F7 | the notice a late decision leaves was injected on the next prompt even when that prompt started other work | the pending notice records the work it was asked for (`work_since`) and is dropped when the work in progress is another one |
+| L4-2 | a test of the migration's own new behaviour read new_task 0.79 and replaced the lowered work | `extend` names a test of what the work added; `new_task`'s `not_for` too. Two train cases read extend 0.92-0.99 |
+| L4-4 | "continue : audite aussi payments.py de la même façon" held at extend 0.47 against new_task 0.40 | `extend` names one more file for the audit or the review in progress; two cases read extend 0.83-0.93 |
+| F9 | wording examples nearly quoted the train cases they fixed; one held-out-2 label followed Jev's reading | the three examples are paraphrased; `h2-uc-audit-ultracode-slow` has its author's label back (aside, low) and the rubric sentence written for it is gone. The repo's test split was not run this round |
+
+Not changed:
+
+- **L4-2's ceiling.** A lowering "for the rest" stays a floor for
+  follow-ups, not a cap: the rubric labels a follow-up that adds harder
+  work at that work's level, and a cap would override Jev there. The
+  wording fix keeps such a test on the lowered work instead of replacing
+  it.
+- **L4-3.** A prompt that asks Claude to pose the resume question
+  ("Réponds seulement par la question : On reprend l'audit ?") was read
+  as resume. It was an artificial setup prompt, and going back is the
+  safe side.
+- **F8.** English plain-word requests for parallel agents stay under the
+  mode bar ("split the remaining packages across subagents" 0.49-0.50).
+  The session still reaches the mode through Jev's own mode question.
+  A mode question of its own should be judged on a fresh held-out set.
+
+### The offer question
+
+Asked only for a bare go-ahead after a detour, when the paused work needs
+more and the assistant's last message asks or offers something: "Does the
+assistant's last message offer or ask to do one more specific thing for
+the detour itself, which that go-ahead accepts?" Yes: a wrap-up step of
+the detour or more of it, also with a remark after the offer or without a
+question mark. No: a closing question or a check that offers no step of
+it, an offer to go back to the paused work. The relation question is still
+asked: when the go-ahead stays on the detour it says whether it is a
+wrap-up step (its own level) or more of the detour (the detour's level).
+
+On train (33 cases, 99 answers per run): closing questions and offers to
+go back 0.04-0.18, offers of the detour 0.80-0.96; 99 of 99 right at 0.5,
+in both runs. The four new cases on a subagent's effort or model read
+inform 0.86-0.97. The reviewer's 47 probes, run apart: closers and offers to
+go back 0.04-0.12, offers 0.84-0.94, every detour decision right. Three
+closing questions are named in the wording ("Anything else?", "Is that
+OK?", "Autre chose ?"); train uses eleven others too ("Shall I carry
+on?", "Ready to continue?", "Ça te va ?"...), which read the same.
+
+### The benchmark
+
+27 new invented train cases (`r5-`), English and French: go-aheads to
+closing questions after open and committed detours (14); offers of the
+detour with a remark after them or without a question mark, and an offer
+to go back followed by a remark (5); facts about a subagent's effort or
+model for a part of the work, where Jev's own level is below the work's
+(4); a test of what the work added (2); one more file for the audit or
+the review in progress (2). 667 train cases (630 main), 210 test
+(unchanged).
+
+### Results (train split, two runs of 3)
+
+| main scope, 630 cases | round 4 (603 cases) | round 4 fixed |
+|---|---:|---:|
+| router decision exact / acceptable | 93% / 98% | 93% / 98% |
+| rank error | 0.08 | 0.09 |
+| decisions below / above the label | 24-26 / 106-107 | 24-25 / 114-117 |
+| follow-ups below their work | 0 of 912 | 0 of 984 |
+| detour offer at 0.5 | - | 99/99 |
+| relation right | 86% | 85% |
+| explicit precision / recall | 100% / 90% | 100% / 88% |
+| recall effort / mode / model | 98 / 72-74 / 80-87% | 98 / 72-74 / 67-73% |
+| ultracode on/off | 1793-1794 of 1806 | 1874-1875 of 1887 |
+| gate | passes | passes |
+
+On round 4's own cases the fixed build scores 92.4-92.5% exact and rank
+error 0.086 (92.6-92.8% and 0.080-0.083 before), the difference being
+Jev's variance and two wording effects:
+
+- `ho-init-sonnet-healthz` ("Run this on Sonnet, it's simple: …") reads
+  the model request 0.70-0.76 again, under the 0.85 bar: round 4's 0.89
+  came from an example that quoted it. This is most of the lower model
+  recall.
+- `ho-tiergate-subagent-medium` (set a subagent's effort in a config)
+  reads inform or extend more often and holds the work's high, which its
+  label accepts.
+
+Held-out-2's 135 cases score 94.6-94.8% exact: these gains are
+in-sample (the cases shaped the round-4 wording), and so are the 27 new
+cases (100%). Only the third held-out set can tell what generalizes.
+
+### Thresholds
+
+New: `detour_offer_threshold` 0.5, the middle of the 0.18-0.80 gap. The
+others are unchanged: relation 0.55, explicit 0.8, model 0.85, the 0.9 bar
+for lowerings, ultracode 0.8, Haiku 0.92. `eval.DefaultGate` is unchanged.
+
+### Still open
+
+- The third fresh held-out set, run once with `--check`.
+- The repo's test split, not run this round (11 follow-ups below their
+  work in round 4).
+- English plain-word requests for parallel agents (F8); model requests
+  without a reason ("Run this on Sonnet") under the 0.85 bar.
+- Live sessions for detour offers with the offer question.

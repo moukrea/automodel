@@ -283,11 +283,15 @@ brings back the work in progress's tier and mode without asking Jev (Jev
 reads the bare word as trivial), even after a side question lowered the
 tier, on a warm turn, after a compaction or after a pause; after a detour,
 the paused work's when it needs more. A go-ahead to a proposal ("Want me
-to fix it?") starts that work, which may be bigger: it is routed, and not
-below the work in progress. After a detour, Jev's relation says what the
-proposal was: going back to the paused work ("Shall I get back to the
-migration?"), a wrap-up step of the detour ("Committed. Want me to push
-it?", its own level, the paused work waits) or more of the detour. Once a wrap-up has
+to fix it?", also with a remark after the question, or "let me know if
+you want it added") starts that work, which may be bigger: it is routed,
+and not below the work in progress. After a detour whose paused work
+needs more, it goes back to the paused work unless Jev says the assistant
+offered one more thing for the detour (a yes/no of its own,
+`meta.detour_offer_threshold`): "go" after "Anything else?" goes back; "yes"
+to "Committed. Want me to push it?" is a wrap-up step at its own level and
+the paused work waits; "yes" to more of the detour goes on with it, not
+below it. Once a wrap-up has
 marked the work done, a go-ahead is routed too: "looks good." mostly
 acknowledges the finished work, and Jev's relation says whether it reopens
 it; unless the done work was a detour and the paused work needs more: the
@@ -377,11 +381,13 @@ still win.
   and `high` only next to "effort", "niveau", "reasoning", "en", "in",
   "at", "passe", "switch", "use"…, or in a lowering or a cap: "drop to",
   "down to", "lower it to", "redescends à", "baisse à", "is enough",
-  "suffit", where the effort ends the clause, so "boils down to low
-  latency" or "narrow it down to low-level functions" ask nothing; and
+  "suffit", where the effort ends its phrase (a sign, an emoji or a word
+  that can't be its noun: "for", "du coup", "given"...), so "boils down to
+  low latency" or "narrow it down to low-level functions" ask nothing; and
   "élevé", "moyen", "faible", with "haut" and "bas" only after "effort"
   or "niveau"), "ultracode", "workflows", "en parallèle", "in parallel",
-  "plusieurs agents", "several agents", "across subagents", "sous-agents",
+  "plusieurs agents", "several agents", "across subagents" or "across 4
+  agents" (not "across the build agents"), "sous-agents",
   the names of models other than the session's
   (Haiku, the asked tier, is never one); a mode word asks both whether it
   wants the mode and whether it refuses it. Jev then confirms each one is a

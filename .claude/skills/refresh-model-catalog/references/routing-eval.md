@@ -57,9 +57,7 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   stay at xhigh?", "why did the reviewer run on Sonnet?", the status line's
   level), or what models cost ("is Sonnet cheaper than Opus for this kind
   of refactor?"), is an aside, unless routing is what the work in progress
-  builds or tunes; a question about how the work's own workflow splits it
-  ("is it normal that it spawns 4 agents per package?") is a side
-  question; so is a question or a remark unrelated to the work ("which
+  builds or tunes; so is a question or a remark unrelated to the work ("which
   command shows a folder's size?", model news, a comment in passing, a
   thank-you): its own level, for that turn only. A question that only
   recalls or explains finished work is a wrap-up. Once a wrap-up has
@@ -69,7 +67,10 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   "nice, that was quick") is an aside at its own level, even when its
   words are a go-ahead's. The same change repeated on another target (another
   endpoint, page or module) is a new task; another case or input of the
-  same deliverable extends it, and so does a step the work calls for, such
+  same deliverable extends it (one more file for the audit or the review in
+  progress, "continue: check the importer the same way"), and so does a
+  test of what the work added ("add a test that an expired coupon is
+  refused", after the work that added expiry), and a step the work calls for, such
   as repairing what the bug it fixes left behind (a script refunding the
   double charges after the double-charge fix), or a regression the work
   caused ("since the refactor the minimap icons flicker, can you look at
@@ -101,7 +102,14 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   is a resume ("yes" to "Shall I get back to the migration?"), a wrap-up
   step of the detour a wrap-up at its own level ("yes" to "Committed.
   Want me to push it?"), more of the detour a continue at the detour's
-  level. Where the rubric is ambiguous (a small
+  level, also when a remark follows the offer. A go-ahead to a closing
+  question that offers nothing of the detour ("Done. Anything else?",
+  "Shall I carry on?", "Ça te va ?") goes back to the paused work, as a
+  bare go-ahead does: a resume at that work's level.
+  A fact about how a part of the work may run (the effort or the model a
+  subagent can use for one step) is inform at the work's level; an
+  instruction to set it in a file or a config is a new task or an
+  extension. Where the rubric is ambiguous (a small
   mechanical follow-up, implementing an agreed design), keep the lower
   tier the prompt alone would get in `accept`.
   Modes (`modes.ultracode`): a follow-up keeps the work's mode, a new task
@@ -317,10 +325,18 @@ downgrades that cost something (a cache rebuild), and leaving a model a
 work runs on because it was asked in words; switch costs are those of the
 model the decision ends up on. A bare go-ahead brings
 back the work in progress's tier and mode without asking Jev (also after a
-compaction or a pause), unless it answers a proposal ("Want me to fix
-it?"), which is routed with the work as a floor (after a detour with the
-relation question: the proposal may be to go back to the paused work, to
-wrap the detour up or to do more of it), or the work is done and
+compaction or a pause), unless it answers a proposal (a question or an
+offer at the end of the assistant's message, `router.Proposes`: "Want me
+to fix it?", "Should I push it? CI takes ten minutes.", "let me know if
+you want it"), which is routed with the work as a floor. After a detour
+it is asked the relation question: the proposal may be to go back to the
+paused work, to wrap the detour up or to do more of it; when the paused
+work needs more, the go-ahead goes back to it unless the offer question
+(`[questions.offer]`) says the assistant offered one more thing for the
+detour, from `meta.detour_offer_threshold` (tune it in the gap the eval
+prints as "detour offer": offers of the detour against closing questions
+and offers to go back); a go-ahead that stays on the detour is not below
+it unless it is a wrap-up step or an aside. Or the work is done and
 no paused work needs more (`router.Acknowledges`): then it is routed like
 any prompt, and Jev's relation says whether it reopens the work or only
 acknowledges it. The eval mirrors these

@@ -204,3 +204,23 @@
   - English plain-word requests for parallel agents (0.50–0.83) without losing precision; "effort élevé, pas plus" (0.66–0.80).
   - Lowerings clear the 0.9 bar by 0.00–0.02: watch live.
   - Live sessions for the turn-only and late notices and for detour proposals.
+
+## 2026-09-30 — Warm routing round 4, review fixes: the offer question after a detour
+- Trigger: the adversarial review of round 4 and a live run in four Claude Code sessions (a go-ahead after a detour stayed below the paused work; an offer followed by a remark was missed; a subagent's effort read as an aside).
+- Changes:
+  - New `[questions.offer]` (a yes/no) and `meta.detour_offer_threshold` = 0.5: a bare go-ahead after a detour, when the paused work needs more and the assistant's last message asks or offers something, goes back to the paused work unless the assistant offered one more thing for the detour (a wrap-up step, more of it). The relation question alone could not tell them apart: closing questions ("Anything else?", "Shall I carry on?") read continue up to 0.81, offers of more of the detour from 0.45.
+  - `[questions.relation]`: `continue`'s `not_for` and `resume`'s `what` send a go-ahead to a closing question that offers nothing of the finished detour to resume; `inform` covers how a part of the work may run when nothing is to be changed (a subagent's effort or model for one step), and its `not_for` sends setting it in a file or a config to new_task or extend; `aside`'s `not_for` names a subagent's effort or model; `extend` covers one more file for the audit or the review in progress and a test of what the work added, and `new_task`'s `not_for` sends both there; the model-price wording is paraphrased away from a train case.
+  - `[questions.explicit]`: the French parallel-agents example and the Sonnet example are paraphrased away from the train cases they quoted.
+  - Thresholds otherwise unchanged (relation 0.55, explicit 0.8, model 0.85, lowering bar 0.9, ultracode 0.8, Haiku 0.92).
+  - Outside the catalog: a proposal is a question or an offer at the end of the assistant's message (also with a remark after it, or "let me know if" / "dis-moi si"), not only a final "?"; a go-ahead to a proposal after a detour keeps the detour's level unless it goes back or is a wrap-up step or an aside, and never becomes a work of its own; the lowering pre-filter accepts any sign or function word after the effort (recovers "redescends à medium du coup", "go down to medium given…", "drop to medium level for the rest", emojis) and the French cap after "que", "reste", "suite", "franchement"…; "across … agents" only for subagents or a count; "take your time" on a Haiku-eligible first prompt is one rank above Jev's scored level; a late decision's notice is only given on the work it was asked for.
+  - Benchmark: 27 new invented train cases (`r5-`); `h2-uc-audit-ultracode-slow` has its held-out author's label back (aside, low). 667 train, 210 test (unchanged, not run).
+- Reasons (`automodel eval --split train`, 630 main cases, two runs of 3; round 4 on its 603 cases in brackets):
+  - Decision exact 93% [93%], acceptable 98% [98%], rank error 0.09 [0.08]; below / above the label 24-25 / 114-117.
+  - Follow-ups below their work 0 of 984 [0 of 912]; detour offer at 0.5: 99 of 99 right, offers 0.80-0.96, closing questions and offers to go back 0.04-0.18.
+  - Explicit requests: precision 100% (0 false), recall 88% [90%]: model 67-73% [80-87%], because "Run this on Sonnet, it's simple" reads 0.70-0.76 once the example that quoted it is gone; effort 98%, mode 72-74%.
+  - Ultracode on/off 1874-1875 of 1887. Regression gate on train: pass (both runs).
+- Sources: docs/research/2026-09-warm-routing.md (§11).
+- Still to verify:
+  - The third fresh held-out set, run once with `--check`.
+  - Live sessions for detour offers with the offer question.
+  - Model requests without a reason and English plain-word requests for parallel agents, both under their bars.
