@@ -284,7 +284,10 @@ reads the bare word as trivial), even after a side question lowered the
 tier, on a warm turn, after a compaction or after a pause; after a detour,
 the paused work's when it needs more. A go-ahead to a proposal ("Want me
 to fix it?") starts that work, which may be bigger: it is routed, and not
-below the work in progress (nor the paused work). Once a wrap-up has
+below the work in progress. After a detour, Jev's relation says what the
+proposal was: going back to the paused work ("Shall I get back to the
+migration?"), a wrap-up step of the detour ("Committed. Want me to push
+it?", its own level, the paused work waits) or more of the detour. Once a wrap-up has
 marked the work done, a go-ahead is routed too: "looks good." mostly
 acknowledges the finished work, and Jev's relation says whether it reopens
 it; unless the done work was a detour and the paused work needs more: the
@@ -323,7 +326,8 @@ what it runs (at least `min_tier`, and the tier of its effort: xhigh on
 Opus). The hook injects the standing opt-in to workflow orchestration
 (repeated after each compaction, with an "off" notice when it ends, which
 says "for this turn only" when a wrap-up, a side question or an aside runs
-without it and the work keeps it).
+without it and the work keeps it; not under a pin or the budget cap, which
+keep it off).
 
 **Subagents**: the Agent tool only accepts an alias (`opus`, `haiku`…) and has
 no effort field. The hook sets the alias, and the proxy binds the effort to
@@ -366,13 +370,19 @@ still win.
   When the decision runs an effort or a model asked in words, the hook
   tells Claude in one line ("automodel: this work now runs at low effort,
   as the user asked…"), so it doesn't answer that it can't change its
-  effort, nor hand the work to a subagent on the model asked. A regex
+  effort, nor hand the work to a subagent on the model asked; when Jev
+  answered too late and a late decision applied it, the next prompt's hook
+  says so. A regex
   finds the words that may make a request: effort names (`low`, `medium`
   and `high` only next to "effort", "niveau", "reasoning", "en", "in",
   "at", "passe", "switch", "use"…, or in a lowering or a cap: "drop to",
-  "down to", "redescends à", "is enough", "suffit"; and "élevé", "moyen", "faible"),
-  "ultracode", "workflows", "en parallèle", "in parallel", "plusieurs
-  agents", "several agents", the names of models other than the session's
+  "down to", "lower it to", "redescends à", "baisse à", "is enough",
+  "suffit", where the effort ends the clause, so "boils down to low
+  latency" or "narrow it down to low-level functions" ask nothing; and
+  "élevé", "moyen", "faible", with "haut" and "bas" only after "effort"
+  or "niveau"), "ultracode", "workflows", "en parallèle", "in parallel",
+  "plusieurs agents", "several agents", "across subagents", "sous-agents",
+  the names of models other than the session's
   (Haiku, the asked tier, is never one); a mode word asks both whether it
   wants the mode and whether it refuses it. Jev then confirms each one is a
   request for the assistant's *own* work, not a mention ("why did it stay
@@ -382,15 +392,17 @@ still win.
   model the assistant itself should run on: model news, comparisons,
   benchmarks, "why did it pick Opus?", a subagent or a config set to a
   model and refusals are all no, and it needs
-  `meta.explicit_model_threshold` (0.85). On the eval's train split,
-  efforts asked in words score 0.82 and up (lower ones with their reason,
-  "drop to medium for what's left, it's boilerplate", 0.93 and up), most
-  models 0.87 and up; mentions, efforts and models set for something else,
-  and refusals 0.23 at most: none was confirmed.
+  `meta.explicit_model_threshold` (0.85); an effort below the work in
+  progress needs 0.9. On the eval's train split, efforts asked in words
+  score 0.83 and up (lowerings, for the rest of the work or a part of it,
+  0.90 and up), models 0.82 and up; mentions, efforts and models set for
+  something else, and refusals 0.32 at most (0.54 for an effort the prompt
+  refuses: "xhigh is overkill"): none was confirmed.
 - **"ultrathink"**: at least `xhigh` for that prompt, without asking Jev.
   **"think harder"**, "take your time", "réfléchis à fond", "en profondeur",
   "mets le paquet"… (confirmed by Jev): one tier above the work in progress,
-  or above the tier in force if that is higher; on a follow-up that is the
+  or above the tier in force if that is higher; on a new task, a first
+  prompt, a wrap-up or an aside, one tier above the level Jev gives it; on a follow-up that is the
   decision, not the level Jev reads in the words "think harder", unless the
   prompt adds work Jev is sure needs more (its level then stands). With `privacy =
   "metadata"`, Jev never sees the words, so only "think harder / more /
