@@ -740,3 +740,112 @@ func TestLateDecisionKeepsItsWork(t *testing.T) {
 		t.Errorf("late decision: %+v, work %+v", s.Main, s.Work)
 	}
 }
+
+// Decisions made without Jev (a fallback, a go-ahead) stay within the
+// budget cap and the repo's disable_modes, and drop a mode the capped tier
+// can't run.
+func TestBoundsWithoutJev(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cold := func(sid string) {
+		env.State.Update(sid, func(s *state.Session) bool { s.ColdHint = true; return true })
+	}
+	env.Cfg.Budget.USDPerSession = 1
+	workSession(t, env, "f1", "xhigh", "ultracode", "xhigh")
+	env.State.Update("f1", func(s *state.Session) bool { s.TotalUSD = 5; return true })
+	cold("f1")
+	fj.fail = true
+	run(t, env, "decide", map[string]any{"session_id": "f1", "prompt": "on reprend l'audit", "cwd": t.TempDir()})
+	s, _ := env.State.Load("f1")
+	if lim := env.Cfg.Budget.MaxTierWhenOver; s.Main.Tier != lim || s.Main.Effort != env.Catalog.Tier(catalog.ScopeMain, lim).Effort || s.Main.Mode != "" || s.Main.Workflows {
+		t.Errorf("Jev down over the budget cap: %+v", s.Main)
+	}
+	env.Cfg.Budget.USDPerSession = 0
+
+	repo := t.TempDir()
+	os.WriteFile(filepath.Join(repo, ".automodel.toml"), []byte("disable_modes = [\"ultracode\"]\n"), 0o600)
+	os.Mkdir(filepath.Join(repo, ".git"), 0o700)
+	workSession(t, env, "f2", "xhigh", "ultracode", "xhigh")
+	cold("f2")
+	run(t, env, "decide", map[string]any{"session_id": "f2", "prompt": "on reprend l'audit", "cwd": repo})
+	if s, _ = env.State.Load("f2"); s.Main.Tier != "xhigh" || s.Main.Mode != "" || s.Main.Workflows {
+		t.Errorf("Jev down in a repo without ultracode: %+v", s.Main)
+	}
+	fj.fail = false
+	workSession(t, env, "f3", "low", "", "xhigh")
+	env.State.Update("f3", func(s *state.Session) bool { s.Work.Mode = "ultracode"; return true })
+	run(t, env, "decide", map[string]any{"session_id": "f3", "prompt": "vas-y", "cwd": repo})
+	if s, _ = env.State.Load("f3"); s.Main.Tier != "xhigh" || s.Main.Mode != "" || s.Main.Workflows {
+		t.Errorf("go-ahead in a repo without ultracode: %+v", s.Main)
+	}
+}
+
+// On the model a work asked for in words the decision in force is off the
+// tiers: leaving it rebuilds the cache, so a new task Jev is unsure of
+// stays on it (at its level); the switch is costed on the model the
+// decision ends up on, and a Jev error keeps the decision in force.
+func TestLeavingTheWorkModel(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	const sonnet = "claude-sonnet-5-5"
+	cwd := t.TempDir()
+	decide := func(sid, p string, a fa) (*state.Session, ledger.Decision) {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load(sid)
+		all, _ := ledger.Decisions(env.Cfg.Ledger)
+		return s, all[len(all)-1]
+	}
+	onSonnet := func(sid string) {
+		t.Helper()
+		workSession(t, env, sid, "high", "", "high")
+		decide(sid, "passe sur sonnet pour la suite", fa{tier: "high", conf: 0.9, rel: "extend", x: map[string]float64{"model_" + sonnet: 0.95}})
+		env.State.Update(sid, func(s *state.Session) bool { s.ContextTokens = 800_000; return true })
+	}
+	onSonnet("o1")
+	s, d := decide("o1", "now the same retry logic for the email sender", fa{tier: "medium", conf: 0.3, rel: "new_task", relP: 0.55})
+	if s.Main.Model != sonnet || s.Work.Model != sonnet || s.Work.Goal != "now the same retry logic for the email sender" || !strings.Contains(d.Hold, "confidence 0.30 below 0.80: stays on Sonnet 5.5") {
+		t.Errorf("unsure new task: %+v, work %+v, hold %q", s.Main, s.Work, d.Hold)
+	}
+	onSonnet("o2")
+	s, d = decide("o2", "now the same retry logic for the email sender", fa{tier: "medium", conf: 0.9, rel: "new_task"})
+	if s.Main.Model != "claude-opus-5-5" || s.Main.Tier != "medium" || d.SwitchUSD <= 1 {
+		t.Errorf("sure new task: %+v, switch $%.2f", s.Main, d.SwitchUSD)
+	}
+	onSonnet("o3")
+	fj.fail = true
+	s, _ = decide("o3", "now the same retry logic for the email sender", fa{})
+	fj.fail = false
+	if s.Main.Model != sonnet || s.Main.Effort != "high" {
+		t.Errorf("Jev error on the work's model: %+v", s.Main)
+	}
+
+	// Going back to paused work that runs on another model costs that
+	// model's cache.
+	workSession(t, env, "r1", "xhigh", "ultracode", "xhigh")
+	env.State.Update("r1", func(s *state.Session) bool { s.Work.Model = sonnet; return true })
+	decide("r1", "quick one: fix the typo in the README title", fa{tier: "low", conf: 0.95, rel: "new_task"})
+	env.State.Update("r1", func(s *state.Session) bool { s.ContextTokens = 600_000; return true })
+	s, d = decide("r1", "ok, back to the pool race", fa{tier: "low", conf: 0.9, rel: "resume", relP: 0.9})
+	if s.Main.Model != sonnet || d.SwitchUSD <= 1 {
+		t.Errorf("resume onto the paused work's model: %+v, switch $%.2f", s.Main, d.SwitchUSD)
+	}
+}
+
+// [effort:x] while the work runs on a model the catalog no longer has:
+// ignored, not a crash.
+func TestWorkModelGoneFromTheCatalog(t *testing.T) {
+	fj := &fakeJev{answers: []fa{{tier: "high", conf: 0.9, rel: "extend"}}}
+	env := setup(t, fj)
+	workSession(t, env, "gm", "high", "", "high")
+	env.State.Update("gm", func(s *state.Session) bool {
+		s.Work.Model, s.Main.Model, s.Main.Tier = "claude-gone", "claude-gone", state.PinnedTier
+		return true
+	})
+	before, _ := env.State.Load("gm")
+	run(t, env, "decide", map[string]any{"session_id": "gm", "prompt": "[effort:high] next part", "cwd": t.TempDir()})
+	if s, _ := env.State.Load("gm"); !s.LastPromptAt.After(before.LastPromptAt) || s.Pin != "" {
+		t.Errorf("prompt not handled: last prompt %v → %v, pin %q", before.LastPromptAt, s.LastPromptAt, s.Pin)
+	}
+}

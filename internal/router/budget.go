@@ -2,6 +2,7 @@ package router
 
 import (
 	"github.com/moukrea/automodel/internal/catalog"
+	"github.com/moukrea/automodel/internal/policy"
 	"github.com/moukrea/automodel/internal/state"
 )
 
@@ -67,4 +68,20 @@ func (e *Env) capTier(req Request, t *catalog.Tier) *catalog.Tier {
 		return lim
 	}
 	return t
+}
+
+// bounded is a tier and mode decided without Jev (a fallback, a go-ahead)
+// within the repo's bounds and the budget cap: the mode is dropped when
+// the repo disables it or the tier ends up below its min_tier.
+func (e *Env) bounded(req Request, t *catalog.Tier, mode string, rp policy.RepoPolicy) (*catalog.Tier, string) {
+	c := e.Catalog
+	t = e.capTier(req, policy.Constrain(c, req.Scope, t, rp, req.Context))
+	md := c.Modes[mode]
+	if md == nil || !rp.ModeAllowed(mode) {
+		return t, ""
+	}
+	if min := c.Tier(req.Scope, md.MinTier); min != nil && t.Rank < min.Rank {
+		return t, ""
+	}
+	return t, mode
 }

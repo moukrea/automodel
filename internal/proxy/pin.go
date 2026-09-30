@@ -77,6 +77,9 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 			if m := cat.Model(pm); m != nil && m.SupportsEffort(effort) && s.Main.Effort != effort {
 				d := *s.Main
 				d.Effort, d.Cause, d.DecidedAt = effort, "/effort", time.Now()
+				if !cat.KeepsMode(d.Mode, effort) { // the mode would raise the pinned effort
+					d.Mode, d.Workflows = "", false
+				}
 				s.Main, s.Pin, s.PinModel, s.PinSource = &d, effort, pm, "/effort"
 				if perTurn(cat, m) && !s.PerTurnRejected && s.EffortBase != "" {
 					s.PendingEffort = &state.PendingEffort{Effort: effort, CreatedAt: time.Now()}

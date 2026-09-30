@@ -143,17 +143,18 @@ func BuildReport(r io.Reader, since time.Time) (*Report, error) {
 				}
 				w.Evaluated++
 				switch {
-				case d.Skipped:
+				case d.Skipped && d.Kept:
 					w.Skipped++
 				case d.Kept:
 					w.Kept[d.KeepReason]++
-				default:
+				default: // a go-ahead that carried the work on (skipped) switched too
+
 					w.Switched++
 					w.Transition[d.From+"→"+d.Chosen]++
 					w.SwitchUSD += d.SwitchUSD
 					w.GainUSD += d.GainUSD
 				}
-				if d.Kept || d.Skipped {
+				if d.Kept {
 					continue // a kept warm turn is not a new decision
 				}
 			}

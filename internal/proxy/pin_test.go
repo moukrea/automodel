@@ -98,6 +98,23 @@ func TestClientEffortPinsTheWorkModel(t *testing.T) {
 	}
 }
 
+// /effort below the mode's own effort on the work's model drops the mode,
+// as on the tiers.
+func TestClientEffortOnTheWorkModelKeepsModeRule(t *testing.T) {
+	p, _, _ := setup(t)
+	cat, _ := p.Catalog.Get()
+	p.State.Update("w", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: state.PinnedTier, Model: "claude-sonnet-5-5", APIID: "claude-sonnet-5-5", Effort: "xhigh", Mode: "ultracode", Workflows: true}
+		s.Work = &state.Work{Tier: "xhigh", Mode: "ultracode", Model: "claude-sonnet-5-5"}
+		return true
+	})
+	p.observeClientEffort(cat, "w", "medium") // Claude Code's default
+	p.observeClientEffort(cat, "w", "low")
+	if s, _ := p.State.Load("w"); s.Main.Effort != "low" || s.Main.Mode != "" || s.Main.Workflows || s.PinModel != "claude-sonnet-5-5" {
+		t.Fatalf("/effort low on the work's model: %+v", s.Main)
+	}
+}
+
 func ledgerDecisions(p *Proxy) ([]ledger.Decision, error) { return ledger.Decisions(p.Ledger.Path) }
 
 func TestPinnedModelRewrite(t *testing.T) {

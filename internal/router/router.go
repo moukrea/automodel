@@ -249,21 +249,22 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if err != nil {
 		rec.Error = err.Error()
 		timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
-		if cur != nil {
-			log.Printf("jev %s/%s: %v (kept %s)", req.Scope, req.Trigger, err, cur.ID)
+		if req.Warm && req.Current != nil {
+			log.Printf("jev %s/%s: %v (kept %s)", req.Scope, req.Trigger, err, req.Current.Tier)
 			d, out := keep("jev error")
 			out.TimedOut = timedOut
 			return d, out
 		}
 		// The default tier, or the work in progress when it needs more
-		// (after a compaction or a pause).
+		// (after a compaction or a pause), within the repo's bounds and the
+		// budget cap.
 		tier, mode := c.DefaultTier(req.Scope), ""
 		if req.Work != nil {
 			if w := c.Tier(req.Scope, req.Work.Tier); w != nil && w.Rank >= tier.Rank {
 				tier, mode = w, req.Work.Mode
 			}
 		}
-		tier = e.capTier(req, policy.Constrain(c, req.Scope, tier, rp, req.Context))
+		tier, mode = e.bounded(req, tier, mode, rp)
 		dec.Trigger, dec.Cause = "fallback", req.Trigger
 		rec.Trigger, rec.Cause = "fallback", req.Trigger
 		log.Printf("jev %s/%s: %v (default tier %s)", req.Scope, req.Trigger, err, tier.ID)
@@ -305,12 +306,6 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if v.Pick != nil {
 		rec.Loss, rec.GainUSD, rec.SwitchUSD = v.Pick.Loss, v.Pick.Gain, v.Pick.SwitchCost
 	}
-	// Leaving a model outside the tiers (a released [model:x] pin, the end
-	// of the work a model was asked for): there is nothing to stay on, the
-	// move is the user's call, but its cost is real.
-	if cur == nil && req.Current != nil && req.SwitchCost != nil && v.Model != req.Current.Model {
-		rec.SwitchUSD = req.SwitchCost(v.Tier)
-	}
 	if shadow != nil && shAnswer != nil {
 		sd := e.Read(shAnswer, ids, req.Scope)
 		sv := e.Judge(req, sd, cur, rp, params)
@@ -319,6 +314,12 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	rec.Shadow = shadow
 	e.fill(dec, v.Tier, v.Mode)
 	e.onModel(dec, v.Model)
+	// The switch costs what moving to the model and effort the decision
+	// ends up on costs (the work's model, a paused work's, one asked in
+	// words), not the tier's.
+	if req.Warm && req.Current != nil && req.SwitchCost != nil {
+		rec.SwitchUSD = req.SwitchCost(e.asTier(req.Scope, dec.Model, dec.Effort))
+	}
 	// On the work's model the tier is only a level: the same model, effort
 	// and mode is no change.
 	if cur := req.Current; v.Keep == "" && v.Model != "" && req.Warm && cur != nil && dec.Model == cur.Model && dec.Effort == cur.Effort && dec.Mode == cur.Mode {
@@ -486,6 +487,22 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	}
 	v.Tier, v.Mode, v.Hold = tier, mode, strings.Join(why, "; ")
 
+	// The model the decision runs on, and what moving there costs.
+	to := e.asTier(req.Scope, cmp.Or(v.Model, tier.Model), tier.Effort)
+	free := req.SwitchCost == nil || req.SwitchCost(to) <= 0
+	if cur == nil && req.Warm && req.Current != nil && !free && x.model == "" && to.Model != req.Current.Model && rd.conf < f.WarmMinConfidence {
+		// The decision in force runs off the tiers (a model asked for in
+		// words): leaving that model rebuilds the cache, so like a costly
+		// downgrade it needs a sure answer; until then the level applies
+		// on the same model.
+		v.Model = e.offTiers(req.Current.Model)
+		name := req.Current.Model
+		if m := e.Catalog.Model(name); m != nil {
+			name = m.Label
+		}
+		why = append(why, fmt.Sprintf("confidence %.2f below %.2f: stays on %s", rd.conf, f.WarmMinConfidence, name))
+		v.Hold = strings.Join(why, "; ")
+	}
 	if cur != nil {
 		curMode := req.Current.Mode
 		// A switch that costs something (a cache rebuild) and lowers the
@@ -494,7 +511,6 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		// goes through: a session on Haiku must not stay there on hard work
 		// because Jev hesitates between high and xhigh. Free switches (per-
 		// turn effort) and what the prompt asked for need no confidence.
-		free := req.SwitchCost == nil || req.SwitchCost(tier) <= 0
 		switch {
 		case tier.ID == cur.ID && mode == curMode && (v.Model == "" || v.Model == req.Current.Model):
 			v.Keep = "same tier"
@@ -803,11 +819,12 @@ func (e *Env) PinnedModel(sessionID, repoRoot, model, effort, mode, source strin
 // the bare word as trivial): it carries on the work in progress, or the
 // paused work when that needs more (the detour is over), at the tier, mode
 // and model it was decided at (a wrap-up since may have lowered the
-// decision in force), and reopens a work a wrap-up closed. On a warm cache
-// it doesn't move to another model: that rebuilds the whole context (the
-// asked Haiku tier, see asked). It returns the decision (a copy of
-// req.Current when nothing changes) and what becomes of the work.
-func (e *Env) GoAhead(req Request) (*state.Decision, *WorkUpdate) {
+// decision in force), within the repo's bounds (rp) and the budget cap,
+// and reopens a work a wrap-up closed. On a warm cache it doesn't move to
+// another model: that rebuilds the whole context (the asked Haiku tier,
+// see asked). It returns the decision (a copy of req.Current when nothing
+// changes) and what becomes of the work.
+func (e *Env) GoAhead(req Request, rp policy.RepoPolicy) (*state.Decision, *WorkUpdate) {
 	cur := req.Current
 	d := *cur
 	w, resumed := e.GoAheadWork(cur, req.Work, req.Paused, req.MidTurn)
@@ -822,8 +839,9 @@ func (e *Env) GoAhead(req Request) (*state.Decision, *WorkUpdate) {
 		u = &WorkUpdate{Kind: WorkReopened, Tier: w.Tier, Mode: w.Mode, Model: w.Model}
 	}
 	if t := e.Catalog.Tier(catalog.ScopeMain, w.Tier); t != nil {
+		t, mode := e.bounded(req, t, w.Mode, rp)
 		c := d
-		e.fill(&c, t, w.Mode)
+		e.fill(&c, t, mode)
 		e.onModel(&c, w.Model)
 		if req.Trigger != "warm" || c.Model == cur.Model {
 			d = c
@@ -838,7 +856,7 @@ func (e *Env) GoAhead(req Request) (*state.Decision, *WorkUpdate) {
 // kept, and the decision returned is nil.
 func (e *Env) Carry(req Request) (*state.Decision, *WorkUpdate) {
 	cur := req.Current
-	d, u := e.GoAhead(req)
+	d, u := e.GoAhead(req, policy.LoadRepoPolicy(req.RepoDir, e.Cfg.RepoPolicyFile))
 	same := d.Tier == cur.Tier && d.Model == cur.Model && d.Effort == cur.Effort && d.Mode == cur.Mode
 	d.Trigger, d.Cause, d.DecidedAt = req.Trigger, "go-ahead", e.Now()
 	rec := ledger.Decision{TS: d.DecidedAt, Kind: "decision", SessionID: req.SessionID, Scope: cur.Scope, Trigger: req.Trigger,
@@ -904,6 +922,16 @@ func (e *Env) onModel(d *state.Decision, model string) {
 	if !c.KeepsMode(d.Mode, effort) {
 		d.Mode, d.Workflows = "", false
 	}
+}
+
+// asTier is the tier running model at effort, for switch costs: the
+// scope's tier if one runs them, else one outside the catalog's (a model
+// asked for in words).
+func (e *Env) asTier(scope, model, effort string) *catalog.Tier {
+	if t := e.Catalog.TierFor(scope, model, effort); t != nil {
+		return t
+	}
+	return &catalog.Tier{ID: state.PinnedTier, Model: model, Effort: effort}
 }
 
 // offTiers is the model a work asked to run on in words runs on besides

@@ -114,14 +114,17 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	case etag != "":
 		w := sess.Work
 		switch {
-		case pinModel != "" && env.Catalog.Model(pinModel).SupportsEffort(etag):
-			pin, pinSource = etag, "prompt"
-		case pinModel == "" && w != nil && w.Model != "" && w.Model == curModel:
-			// On the model a work asked for in words: the tag pins it there.
-			if env.Catalog.Model(w.Model).SupportsEffort(etag) {
+		case pinModel != "":
+			if m := env.Catalog.Model(pinModel); m != nil && m.SupportsEffort(etag) {
+				pin, pinSource = etag, "prompt"
+			}
+		case w != nil && w.Model != "" && w.Model == curModel:
+			// On the model a work asked for in words: the tag pins it there
+			// (unless the catalog no longer has it).
+			if m := env.Catalog.Model(w.Model); m != nil && m.SupportsEffort(etag) {
 				pin, pinModel, pinSource = etag, w.Model, "prompt"
 			}
-		case pinModel == "" && env.Catalog.TierFor(catalog.ScopeMain, curModel, etag) != nil:
+		case env.Catalog.TierFor(catalog.ScopeMain, curModel, etag) != nil:
 			pin, pinSource = etag, "prompt"
 		} // else: an effort this model doesn't have: ignored
 	}
