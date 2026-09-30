@@ -245,10 +245,13 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, nil
 	}
 	_, err = env.State.Update(in.SessionID, func(s *state.Session) bool {
-		// What a late decision could not say: said by this prompt's hook.
+		// What a late decision could not say: said by this prompt's hook,
+		// if this prompt goes on with the work it was asked for.
 		var pending *router.Asked
+		pendingSince := time.Time{}
 		if !late && s.PendingAsked != nil {
-			pending, s.PendingAsked = &router.Asked{Effort: s.PendingAsked.Effort, Model: s.PendingAsked.Model}, nil
+			pending, pendingSince = &router.Asked{Effort: s.PendingAsked.Effort, Model: s.PendingAsked.Model}, s.PendingAsked.WorkSince
+			s.PendingAsked = nil
 		}
 		if late {
 			if s.LastPromptAt.UnixNano() != lateAt {
@@ -304,8 +307,8 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				s.ResetEffortEpoch() // top-level effort change: the policy accepted the rebuild
 			}
 		}
-		if late && s.Main != nil && dec != nil && asked != nil && !asked.Turn {
-			s.PendingAsked = &state.Asked{Effort: asked.Effort, Model: asked.Model}
+		if late && s.Main != nil && dec != nil && asked != nil && !asked.Turn && s.Work != nil {
+			s.PendingAsked = &state.Asked{Effort: asked.Effort, Model: asked.Model, WorkSince: s.Work.Since}
 		}
 		if s.Main == nil || late {
 			return true // a late decision can't inject a notice: the next prompt does
@@ -322,8 +325,8 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				notice = UltracodeOffTurn
 			}
 		}
-		if asked == nil {
-			asked = pending
+		if asked == nil && pending != nil && s.Work != nil && s.Work.Since.Equal(pendingSince) {
+			asked = pending // not on another work (a new task, the paused work resumed)
 		}
 		if n := askedNotice(env.Catalog, asked, s.Main); n != "" {
 			notice = strings.TrimSpace(notice + "\n\n" + n)

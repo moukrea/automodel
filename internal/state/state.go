@@ -84,10 +84,12 @@ func (s *Session) WorkInProgress() *Work {
 	return &Work{Tier: s.Main.Tier, Mode: s.Main.Mode}
 }
 
-// Asked is an effort or a model (catalog key) the user asked for in words.
+// Asked is an effort or a model (catalog key) the user asked for in words,
+// for the work that started at WorkSince (Work.Since).
 type Asked struct {
-	Effort string `json:"effort,omitempty"`
-	Model  string `json:"model,omitempty"`
+	Effort    string    `json:"effort,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	WorkSince time.Time `json:"work_since,omitzero"`
 }
 
 // PendingAgent is registered by the agent hook and bound by the proxy to the

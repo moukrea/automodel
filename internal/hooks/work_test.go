@@ -1238,3 +1238,38 @@ func TestMoreThinkingOnAHaikuFirstPrompt(t *testing.T) {
 		}
 	}
 }
+
+// The notice a late decision leaves is for the work it was asked for: a
+// new task that happens to run the same effort isn't "this work ... as
+// the user asked".
+func TestLateAskedNoticeOnAnotherWork(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	var got struct {
+		trigger string
+		at      time.Time
+	}
+	spawnLate = func(in *Input, trigger string, at time.Time) { got.trigger, got.at = trigger, at }
+	t.Cleanup(func() { spawnLate = func(*Input, string, time.Time) {} })
+	env.Cfg.Features.WarmTimeout.Duration = 50 * time.Millisecond
+	cwd := t.TempDir()
+	workSession(t, env, "ln", "xhigh", "", "xhigh")
+	in := map[string]any{"session_id": "ln", "prompt": "passe en low pour la suite, c'est mécanique", "cwd": cwd}
+	fj.delay, fj.answers = 300*time.Millisecond, []fa{{tier: "medium", conf: 0.9, rel: "extend", x: map[string]float64{"effort_low": 0.95}}}
+	run(t, env, "decide", in)
+	fj.delay = 0
+	t.Setenv(LateEnv, fmt.Sprintf("%s:%d", got.trigger, got.at.UnixNano()))
+	run(t, env, "decide", in)
+	t.Setenv(LateEnv, "")
+	if s, _ := env.State.Load("ln"); s.PendingAsked == nil || !s.PendingAsked.WorkSince.Equal(s.Work.Since) {
+		t.Fatalf("late decision: pending %+v, work %+v", s.PendingAsked, s.Work)
+	}
+	fj.answers = []fa{{tier: "low", conf: 0.95, rel: "new_task"}}
+	out := run(t, env, "decide", map[string]any{"session_id": "ln", "prompt": "autre chose : mets à jour l'année dans le footer", "cwd": cwd})
+	if out != nil && strings.Contains(out.HookSpecificOutput.AdditionalContext, "as the user asked") {
+		t.Errorf("new task after a late lowering: notice %q", out.HookSpecificOutput.AdditionalContext)
+	}
+	if s, _ := env.State.Load("ln"); s.PendingAsked != nil {
+		t.Errorf("pending notice kept: %+v", s.PendingAsked)
+	}
+}
