@@ -114,8 +114,14 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "continue", x: x("effort_more", 0.95)}, want: "max", wantWork: "max"},
 		{name: "think harder on a new task: a floor above the session", tier: "medium", prompt: "next: design how to shard the job queue, and think hard about it", ask: "explicit_effort_more",
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "new_task", x: x("effort_more", 0.95)}, want: "xhigh", wantWork: "xhigh", newGoal: true},
-		{name: "ultrathink: xhigh at least, without a question", tier: "low", prompt: "ultrathink: are there other places we read the lease without the lock?",
-			jev: fa{tier: "low", conf: 0.9, rel: "side_question"}, want: "xhigh", wantWork: "xhigh"},
+		{name: "ultrathink: xhigh at least, without a question", tier: "low", prompt: "ultrathink: and check the other places we read the lease without the lock",
+			jev: fa{tier: "low", conf: 0.9, rel: "extend"}, want: "xhigh", wantWork: "xhigh"},
+		// A wrap-up, a side question or an aside is answered for that turn:
+		// what it needs raises that answer only.
+		{name: "ultrathink on a side question: that answer only", tier: "low", prompt: "ultrathink: are there other places we read the lease without the lock?",
+			jev: fa{tier: "low", conf: 0.9, rel: "side_question"}, want: "xhigh", wantWork: "low"},
+		{name: "a side question rated above the work: that answer only", tier: "medium", prompt: "why can't the scheduler deadlock with the new lock order? walk me through it",
+			jev: fa{tier: "xhigh", conf: 0.9, rel: "side_question"}, want: "xhigh", wantWork: "medium"},
 		{name: "ultracode asked on a continuing turn turns it on", tier: "high", prompt: "continue, en ultracode cette fois", ask: "explicit_mode_ultracode",
 			jev: fa{tier: "high", conf: 0.9, ultra: 0.3, rel: "continue", x: x("mode_ultracode", 0.95)}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode"},
 		{name: "pas besoin d'ultracode turns it off", tier: "xhigh", mode: "ultracode", prompt: "pas besoin d'ultracode, corrige juste le message d'erreur", ask: "explicit_mode_off",
@@ -226,6 +232,19 @@ func TestGoAheadRestoresWork(t *testing.T) {
 	decide("g2", "continue", "")
 	if s, _ = env.State.Load("g2"); fj.calls() != n || s.Main.Tier != "xhigh" {
 		t.Fatalf("plain go-ahead: %+v", s.Main)
+	}
+	// A side question answered above the work (ultrathink) raised that
+	// answer only: the go-ahead goes back to the work's level.
+	workSession(t, env, "g5", "low", "", "low")
+	fj.answers = []fa{{tier: "low", conf: 0.9, rel: "side_question"}}
+	decide("g5", "ultrathink: is the rename safe for the plugin API?", "")
+	if s, _ = env.State.Load("g5"); s.Main.Tier != "xhigh" || s.Work.Tier != "low" {
+		t.Fatalf("ultrathink side question: %+v, work %+v", s.Main, s.Work)
+	}
+	n = fj.calls()
+	decide("g5", "ok, continue", "")
+	if s, _ = env.State.Load("g5"); fj.calls() != n || s.Main.Tier != "low" {
+		t.Errorf("go-ahead after an ultrathink side question: %+v", s.Main)
 	}
 	// After a wrap-up, a go-ahead or an acknowledgement is routed: "looks
 	// good." on a done xhigh fix (held-out run 1 carried it at xhigh) gets
@@ -344,6 +363,21 @@ func TestWorkModel(t *testing.T) {
 	s = decide("m1", "now rename the config loader to settings", fa{tier: "medium", conf: 0.9, rel: "new_task"})
 	if s.Main.Model != "claude-opus-5-5" || s.Main.Tier != "medium" || s.Work.Model != "" || s.Work.Tier != "medium" {
 		t.Fatalf("new task: %+v, work %+v", s.Main, s.Work)
+	}
+
+	// Asked for a wrap-up, a side question or an aside, a model runs that
+	// answer only: the work stays on its own.
+	for i, c := range []struct{ prompt, rel string }{
+		{"write the commit message with Sonnet", "wrap_up"},
+		{"is CI green yet? Sonnet can answer that one", "side_question"},
+		{"quick unrelated one for Sonnet: what does HTTP 409 mean?", "aside"},
+	} {
+		sid := fmt.Sprint("mt", i)
+		workSession(t, env, sid, "xhigh", "", "xhigh")
+		s = decide(sid, c.prompt, fa{tier: "low", conf: 0.9, rel: c.rel, x: model(0.95)})
+		if s.Main.Model != sonnet || s.Work.Model != "" || s.Work.Tier != "xhigh" || s.Work.Done != (c.rel == "wrap_up") {
+			t.Errorf("%s asking for Sonnet: %+v, work %+v", c.rel, s.Main, s.Work)
+		}
 	}
 
 	// Asked for the rest of the work as it stands, the model keeps the
@@ -911,10 +945,16 @@ func TestLeavingTheWorkModel(t *testing.T) {
 		decide(sid, "passe sur sonnet pour la suite", fa{tier: "high", conf: 0.9, rel: "extend", x: map[string]float64{"model_" + sonnet: 0.95}})
 		env.State.Update(sid, func(s *state.Session) bool { s.ContextTokens = 800_000; return true })
 	}
+	// The gate keeps this turn on Sonnet; the new work goes back to the
+	// tiers (a prose model is for the work it was asked for), and its next
+	// sure prompt leaves Sonnet.
 	onSonnet("o1")
 	s, d := decide("o1", "now the same retry logic for the email sender", fa{tier: "medium", conf: 0.3, rel: "new_task", relP: 0.55})
-	if s.Main.Model != sonnet || s.Work.Model != sonnet || s.Work.Goal != "now the same retry logic for the email sender" || !strings.Contains(d.Hold, "confidence 0.30 below 0.80: stays on Sonnet 5.5") {
+	if s.Main.Model != sonnet || s.Work.Model != "" || s.Work.Goal != "now the same retry logic for the email sender" || !strings.Contains(d.Hold, "confidence 0.30 below 0.80: stays on Sonnet 5.5") {
 		t.Errorf("unsure new task: %+v, work %+v, hold %q", s.Main, s.Work, d.Hold)
+	}
+	if s, _ = decide("o1", "and update the call sites in cmd/ too", fa{tier: "medium", conf: 0.95, rel: "extend"}); s.Main.Model != "claude-opus-5-5" || s.Work.Model != "" {
+		t.Errorf("sure follow-up of the new work: %+v, work %+v", s.Main, s.Work)
 	}
 	onSonnet("o2")
 	s, d = decide("o2", "now the same retry logic for the email sender", fa{tier: "medium", conf: 0.9, rel: "new_task"})

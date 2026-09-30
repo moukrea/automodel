@@ -81,7 +81,10 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   follow-up exactly that, not the level the words "think harder" suggest).
   A model asked for the rest of the work as it stands ("do the rest with
   Sonnet, it's only CSS") keeps the work's level on that model; with more
-  work to it (an extension), that work's level. Going back to
+  work to it (an extension), that work's level. Asked for a wrap-up, a
+  side question or an aside, a model, an effort, more thinking or
+  "ultrathink" is for that answer only: the work keeps its level and
+  model. Going back to
   paused work ("back to the migration", or a bare go-ahead once the detour
   is done) takes that work's level. Where the rubric is ambiguous (a small
   mechanical follow-up, implementing an agreed design), keep the lower
@@ -279,7 +282,9 @@ paused work needs more, also once the detour was wrapped up ("commit
 that", then "vas-y"); typed mid-turn, while the detour runs, a go-ahead
 goes on with the turn. A further task below it keeps it paused. A model asked in words
 (`work_in_progress.model`) runs the work, not the session: follow-ups and
-wrap-ups stay on it, a new task goes back to the tiers.
+wrap-ups stay on it, a new task goes back to the tiers (when the
+confidence gate keeps that turn on the model, the new work is still on
+the tiers).
 
 The confidence gate (`features.warm_min_confidence`) only guards
 downgrades that cost something (a cache rebuild), and leaving a model a

@@ -511,6 +511,9 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		why = append(why, "explicit model "+x.model)
 	}
 	v.Tier, v.Mode, v.Hold = tier, mode, strings.Join(why, "; ")
+	// The model the work runs on: the gate below only keeps this turn on
+	// the model in force.
+	workModel := v.Model
 
 	// The model the decision runs on, and what moving there costs.
 	to := e.asTier(req.Scope, cmp.Or(v.Model, tier.Model), tier.Effort)
@@ -552,7 +555,9 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		// Claude runs something else, nor another session's message).
 		reopen := followed != nil && followed.Done && hold != nil && !req.MidTurn && !req.Peer &&
 			(top == catalog.RelationContinue || top == catalog.RelationExtend || req.FollowUp == FollowUpProposal)
-		v.Work = workUpdate(v, followed, work, hold, x, top, fresh, back, reopen)
+		w := v
+		w.Model = workModel
+		v.Work = workUpdate(w, followed, work, hold, x, top, fresh, back, reopen)
 		// New work below the paused work: a longer detour, the paused work
 		// waits on (unless the work it replaces needs more and waits instead).
 		if u := v.Work; u != nil && u.Kind == WorkNew && req.Paused != nil {
@@ -578,9 +583,11 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 // back to the paused work restores it; an effort, a mode or a model asked
 // in words sets it; a follow-up that needs more raises it; a wrap-up marks
 // it done, and more work on it (reopen) opens it again; a side question,
-// an aside or a plain follow-up leave it as it is. An effort (more thinking
-// too) or a mode asked for a wrap-up, a side question or an aside is for
-// that answer only (top: the prompt's likeliest relation).
+// an aside or a plain follow-up leave it as it is. What a wrap-up, a side
+// question or an aside asks for (an effort, more thinking, a mode, a
+// model) or needs (ultrathink, a level above the work) is for that answer
+// only, and so is anything a prompt that takes its own level asks for (top:
+// the prompt's likeliest relation). v.Model is the model the work runs on.
 func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x asks, top string, fresh, back, reopen bool) *WorkUpdate {
 	switch {
 	case fresh:
@@ -590,20 +597,11 @@ func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x ask
 	case back:
 		return &WorkUpdate{Kind: WorkResumed, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
 	}
-	// The work as it is, on the model a prompt asked for in words.
-	same := &WorkUpdate{Tier: work.ID, Mode: followed.Mode, Model: followed.Model, Done: followed.Done}
-	if v.Model != followed.Model {
-		same.Kind, same.Model = WorkSet, v.Model
-	}
 	switch {
 	case hold == nil && top == catalog.RelationWrapUp && !followed.Done:
-		same.Kind, same.Done = WorkDone, true
-		return same
-	case thisTurn(top) && (x.effort != nil || x.more || x.on != "" || x.off), hold == nil:
-		if same.Kind == "" {
-			return nil
-		}
-		return same
+		return &WorkUpdate{Kind: WorkDone, Tier: work.ID, Mode: followed.Mode, Model: followed.Model, Done: true}
+	case thisTurn(top), hold == nil:
+		return nil
 	case x.effort != nil || x.on != "" || x.off:
 		return &WorkUpdate{Kind: WorkSet, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
 	}
