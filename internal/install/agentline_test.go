@@ -128,6 +128,16 @@ func TestApplyRemoveKeepAgentline(t *testing.T) {
 	if !hasHook(s.Obj("hooks"), "UserPromptSubmit", o.hookCmd("decide")) {
 		t.Fatal("decide hook not installed")
 	}
+	// Applying again (automodel update) leaves up-to-date settings alone.
+	backups := func() int { m, _ := filepath.Glob(o.SettingsPath + ".automodel-backup-*"); return len(m) }
+	n := backups()
+	st, _ := os.Stat(o.SettingsPath)
+	if err := Apply(o); err != nil {
+		t.Fatal(err)
+	}
+	if st2, _ := os.Stat(o.SettingsPath); backups() != n || !st2.ModTime().Equal(st.ModTime()) {
+		t.Errorf("second apply rewrote settings (backups %d -> %d)", n, backups())
+	}
 	if cfg, _ := os.ReadFile(o.ConfigPath); strings.Contains(string(cfg), "statusline_command") {
 		t.Fatalf("agentline chained:\n%s", cfg)
 	}
