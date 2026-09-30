@@ -146,3 +146,75 @@ func TestCommandsQuotePaths(t *testing.T) {
 		t.Error("plain path changed")
 	}
 }
+
+// automodel's hooks are updated where they stand: other tools' hooks placed
+// after them stay after them, and a merge over up-to-date settings changes
+// nothing (no rewrite, no backup). A stale duplicate and an old binary path
+// are fixed in place.
+func TestMergeKeepsHookOrder(t *testing.T) {
+	o := Options{Exe: "/home/u/.local/bin/automodel", ConfigPath: "/home/u/.config/automodel/config.toml"}
+	cfg := config.Default()
+	s := NewObject()
+	merge(s, o, cfg)
+	hooks := s.Obj("hooks")
+	for _, ev := range []string{"UserPromptSubmit", "SessionStart"} {
+		groups, _ := hooks.Get(ev)
+		g := NewObject()
+		h := NewObject()
+		h.Set("type", "command")
+		h.Set("command", "/x/hook-claude")
+		g.Set("hooks", []any{h})
+		hooks.Set(ev, append(groups.([]any), g))
+	}
+	raw, _ := json.Marshal(s)
+	s, _ = ParseObject(raw)
+	before, _ := json.Marshal(s)
+	merge(s, o, cfg)
+	after, _ := json.Marshal(s)
+	if string(before) != string(after) {
+		t.Fatalf("merge over current settings changed them:\n%s\n%s", before, after)
+	}
+
+	// An old binary path and a stale duplicate: updated in place, duplicate dropped.
+	old := strings.ReplaceAll(string(before), "/home/u/.local/bin/automodel", "/old/automodel")
+	s, _ = ParseObject([]byte(old))
+	groups, _ := s.Obj("hooks").Get("UserPromptSubmit")
+	dup := NewObject()
+	dh := NewObject()
+	dh.Set("type", "command")
+	dh.Set("command", "/older/automodel --config /c hook decide")
+	dup.Set("hooks", []any{dh})
+	s.Obj("hooks").Set("UserPromptSubmit", append(groups.([]any), dup))
+	merge(s, o, cfg)
+	got, _ := json.Marshal(s)
+	if string(got) != string(before) {
+		t.Errorf("stale hooks not fixed in place:\n%s\n%s", before, got)
+	}
+}
+
+func TestRefreshLeavesCurrentSettings(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{Exe: "/home/u/.local/bin/automodel", ConfigPath: "/home/u/.config/automodel/config.toml", SettingsPath: dir + "/settings.json", Log: func(string, ...any) {}}
+	cfg := config.Default()
+	s := NewObject()
+	merge(s, o, cfg)
+	g := NewObject()
+	h := NewObject()
+	h.Set("type", "command")
+	h.Set("command", "/x/hook-claude")
+	g.Set("hooks", []any{h})
+	groups, _ := s.Obj("hooks").Get("UserPromptSubmit")
+	s.Obj("hooks").Set("UserPromptSubmit", append(groups.([]any), g))
+	if err := writeSettings(o.SettingsPath, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := Refresh(o, cfg); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := os.ReadDir(dir)
+	for _, e := range m {
+		if strings.Contains(e.Name(), "automodel-backup") {
+			t.Errorf("refresh wrote a backup: %s", e.Name())
+		}
+	}
+}
