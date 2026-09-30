@@ -861,7 +861,8 @@ func (e *Env) PinnedModel(sessionID, repoRoot, model, effort, mode, source strin
 // paused work when that needs more (the detour is over), at the tier, mode
 // and model it was decided at (a side question since may have lowered the
 // decision in force), within the repo's bounds (rp) and the budget cap. A
-// work a wrap-up closed is not carried (the hooks route the prompt). On a
+// work a wrap-up closed is not carried unless the paused work needs more
+// (Acknowledges: the hooks route the prompt). On a
 // warm cache it doesn't move to another model: that rebuilds the whole
 // context (the asked Haiku tier, see asked). It returns the decision (a
 // copy of req.Current when nothing changes) and what becomes of the work.

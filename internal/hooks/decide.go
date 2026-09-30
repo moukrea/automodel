@@ -157,11 +157,13 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// me to fix it?") starts that work, which may be bigger: it is routed,
 	// not below the work in progress (nor the paused work). Once a wrap-up
 	// closed the work, "ok" or "looks good" mostly acknowledges it: routed,
-	// Jev's relation says whether it reopens the work.
+	// Jev's relation says whether it reopens the work; unless that work was
+	// a detour and the paused work needs more, which the go-ahead goes
+	// back to.
 	followUp := ""
 	wip := sess.WorkInProgress()
 	back, _ := env.GoAheadWork(sess.Main, wip, sess.PausedWork(now), false)
-	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) && (wip == nil || !wip.Done) &&
+	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) && !env.Acknowledges(wip, sess.PausedWork(now)) &&
 		(trigger == "warm" || trigger == "compact" || trigger == "cold") &&
 		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) &&
 		(back == nil || !env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, back.Tier))) {

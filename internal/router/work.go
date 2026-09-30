@@ -176,11 +176,12 @@ func (e *Env) HigherWork(a, b *state.Work) *state.Work {
 // GoAheadWork is the work a bare go-ahead carries on: the work in
 // progress, or the paused work when that needs more (the detour is over:
 // "ok, continue" goes back to the migration, not on at the typo's level;
-// resumed then). Typed mid-turn, it doesn't go below the decision the
-// turn runs at (cur) nor drop its mode.
+// resumed then). Typed mid-turn, the detour is still running: it goes on
+// with the turn, not to the paused work, and doesn't go below the
+// decision the turn runs at (cur) nor drop its mode.
 func (e *Env) GoAheadWork(cur *state.Decision, work, paused *state.Work, midTurn bool) (w *state.Work, resumed bool) {
 	w = work
-	if paused != nil && e.HigherWork(work, paused) == paused {
+	if paused != nil && !midTurn && e.HigherWork(work, paused) == paused {
 		w, resumed = paused, true
 	}
 	if !midTurn || w == nil || cur == nil {
@@ -198,6 +199,16 @@ func (e *Env) GoAheadWork(cur *state.Decision, work, paused *state.Work, midTurn
 		k.Mode = cur.Mode
 	}
 	return &k, resumed
+}
+
+// Acknowledges reports a bare go-ahead that mostly acknowledges finished
+// work, so the hooks route it (Jev's relation says whether it reopens the
+// work): a wrap-up closed the work in progress, and no paused work needs
+// more. After a detour that was wrapped up ("commit that"), "vas-y" goes
+// back to the paused work, as it does before the wrap-up.
+func (e *Env) Acknowledges(work, paused *state.Work) bool {
+	back, _ := e.GoAheadWork(nil, work, paused, false)
+	return work != nil && work.Done && back == work
 }
 
 // higher returns the higher-ranked of two tiers (either may be nil).

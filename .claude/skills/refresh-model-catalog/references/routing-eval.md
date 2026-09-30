@@ -275,7 +275,9 @@ config, must never count. An effort below the work in progress needs 0.9
 
 A new task below the work in progress pauses that work (`paused_work`,
 two hours); `resume` restores it, and so does a bare go-ahead when the
-paused work needs more; a further task below it keeps it paused. A model asked in words
+paused work needs more, also once the detour was wrapped up ("commit
+that", then "vas-y"); typed mid-turn, while the detour runs, a go-ahead
+goes on with the turn. A further task below it keeps it paused. A model asked in words
 (`work_in_progress.model`) runs the work, not the session: follow-ups and
 wrap-ups stay on it, a new task goes back to the tiers.
 
@@ -285,9 +287,10 @@ work runs on because it was asked in words; switch costs are those of the
 model the decision ends up on. A bare go-ahead brings
 back the work in progress's tier and mode without asking Jev (also after a
 compaction or a pause), unless it answers a proposal ("Want me to fix
-it?"), which is routed with the work as a floor, or the work is done: then
-it is routed like any prompt, and Jev's relation says whether it reopens
-the work or only acknowledges it. The eval mirrors these
+it?"), which is routed with the work as a floor, or the work is done and
+no paused work needs more (`router.Acknowledges`): then it is routed like
+any prompt, and Jev's relation says whether it reopens the work or only
+acknowledges it. The eval mirrors these
 rules (`internal/eval` `setup`, `router.Judge`, and the hooks' own
 go-ahead path `router.Carried`); keep it in sync with
 `internal/hooks/decide.go`.

@@ -669,6 +669,47 @@ func TestDetourThenGoAhead(t *testing.T) {
 		t.Fatalf("go-ahead to a proposal after a detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
 	}
 
+	// Once the detour was wrapped up ("commit that"), a go-ahead still goes
+	// back to the paused work without asking Jev (live, Jev read "vas-y" as
+	// continue and reopened the committed typo fix), and so does a go-ahead
+	// to a proposal to go back to it. A done work alone is routed
+	// (TestGoAheadRestoresWork).
+	wrapped := func(sid string) {
+		t.Helper()
+		detour(sid)
+		if s := decide(sid, "commit that", "", fa{tier: "low", conf: 0.95, rel: "wrap_up"}); !s.Work.Done || s.Paused == nil || s.Main.Tier != "low" {
+			t.Fatalf("detour wrapped up: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+		}
+	}
+	for i, p := range []string{"vas-y", "oui, continue", "go", "ok, go on"} {
+		sid := fmt.Sprint("wd", i)
+		wrapped(sid)
+		n := fj.calls()
+		s := decide(sid, p, "", fa{tier: "low", conf: 0.9, ultra: 0.6, rel: "continue", relP: 0.75})
+		if fj.calls() != n || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal || s.Work.Done || s.Work.Mode != "ultracode" {
+			t.Errorf("%q after a wrapped-up detour (%d calls): %+v, work %+v, paused %+v", p, fj.calls()-n, s.Main, s.Work, s.Paused)
+		}
+	}
+	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Committed as docs: fix the README title typo. Shall I get back to the pool race?"}]}}`+"\n"), 0o600)
+	for i, p := range []string{"yes", "oui"} {
+		sid := fmt.Sprint("wp", i)
+		wrapped(sid)
+		n := fj.calls()
+		s := decide(sid, p, tp, fa{tier: "low", conf: 0.9, ultra: 0.05})
+		if fj.calls() != n+1 || fj.last().Questions[jev.QRelation].Type != "" || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal || s.Work.Done {
+			t.Errorf("%q to going back after a wrapped-up detour: %+v, work %+v, paused %+v", p, s.Main, s.Work, s.Paused)
+		}
+	}
+
+	// Typed while the detour still runs, a go-ahead goes on with the turn:
+	// the paused work waits (the next "commit it" would otherwise close the
+	// migration).
+	detour("dm")
+	n = fj.calls()
+	if s = decide("dm", "go on", busyTranscript(t), fa{tier: "low", conf: 0.9}); fj.calls() != n || s.Main.Tier != "low" || s.Main.Mode != "" || s.Paused == nil || s.Paused.Goal != workGoal || s.Work.Goal == workGoal {
+		t.Errorf("go-ahead typed mid-turn during a detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+
 	// A resume Jev is unsure of (0.30, the other options at 0.10) is a
 	// follow-up of the detour; a sure one goes back.
 	detour("dw")

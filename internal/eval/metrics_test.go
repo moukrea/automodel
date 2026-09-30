@@ -341,6 +341,26 @@ func TestEvalGoAhead(t *testing.T) {
 	if r.Decision != "xhigh" || r.Mode != "ultracode" {
 		t.Errorf("go-ahead after a detour: %+v", r)
 	}
+	// The same once the detour was wrapped up: carried back to the paused
+	// work, and a go-ahead to a proposal to go back is routed, floored there.
+	done := func(last string) Case {
+		return Case{Scope: catalog.ScopeMain, Warm: true, State: st("last_assistant", last,
+			"current", map[string]any{"tier": "low"}, "work_in_progress", map[string]any{"goal": "fix the README typo", "level": "low", "done": true},
+			"paused_work", map[string]any{"goal": "migrate the handlers", "level": "xhigh", "mode": "ultracode"})}
+	}
+	if r = judge(done("Committed as docs: fix the typo.")); r.FastPath != "go-ahead" || r.Decision != "xhigh" || r.Mode != "ultracode" {
+		t.Errorf("go-ahead after a wrapped-up detour: %+v", r)
+	}
+	if r = judge(done("Committed. Shall I get back to the handlers?")); r.FastPath != router.FollowUpProposal || r.Decision != "xhigh" || r.Mode != "ultracode" {
+		t.Errorf("go-ahead to going back after a wrapped-up detour: %+v", r)
+	}
+	// Typed mid-turn during the detour: it goes on with the turn.
+	r = judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st("mid_turn", true,
+		"current", map[string]any{"tier": "low"}, "work_in_progress", map[string]any{"goal": "fix the README typo", "level": "low"},
+		"paused_work", map[string]any{"goal": "migrate the handlers", "level": "xhigh", "mode": "ultracode"})})
+	if r.Decision != "low" || r.Mode != "" {
+		t.Errorf("go-ahead typed mid-turn during a detour: %+v", r)
+	}
 }
 
 // Talking about an effort for something else, with Jev half-reading it as
