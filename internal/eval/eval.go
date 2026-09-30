@@ -354,9 +354,15 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 			r.ExplicitP[strings.TrimPrefix(id, jev.QExplicitPfx)] = *a.Noul
 		}
 	}
-	if format == "choice" {
-		return r
+	if format != "choice" {
+		r.judge(env, req, ans, ids)
 	}
+	return r
+}
+
+// judge applies the router's policy to Jev's answers, as the hooks would.
+func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.Answer, ids []string) {
+	cat, c := env.Catalog, r.Case
 	if req.Work != nil {
 		r.WorkTier = req.Work.Tier
 	}
@@ -387,7 +393,41 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 		}
 		r.Decision, r.Mode, r.Model, r.Kept, r.Hold = w.Tier, w.Mode, w.Model, "go-ahead", ""
 	}
-	return r
+}
+
+// Rejudge applies the policy of env's catalog (thresholds, penalty, rules)
+// to the answers of a saved run (`automodel eval --json`), without asking
+// Jev again: decision rules can be compared on the same answers. Answers
+// to questions the catalog words differently are not re-asked.
+func Rejudge(env *router.Env, rs []Result) []Result {
+	out := make([]Result, 0, len(rs))
+	for _, r := range rs {
+		if r.Err != "" {
+			out = append(out, r)
+			continue
+		}
+		_, req := setup(env.Catalog, r.Case)
+		_, ids := jev.Questions(env.Catalog, r.Scope, jev.Ask{})
+		ans := map[string]jev.Answer{jev.QLevel: {Type: "score", Probabilities: map[string]float64{}, Confidence: r.Conf}}
+		for i, id := range ids {
+			ans[jev.QLevel].Probabilities[fmt.Sprint(i)] = r.Probs[id]
+		}
+		if r.RelP != nil {
+			ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: r.RelP, Confidence: r.RelConf}
+		}
+		for _, n := range []struct {
+			pfx string
+			p   map[string]float64
+		}{{jev.QModePfx, r.ModeP}, {jev.QTierPfx, r.AskedP}, {jev.QExplicitPfx, r.ExplicitP}} {
+			for k, p := range n.p {
+				ans[n.pfx+k] = jev.Answer{Type: "noul", Noul: &p}
+			}
+		}
+		r.Decision, r.Mode, r.Model, r.Kept, r.Hold, r.WorkTier, r.PausedTier = "", "", "", "", "", "", ""
+		r.judge(env, req, ans, ids)
+		out = append(out, r)
+	}
+	return out
 }
 func argmax(p map[string]float64, order []string) string {
 	best, bp := "", -1.0
