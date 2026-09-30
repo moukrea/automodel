@@ -222,7 +222,7 @@ var (
 		Options: map[string]*catalog.Option{
 			catalog.RelationContinue: {
 				What:     "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, possibly at another effort, on another model or without the parallel agents, or to carry out what it just proposed or offered for that work (possibly picking one of its options), and asks for nothing more. A question or a remark that comes with the go-ahead, even an unrelated one, doesn't change that: the work goes on.",
-				NotFor:   "A go-ahead that also adds or changes something (extend); an acknowledgement once the work is done (`work_in_progress.done`) and nothing is left to go on with, such as 'looks good', 'ok, thanks' or 'merci' (aside).",
+				NotFor:   "A go-ahead that also adds or changes something (extend); an acknowledgement once the work is done (`work_in_progress.done`) and nothing is left to go on with, such as 'looks good', 'ok, thanks' or 'merci' (aside); a go-ahead to a wrap-up step the assistant proposed once the work is done, such as committing, pushing, opening the PR or writing the changelog entry ('yes' to 'Want me to open the PR?') (wrap_up).",
 				Examples: []string{"yes", "go", "continue", "ok ship it", "ok, do what you proposed", "go with option 2", "resume, the limits are reset", "out of curiosity, why is the status line orange? anyway, carry on", "vas-y", "oui, continue", "oui, fais ce que tu proposes", "c'est bon, on y va"},
 			},
 			catalog.RelationExtend: {
@@ -231,9 +231,9 @@ var (
 				Examples: []string{"also add a test for that", "and make it configurable", "but keep the old flag working", "no, use a channel instead", "and write the script that fixes the rows it corrupted", "ajoute aussi un log quand ça échoue", "mais garde l'ancienne API", "non, fais plutôt une migration"},
 			},
 			catalog.RelationInform: {
-				What:     "Only gives a fact, a preference or an answer the work in progress needs, and asks for no new work.",
+				What:     "Only gives a fact, a preference or an answer the work in progress needs, and asks for no new work: about the work itself, or about its environment, resources, schedule or people (which machines are free and until when, who shares them, who owns what, when someone is away).",
 				NotFor:   "A message that also asks for a change or a check (extend).",
-				Examples: []string{"FYI it only fails on ARM", "env vars win", "camelCase", "c'est la v2 de l'API", "la clé est dans le .env"},
+				Examples: []string{"FYI it only fails on ARM", "env vars win", "camelCase", "the staging cluster only has 4 GPUs free until noon", "FYI the build farm is shared with the mobile team this week", "c'est la v2 de l'API", "la clé est dans le .env", "le runner de CI n'est dispo que jusqu'à 17h"},
 			},
 			catalog.RelationSideQuestion: {
 				What:     "Asks a question or a quick check about the work in progress itself while it is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: its progress or status, a detail of its code, a choice it made, a doubt, a check of its result, or which model or mode would suit it.",
@@ -242,7 +242,7 @@ var (
 			},
 			catalog.RelationAside: {
 				What:     "A question or a remark that is not about the work in progress itself and starts no work of its own: general knowledge, a command or a flag, another topic, news, a comment in passing or a thank-you, or a question about automodel's routing (why this session or a subagent got, kept or changed its effort, its model or its mode).",
-				NotFor:   "A question about the work in progress, its code, its choices or its result, including which model or mode would suit it (side_question), and routing questions when routing is what the work in progress builds or tunes; a prompt that also tells the assistant to go on with the work, even after a question ('just curious, carry on'), or asks for an effort, a model or a mode for it (continue, extend); a fact or a constraint for the work, even about a subagent or a config (inform, extend); something that starts real work, even small (new_task).",
+				NotFor:   "A question about the work in progress, its code, its choices or its result, including which model or mode would suit it (side_question), and routing questions when routing is what the work in progress builds or tunes; a prompt that also tells the assistant to go on with the work, even after a question ('just curious, carry on'), or asks for an effort, a model or a mode for it (continue, extend); a fact or a constraint for the work, even about a subagent or a config, or about its environment, resources, schedule or people, such as which machines are free and until when or who shares them (inform, extend); any instruction to do or change something, even small or in a config or a tuning file (new_task or extend).",
 				Examples: []string{"unrelated: how do I list open ports on macOS?", "what does HTTP 409 mean again?", "Fable 5.1 is out, have you seen the benchmarks?", "why did the effort go up just now?", "au fait, c'est quoi la différence entre rebase et merge ?", "ça veut dire quoi idempotent, déjà ?", "pourquoi cette session tourne sur Opus ?", "haha, nice", "merci !"},
 			},
 			catalog.RelationResume: {
@@ -251,9 +251,9 @@ var (
 				Examples: []string{"back to the migration", "ok, now let's get back to the refactor", "continue the audit", "ok, and now?", "reprends le refacto", "on revient à la migration", "bon, on reprend l'audit", "et maintenant ?"},
 			},
 			catalog.RelationWrapUp: {
-				What:     "Wraps up work that is finished: a summary or a recap, a commit message, a PR description, a push, a changelog entry, or a question that only recalls or explains the finished work (what changed, how it works, why it was done that way).",
+				What:     "Wraps up work that is finished: a summary or a recap, a commit message, a PR description, a push, a changelog entry, or a question that only recalls or explains the finished work (what changed, how it works, why it was done that way). A go-ahead to such a step the assistant proposed once the work is done ('yes' to 'Want me to push the branch and open the PR?') is a wrap-up too.",
 				NotFor:   "Finishing or fixing the work itself (extend); a question while the work is still pending (side_question).",
-				Examples: []string{"write the commit message", "summarize what you changed", "open the PR", "push it", "how does the new retry work, in two sentences?", "résume ce que tu as fait", "c'était quoi le problème, finalement ?", "fais le commit et pousse"},
+				Examples: []string{"write the commit message", "summarize what you changed", "open the PR", "push it", "yes, push it and open the PR", "how does the new retry work, in two sentences?", "résume ce que tu as fait", "c'était quoi le problème, finalement ?", "fais le commit et pousse", "oui, vas-y pour la PR"},
 			},
 			catalog.RelationNewTask: {
 				What:     "Starts a separate piece of work (a change, a fix, a feature, an investigation) that the work in progress doesn't include, even one that repeats its pattern on another target (another endpoint, page or module).",

@@ -101,12 +101,17 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
 - `relation` labels how a warm, resumed or post-compaction prompt relates
   to the work in progress: `continue` (go-ahead, keep going, resume),
   `extend` (adds to, constrains or corrects it), `inform` (a fact, a
-  preference or an answer, no new work), `side_question` (a question or a
+  preference or an answer, no new work; facts about the work's
+  environment, resources, schedule or people too: "the staging cluster
+  only has 4 GPUs free until noon"), `side_question` (a question or a
   check about the work itself while it stays pending), `aside` (a question
   or a remark unrelated to the work, an acknowledgement, or a question
-  about automodel's routing; no work of its own), `resume` (goes back to the paused work, only with
+  about automodel's routing; no work of its own; an instruction to do or
+  change something never is), `resume` (goes back to the paused work, only with
   `state.paused_work`), `wrap_up` (summary, commit, PR, push, changelog or
-  recap of finished work) or `new_task` (separate work). Label the relation from the conversation, not from the tier: the
+  recap of finished work, and a go-ahead to such a step the assistant
+  proposed once the work is done: "yes" to "Want me to open the PR?") or
+  `new_task` (separate work). Label the relation from the conversation, not from the tier: the
   same words can be a side question while work is pending and a new task
   once it is done. `want` follows from it with the rubric above.
 - `explicit` labels what the prompt asks for in words: `{"effort": "xhigh"}`
