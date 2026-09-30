@@ -167,9 +167,13 @@ type Result struct {
 	// ExplicitP is Jev's yes-probability per request a regex found in the
 	// prompt (effort_xhigh, mode_off...).
 	ExplicitP map[string]float64 `json:"explicit_p,omitempty"`
-	AskedP    map[string]float64 `json:"asked_p,omitempty"`
-	Cost      float64            `json:"cost_usd"`
-	Err       string             `json:"error,omitempty"`
+	// FastPath is how the hooks took the prompt without the relation
+	// question (fastPath): RelP is then asked apart, only to diagnose; the
+	// decision and the relation metrics don't use it.
+	FastPath string             `json:"fast_path,omitempty"`
+	AskedP   map[string]float64 `json:"asked_p,omitempty"`
+	Cost     float64            `json:"cost_usd"`
+	Err      string             `json:"error,omitempty"`
 }
 
 // Load reads JSONL cases.
@@ -327,7 +331,8 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	cat, cl := env.Catalog, env.Jev
 	r := Result{Case: c}
 	st, req := setup(cat, c)
-	ask := jev.Ask{Relation: req.Work != nil && fastPath(env, c, req) == ""}
+	fp := fastPath(env, c, req)
+	ask := jev.Ask{Relation: req.Work != nil && fp == ""}
 	ask.Resume = ask.Relation && req.Paused != nil
 	for _, x := range req.Explicit {
 		ask.Explicit = append(ask.Explicit, x.Explicit)
@@ -356,6 +361,15 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	r.Got = argmax(r.Probs, ids)
 	if a, ok := ans[jev.QRelation]; ok {
 		r.RelP, r.RelConf = a.Probabilities, a.Confidence
+	}
+	if fp != "" {
+		// The relation the hooks don't ask, alone in its own call (the
+		// questions of the decision stay the hooks').
+		q := map[string]jev.Question{jev.QRelation: jev.RelationQuestion(cat, req.Paused != nil)}
+		if a, resp, err := cl.Ask(ctx, cat.Meta.JevModel, "", st, q); err == nil {
+			r.RelP, r.RelConf = a[jev.QRelation].Probabilities, a[jev.QRelation].Confidence
+			r.Cost += resp.Usage.Cost
+		}
 	}
 	for id, a := range ans {
 		switch {
@@ -401,6 +415,7 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 	if fp == router.FollowUpProposal {
 		req.FollowUp = fp
 	}
+	r.FastPath = fp
 	var cur *catalog.Tier
 	if req.Current != nil {
 		cur = cat.Tier(c.Scope, req.Current.Tier)
@@ -460,7 +475,7 @@ func Rejudge(env *router.Env, rs []Result) []Result {
 		for i, id := range ids {
 			ans[jev.QLevel].Probabilities[fmt.Sprint(i)] = r.Probs[id]
 		}
-		if r.RelP != nil {
+		if r.RelP != nil && fastPath(env, r.Case, req) == "" {
 			ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: r.RelP, Confidence: r.RelConf}
 		}
 		for _, n := range []struct {
@@ -471,7 +486,7 @@ func Rejudge(env *router.Env, rs []Result) []Result {
 				ans[n.pfx+k] = jev.Answer{Type: "noul", Noul: &p}
 			}
 		}
-		r.Decision, r.Mode, r.Model, r.Kept, r.Hold, r.WorkTier, r.PausedTier = "", "", "", "", "", "", ""
+		r.Decision, r.Mode, r.Model, r.Kept, r.Hold, r.WorkTier, r.PausedTier, r.FastPath = "", "", "", "", "", "", "", ""
 		r.judge(env, req, ans, ids)
 		out = append(out, r)
 	}

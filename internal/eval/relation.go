@@ -41,7 +41,8 @@ func (s RelationStats) Accuracy() float64 {
 }
 
 // RelationMetrics computes the relation metrics (10 equal-width bins for
-// the ECE, as for the tier level).
+// the ECE, as for the tier level), over the answers the router reads: not
+// the relation asked apart on a fast path (Result.FastPath).
 func RelationMetrics(rs []Result) RelationStats {
 	s := RelationStats{Confusion: map[string]map[string]int{}}
 	type bin struct {
@@ -51,7 +52,7 @@ func RelationMetrics(rs []Result) RelationStats {
 	bins := make([]bin, 10)
 	for _, r := range rs {
 		top, p := relationTop(r.RelP)
-		if r.Err != "" || r.Relation == "" || top == "" {
+		if r.Err != "" || r.Relation == "" || top == "" || r.FastPath != "" {
 			continue
 		}
 		s.N++

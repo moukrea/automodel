@@ -1,10 +1,15 @@
 package eval
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -441,7 +446,7 @@ func TestHeldOutRound3(t *testing.T) {
 
 	done := map[string]any{"phase": "warm", "task": "looks good.", "last_assistant": "CI is green on the PR.",
 		"current": map[string]any{"tier": "low"}, "work_in_progress": map[string]any{"goal": "Fix the SSRF in the image proxy", "level": "xhigh", "done": true}}
-	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: done}, answers{level: "low", rel: map[string]float64{"aside": 0.9, "continue": 0.1}}); r.Decision != "low" || r.Kept == "go-ahead" {
+	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: done}, answers{level: "low", rel: map[string]float64{"aside": 0.9, "continue": 0.1}}); r.Decision != "low" || r.FastPath != "" || r.Kept == "go-ahead" {
 		t.Errorf("acknowledgement of a done work: %+v", r)
 	}
 	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: done}, answers{level: "low", rel: map[string]float64{"continue": 0.9, "aside": 0.1}}); r.Decision != "xhigh" {
@@ -460,5 +465,55 @@ func TestHeldOutRound3(t *testing.T) {
 	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: landing}, answers{spread: map[string]float64{"medium": 0.54, "high": 0.46},
 		rel: map[string]float64{"continue": 0.92, "extend": 0.08}, asks: map[string]float64{"model_claude-sonnet-5-5": 0.88}}); r.Decision != "medium" || r.Model != "claude-sonnet-5-5" {
 		t.Errorf("model for the rest of the work: %s on %q (%s)", r.Decision, r.Model, r.Hold)
+	}
+}
+
+// The eval records Jev's relation on the prompts the hooks take without
+// it (a go-ahead), asked alone in a call of its own: the decision's
+// questions stay the hooks', and neither the decision nor the relation
+// metrics use it.
+func TestRelationAskedApartOnFastPath(t *testing.T) {
+	c := testCatalog(t)
+	var mu sync.Mutex
+	var calls []map[string]jev.Question
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req jev.Request
+		json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		calls = append(calls, req.Questions)
+		mu.Unlock()
+		out := map[string]any{}
+		for id, q := range req.Questions {
+			switch {
+			case id == jev.QRelation:
+				out[id] = map[string]any{"type": "choice", "choice": "continue", "confidence": 0.9, "probabilities": map[string]float64{"continue": 0.95, "extend": 0.05}}
+			case q.Type == "score":
+				out[id] = map[string]any{"type": "score", "confidence": 1, "probabilities": map[string]float64{"0": 1}}
+			default:
+				out[id] = map[string]any{"type": "noul", "noul": 0.05}
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]any{"answers": out, "usage": map[string]any{"cost": 0.0001}})
+	}))
+	defer srv.Close()
+	env := &router.Env{Cfg: config.Default(), Catalog: c, Jev: &jev.Client{URL: srv.URL, APIKey: "k", HTTP: srv.Client()}}
+	cs := Case{ID: "go", Scope: catalog.ScopeMain, Warm: true, Want: "xhigh", Relation: "continue", State: map[string]any{
+		"phase": "warm", "task": "go on.", "current": map[string]any{"tier": "low"}, "work_in_progress": map[string]any{"goal": "fix the race", "level": "xhigh"}}}
+	rs := Run(context.Background(), env, []Case{cs}, "score", 1, 1)
+	r := rs[0]
+	if len(calls) != 2 || calls[0][jev.QRelation].Type != "" || len(calls[1]) != 1 || calls[1][jev.QRelation].Type != "choice" {
+		t.Fatalf("questions asked: %v", calls)
+	}
+	if r.FastPath != "go-ahead" || r.RelP["continue"] != 0.95 || r.Decision != "xhigh" || r.Kept != "go-ahead" {
+		t.Errorf("result: %+v", r)
+	}
+	if s := RelationMetrics(rs); s.N != 0 {
+		t.Errorf("relation metrics count the fast path: %+v", s)
+	}
+	if b, _ := json.Marshal(r); !strings.Contains(string(b), `"relation_p":{"continue":0.95`) || !strings.Contains(string(b), `"fast_path":"go-ahead"`) {
+		t.Errorf("JSON = %s", b)
+	}
+	if r = Rejudge(env, rs)[0]; r.Decision != "xhigh" || r.FastPath != "go-ahead" {
+		t.Errorf("rejudged: %+v", r)
 	}
 }
