@@ -221,12 +221,12 @@ var (
 		Question: "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`; `work_in_progress.done` once it was wrapped up)?",
 		Options: map[string]*catalog.Option{
 			catalog.RelationContinue: {
-				What:     "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, or to carry out what it just proposed or offered for that work (possibly picking one of its options), and asks for nothing more.",
+				What:     "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, possibly at another effort, on another model or without the parallel agents, or to carry out what it just proposed or offered for that work (possibly picking one of its options), and asks for nothing more.",
 				NotFor:   "A go-ahead that also adds or changes something (extend).",
 				Examples: []string{"yes", "go", "continue", "ok ship it", "ok, do what you proposed", "go with option 2", "resume, the limits are reset", "vas-y", "oui, continue", "oui, fais ce que tu proposes", "c'est bon, on y va"},
 			},
 			catalog.RelationExtend: {
-				What:     "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case or input to handle, a test for it, a requirement, a different approach.",
+				What:     "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case or input to handle, a test for it, an option or a flag for what it built, a requirement, a different approach.",
 				NotFor:   "Work that stands on its own without the work in progress, including the same change repeated on another target (new_task).",
 				Examples: []string{"also add a test for that", "and make it configurable", "but keep the old flag working", "no, use a channel instead", "ajoute aussi un log quand ça échoue", "mais garde l'ancienne API", "non, fais plutôt une migration"},
 			},
@@ -236,19 +236,19 @@ var (
 				Examples: []string{"FYI it only fails on ARM", "env vars win", "camelCase", "c'est la v2 de l'API", "la clé est dans le .env"},
 			},
 			catalog.RelationSideQuestion: {
-				What:     "Asks a question or a quick check about the work in progress while it is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: its progress or status, a detail, a choice it made, a doubt, a check of its result.",
+				What:     "Asks a question or a quick check about the work in progress while it is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: its progress or status, a detail, a choice it made, a doubt, a check of its result, or how this session runs it (why the effort, the model or the mode changed).",
 				NotFor:   "A question unrelated to the work in progress (aside); a question that starts real work of its own, such as an investigation or a change (new_task); a question about work that is finished, which only recalls or explains it (wrap_up).",
-				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "does that cover the retry path too?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi un mutex et pas un channel ?"},
+				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "does that cover the retry path too?", "which Go version do we target again?", "why did the effort go up just now?", "t'en es où ?", "le build passe ?", "pourquoi un mutex et pas un channel ?"},
 			},
 			catalog.RelationAside: {
 				What:     "A question or a remark unrelated to the work in progress that starts no work of its own: general knowledge, a command or a flag, another topic, news, a comment in passing.",
-				NotFor:   "A question about the work in progress, its code or its result (side_question); something that starts real work, even small (new_task).",
+				NotFor:   "A question about the work in progress, its code, its result or how this session runs it (side_question); a prompt that also tells the assistant to go on with the work (continue) or how to do it, such as an effort, a model or a mode for it (continue, extend); something that starts real work, even small (new_task).",
 				Examples: []string{"unrelated: how do I list open ports on macOS?", "what does HTTP 409 mean again?", "Fable 5.1 is out, have you seen the benchmarks?", "au fait, c'est quoi la différence entre rebase et merge ?", "ça veut dire quoi idempotent, déjà ?", "haha, nice"},
 			},
 			catalog.RelationResume: {
-				What:     "Goes back to the paused work (`paused_work.goal`), which a detour set aside, now that the detour is done or dropped.",
+				What:     "Goes back to the paused work (`paused_work.goal`), which a detour set aside, now that the detour is done or dropped: by naming it, or by a go-ahead or a question about what comes next once the detour is finished.",
 				NotFor:   "Going on with the work in progress itself (continue), or a piece of work neither of them is about (new_task).",
-				Examples: []string{"back to the migration", "ok, now let's get back to the refactor", "continue the audit", "reprends le refacto", "on revient à la migration", "bon, on reprend l'audit"},
+				Examples: []string{"back to the migration", "ok, now let's get back to the refactor", "continue the audit", "ok, and now?", "reprends le refacto", "on revient à la migration", "bon, on reprend l'audit", "et maintenant ?"},
 			},
 			catalog.RelationWrapUp: {
 				What:     "Wraps up work that is finished: a summary or a recap, a commit message, a PR description, a push, a changelog entry, or a question that only recalls or explains the finished work (what changed, how it works, why it was done that way).",
@@ -263,14 +263,14 @@ var (
 		},
 	}
 	DefaultExplicit = catalog.Explicit{
-		Question:      "Does the new prompt `task` explicitly ask the assistant itself to use {x} for its own work on this prompt?",
-		Yes:           "It tells the assistant to work that way itself, as an instruction or a wish, in any language: 'do this at xhigh', 'set your effort to medium for the rest', 'use ultracode for the audit', 'think harder about it', 'passe en low', 'mets l'effort à high pour la suite', 'fais-le en ultracode', 'réfléchis à fond'.",
+		Question:      "Does the new prompt `task` explicitly ask the assistant itself to use {x} for its own work (this prompt, or the rest of the work in progress)?",
+		Yes:           "It tells the assistant to work that way itself, as an instruction or a wish, in any language, up or down: 'do this at xhigh', 'set your effort to medium for the rest', 'use ultracode for the audit', 'run it with several agents in parallel', 'think harder about it', 'passe en low', 'mets l'effort à high pour la suite', 'effort élevé pour ça' (élevé is high, moyen medium, faible low), 'fais-le en ultracode', 'réfléchis à fond'.",
 		No:            "It is about something else, or only talks about it: setting it for subagents, workflow agents or a workflow stage, in a config, a tuning or catalog entry or automodel's routing; quoting or testing a prompt or a string that contains it; a question, a mention, news, a refusal: 'give the review agents low effort', 'effort = \"medium\" in the stage config', 'a test that the prompt \"fais-le en max\" pins nothing', 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'.",
-		OffQuestion:   "Does the new prompt `task` explicitly ask the assistant itself not to use {x}, or to stop using it, for its own work on this prompt?",
-		OffYes:        "It asks the assistant to do this work without it, or to stop it, in any language: 'no ultracode for this', 'skip the workflow, just fix it', 'stop the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'.",
+		OffQuestion:   "Does the new prompt `task` explicitly ask the assistant itself not to use {x}, or to stop using it, for its own work (this prompt, or the rest of the work in progress)?",
+		OffYes:        "It asks the assistant to do this work without it, or to stop it, in any language: 'no ultracode for this', 'skip the workflow, just fix it', 'do the rest alone, without the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'.",
 		OffNo:         "It asks for it, turns it off for something else (a workflow stage, a config, a subagent), only mentions or discusses it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'disable the parallel stage in the config', 'ultracode était lent hier'.",
-		ModelQuestion: "Does the new prompt `task` ask the assistant to run on {x} itself for its own work on this prompt, instead of the model it runs on now?",
-		ModelYes:      "It tells the assistant to switch to that model, or to do this work with it, as an instruction or a wish: 'switch to Sonnet for this', 'do the rest with Fable', 'use Opus for this part', 'passe sur Sonnet pour la suite', 'fais ça avec Fable'.",
+		ModelQuestion: "Does the new prompt `task` ask the assistant to run on {x} itself for its own work (this prompt, or the rest of the work in progress), instead of the model it runs on now?",
+		ModelYes:      "It tells the assistant to switch to that model, to go back to it, or to do this work (or the rest of it) with it, as an instruction or a wish: 'switch to Sonnet for this', 'do the rest with Fable', 'use Opus for this part', 'back to Opus for the rest of it', 'passe sur Sonnet pour la suite', 'fais ça avec Fable'.",
 		ModelNo:       "It only talks about the model, sets it for something else or refuses it: a mention, a comparison, release news, prices or benchmarks, a question about models or about how automodel routes and why it picked one; a subagent, workflow agents or a workflow stage, a config, a tuning or catalog entry set to it; a quoted prompt or test string; a refusal: 'Sonnet 5.5 is out', 'is Sonnet cheaper than Opus?', 'why did it pick Opus?', 'Fable tops the index now', 'make the review agent use sonnet', 'pas besoin d'Opus', 'Opus a mis 3 minutes'.",
 		Effort:        "the {v} reasoning effort",
 		More:          "more thinking than so far (thinking harder, longer or more carefully)",
