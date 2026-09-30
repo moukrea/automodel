@@ -116,6 +116,15 @@ type Request struct {
 	Work, Paused  *state.Work
 	MidTurn, Peer bool
 	FollowUp      string
+	// DetourGoAhead: a bare go-ahead to what the assistant asked or offered
+	// after a detour (paused work), asked the relation question with resume
+	// offered. It doesn't go below the work in progress unless it goes back
+	// to the paused work or is answered alone (a wrap-up step, an aside).
+	// BackFirst: the paused work needs more than the detour; the go-ahead
+	// goes back there, as a bare go-ahead does, unless Jev reads another
+	// relation at meta.detour_stay_threshold at least ("Anything else?"
+	// offers nothing of the detour).
+	DetourGoAhead, BackFirst bool
 	// Explicit are the requests the prompt's words may make, for Jev to
 	// confirm.
 	Explicit []Candidate
@@ -167,8 +176,10 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	ask := jev.Ask{Relation: req.Work != nil && req.FollowUp == ""}
 	ask.Resume = ask.Relation && req.Paused != nil
 	// A repository can only make privacy stricter, never looser. Without
-	// the prompt's text Jev can't confirm what it asks for.
+	// the prompt's text Jev can't confirm what it asks for, nor read what
+	// the assistant offered (a go-ahead after a detour then goes back).
 	metadata := rp.Privacy == PrivacyMetadata || e.Cfg.Privacy == PrivacyMetadata
+	ask.Offer = ask.Relation && req.BackFirst && !metadata
 	task, _ := req.State["task"].(string)
 	if metadata {
 		req.State = MetadataOnly(req.State)
@@ -214,7 +225,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 
 	// A warm switch has to pay back its cost: when no answer could, Jev
 	// is not asked at all (unless the prompt may ask for something).
-	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" && len(req.Explicit) == 0 && !e.AboveCap(req.SessionID, req.Scope, cur) {
+	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" && len(req.Explicit) == 0 && !req.BackFirst && !e.AboveCap(req.SessionID, req.Scope, cur) {
 		// Modes flip for free but wait for the next free moment then.
 		if g := policy.MaxGain(c, req.Scope, cur, req.SwitchCost, params); g <= 0 {
 			rec.Skipped = true
@@ -264,6 +275,23 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if err != nil {
 		rec.Error = err.Error()
 		timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
+		if req.BackFirst {
+			// A go-ahead after a detour goes back to the paused work that
+			// needs more, as without the question (Carried).
+			r := req
+			if r.Current == nil {
+				r.Current = e.DefaultDecision(req.Scope, req.Trigger)
+			}
+			d, u := e.Carried(r, rp)
+			d.Trigger, d.Cause, d.DecidedAt = "fallback", req.Trigger, start
+			rec.Trigger, rec.Cause, rec.Hold = "fallback", req.Trigger, "go-ahead: back to the paused work"
+			rec.Chosen, rec.Model, rec.Effort, rec.Mode = d.Tier, d.APIID, d.Effort, d.Mode
+			log.Printf("jev %s/%s: %v (go-ahead: %s)", req.Scope, req.Trigger, err, d.Tier)
+			if err := e.Ledger.Append(rec); err != nil {
+				log.Printf("ledger: %v", err)
+			}
+			return d, Outcome{Changed: true, TimedOut: timedOut, Work: u}
+		}
 		if req.Warm && req.Current != nil {
 			log.Printf("jev %s/%s: %v (kept %s)", req.Scope, req.Trigger, err, req.Current.Tier)
 			d, out := keep("jev error")
@@ -304,6 +332,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	rec.Probs, rec.Confidence, rec.JevChoice, rec.ModeP, rec.AskedP = rd.probs, rd.conf, rd.top, rd.modeP, rd.asked
 	rec.Relation = rd.relation
+	if _, ok := ans[jev.QOffer]; ok {
+		rec.OfferP = &rd.offer
+	}
 	for id, p := range rd.explicit {
 		if rec.Explicit == nil {
 			rec.Explicit = map[string]float64{}
@@ -448,8 +479,9 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	fresh := work == nil || (hold == nil && top == catalog.RelationNewTask)
 	// A wrap-up, a side question or an aside is answered alone: without the
 	// work's mode, which stays the work's (Jev's mode answer reads the whole
-	// work: "open the draft PR" after a sweep still reads as the sweep).
-	alone := thisTurn(top) && !req.MidTurn && !req.Peer
+	// work: "open the draft PR" after a sweep still reads as the sweep);
+	// not a go-ahead that goes back to the paused work.
+	alone := thisTurn(top) && !req.MidTurn && !req.Peer && !back
 	// The mode a follow-up keeps on: the work's, and on a mid-turn prompt
 	// or a peer message the one the turn runs with (only that one once the
 	// work is done: the turn runs something else).
@@ -599,7 +631,8 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		// More work on a done work reopens it (not a prompt typed while
 		// Claude runs something else, nor another session's message).
 		reopen := followed != nil && followed.Done && hold != nil && !req.MidTurn && !req.Peer &&
-			(top == catalog.RelationContinue || top == catalog.RelationExtend || req.FollowUp == FollowUpProposal)
+			(top == catalog.RelationContinue || top == catalog.RelationExtend || req.FollowUp == FollowUpProposal ||
+				(req.DetourGoAhead && !back && !thisTurn(top)))
 		w := v
 		w.Model = workModel
 		v.Work = workUpdate(w, followed, work, hold, x, top, fresh, back, reopen)
@@ -716,6 +749,9 @@ type Reading struct {
 	// guessedMore: more thinking counted from the words alone (metadata
 	// privacy), without Jev's confirmation.
 	guessedMore bool
+	// offer: after a detour, the yes-probability that the assistant offered
+	// one more thing for it, which the go-ahead accepts (0: not asked).
+	offer float64
 }
 
 // separate is the probability that the prompt is separate from the work in
@@ -772,6 +808,9 @@ func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Readin
 	}
 	if a, ok := ans[jev.QRelation]; ok && len(a.Probabilities) > 0 {
 		rd.relation = a.Probabilities
+	}
+	if a, ok := ans[jev.QOffer]; ok && a.Noul != nil {
+		rd.offer = *a.Noul
 	}
 	for id, a := range ans {
 		switch {

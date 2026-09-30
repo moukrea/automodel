@@ -44,6 +44,17 @@ underprovision_penalty = 1.5
 # detour asked here): 0.55 and 0.6 give the same decisions; 0.5 lowers one
 # follow-up below its work, 0.45 two.
 relation_separate_threshold = 0.55
+# A bare go-ahead after a detour, when the paused work needs more and the
+# assistant's last message asks something ([questions.offer]): it goes
+# back to the paused work unless the offer question says yes from this
+# probability (the assistant offered one more thing for the detour, which
+# the go-ahead accepts: a wrap-up step, more of it). Train split (round 4
+# review, 3 runs): closing questions that offer nothing of the detour
+# ("Anything else?", "Shall I carry on?", "Ça te va ?") and offers to go
+# back 0.04 to 0.18 (eleven of the fourteen closers are not in the
+# wording); offers of a wrap-up step or more of the detour 0.80 to 0.96.
+# 0.5: the middle of that gap.
+detour_offer_threshold = 0.5
 # A request in the prompt's words (an effort, more thinking, ultracode or
 # its refusal) counts from this yes-probability; an effort below the work
 # in progress needs 0.9 (router.LowerEffortP). Train split (two runs of
@@ -1300,7 +1311,10 @@ subagent = "How much capability and reasoning does this subagent task need?"
 # to go back to the paused work (resume), a wrap-up step of the detour
 # ("Committed. Want me to push it?") or more of it; "yes" to "Shall I get
 # back to the migration?" read continue 0.50-0.59 while continue's wording
-# said "resume the work in progress", and reads resume 0.9+ now. One Choice, not two yes/no: the
+# said "resume the work in progress", and reads resume 0.9+ now. When the
+# paused work needs more, [questions.offer] decides whether the go-ahead
+# stays on the detour (round 4 review: closing questions such as "Anything
+# else?" read continue up to 0.81 here). One Choice, not two yes/no: the
 # probabilities of a Choice add up, and one question per judgment. Options
 # in TypeSafe's advanced structure (what, not_for, examples), English with
 # French examples (Jev reads English best; the prompts are often French).
@@ -1359,6 +1373,20 @@ examples = ["write the commit message", "summarize what you changed", "open the 
 what = "Starts a separate piece of work (a change, a fix, a feature, an investigation) that the work in progress doesn't include, even one that repeats its pattern on another target (another endpoint, page or module)."
 not_for = "More work on the work in progress itself, or a problem it caused (extend); carrying out what the assistant just proposed for it (continue); a question that starts no work (side_question, aside)."
 examples = ["now rename the config loader", "next: design how to shard the job queue", "now the same retry logic for the email sender", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"]
+
+# A bare go-ahead after a detour, when the paused work needs more and the
+# assistant's last message asks something: going back to the paused work
+# is the default (a bare go-ahead goes back to it without asking), and
+# this yes/no says whether the assistant offered one more thing for the
+# detour instead (a wrap-up step, more of it), which the go-ahead accepts.
+# Round 4's review: the relation question alone read "go" after "Anything
+# else?" as continue up to 0.62 and "Shall I carry on?" 0.77-0.81, while
+# offers of more of the detour read continue from 0.45 and a changelog
+# step wrap_up from 0.38: no bar on the relation told them apart.
+[questions.offer]
+question = "The new prompt `task` is a go-ahead after a detour (`work_in_progress.goal`) that set bigger work aside (`paused_work.goal`). Does the assistant's last message (`last_assistant`) offer or ask to do one more specific thing for the detour itself, which that go-ahead accepts?"
+yes = "Near its end the message names one more thing it would do for the detour, and the go-ahead says yes to it: a wrap-up step of the detour ('Shall I open a PR for it?', 'Je pousse la branche ?') or more of it ('The same null check is missing in the export handler: want me to add it there too?', 'Je fais pareil dans le module d'import ?'), also when a remark follows the offer ('Shall I push the branch? CI takes about ten minutes.') or when the offer has no question mark ('dis-moi si je lance aussi le linter')."
+no = "The message names nothing more to do for the detour: it reports the detour done and closes on a general question or a check that offers no step of it ('Anything else?', 'Is that OK?', 'Autre chose ?'); or it offers to go back to the paused work ('Shall I get back to the migration?', 'On reprend la migration ?'); or the go-ahead answers something else."
 
 # Requests in prose ("passe en xhigh", "fais ça en ultracode", "think
 # harder"). A regex finds the words that may make one (an effort name, the

@@ -362,6 +362,11 @@ func TestEvalGoAhead(t *testing.T) {
 		}
 		ans, ids := levelAnswer(c, "low")
 		ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: map[string]float64{rel: 0.9, "continue": 0.05, "new_task": 0.05}, Confidence: 0.9}
+		offer := 0.95 // the assistant offered more of the detour
+		if rel == "resume" {
+			offer = 0.05
+		}
+		ans[jev.QOffer] = jev.Answer{Type: "noul", Noul: &offer}
 		r := Result{Case: cs}
 		r.judge(env, req, ans, ids)
 		return r
@@ -374,6 +379,25 @@ func TestEvalGoAhead(t *testing.T) {
 	}
 	if r = proposal("Committed. Want me to fix the two other typos too?", "extend"); r.Decision != "low" || r.Mode != "" {
 		t.Errorf("yes to more of the wrapped-up detour: %+v", r)
+	}
+	// A question that offers nothing of the detour, or Jev unsure it did
+	// (the offer question under its bar): back to the paused work, as the
+	// hooks do (BackFirst), whatever the relation reads.
+	for _, tc := range []struct{ last, rel string }{
+		{"Committed. Anything else?", "continue"},
+		{"Committed. Should I push it? It would also push the README fix.", "wrap_up"},
+	} {
+		cs := done(tc.last)
+		_, req := setup(c, cs)
+		ans, ids := levelAnswer(c, "low")
+		ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: map[string]float64{tc.rel: 0.9, "resume": 0.05, "new_task": 0.05}, Confidence: 0.9}
+		offer := 0.3
+		ans[jev.QOffer] = jev.Answer{Type: "noul", Noul: &offer}
+		r := Result{Case: cs}
+		r.judge(env, req, ans, ids)
+		if r.Decision != "xhigh" || r.Mode != "ultracode" || r.FastPath != "" {
+			t.Errorf("go after %q, %s 0.6: %+v", tc.last, tc.rel, r)
+		}
 	}
 	// Typed mid-turn during the detour: it goes on with the turn.
 	r = judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st("mid_turn", true,

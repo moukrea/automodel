@@ -84,6 +84,7 @@ func TierQuestion(c *catalog.Catalog, scope string) Question {
 const (
 	QLevel       = "level"
 	QRelation    = "relation"
+	QOffer       = "offer"
 	QExplicitPfx = "explicit_"
 	QTierPfx     = "tier_"
 	QModePfx     = "mode_"
@@ -102,6 +103,10 @@ type Ask struct {
 	// session, once there is work in progress). Resume offers going back
 	// to the work a detour paused (once there is one).
 	Relation, Resume bool
+	// Offer: whether the assistant offered one more thing for the detour
+	// that the go-ahead accepts (a bare go-ahead after a detour whose
+	// paused work needs more).
+	Offer bool
 	// Explicit: the requests a regex found in the prompt's words, a yes/no
 	// each (Jev tells a request from a mention).
 	Explicit []Explicit
@@ -153,6 +158,9 @@ func Questions(c *catalog.Catalog, scope string, a Ask) (map[string]Question, []
 	if a.Relation && scope == catalog.ScopeMain {
 		qs[QRelation] = RelationQuestion(c, a.Resume)
 	}
+	if a.Offer && scope == catalog.ScopeMain {
+		qs[QOffer] = OfferQuestion(c)
+	}
 	for _, x := range a.Explicit {
 		qs[x.ID()] = ExplicitQuestion(c, x)
 	}
@@ -179,6 +187,16 @@ func RelationQuestion(c *catalog.Catalog, resume bool) Question {
 		}
 	}
 	return Question{Type: "choice", Instructions: q, Criteria: opts}
+}
+
+// OfferQuestion is the yes/no on a go-ahead after a detour: the catalog's
+// wording (questions.offer) over the built-in one.
+func OfferQuestion(c *catalog.Catalog) Question {
+	w := DefaultOffer
+	if o := c.Questions.Offer; o != nil && o.Question != "" {
+		w = *o
+	}
+	return Question{Type: "noul", Instructions: w.Question, Criteria: map[string]string{"true": w.Yes, "false": w.No}}
 }
 
 // ExplicitQuestion is the yes/no that confirms one explicit request.
@@ -261,6 +279,11 @@ var (
 				Examples: []string{"now rename the config loader", "next: design how to shard the job queue", "now the same retry logic for the email sender", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"},
 			},
 		},
+	}
+	DefaultOffer = catalog.Noul{
+		Question: "The new prompt `task` is a go-ahead after a detour (`work_in_progress.goal`) that set bigger work aside (`paused_work.goal`). Does the assistant's last message (`last_assistant`) offer or ask to do one more specific thing for the detour itself, which that go-ahead accepts?",
+		Yes:      "Near its end the message names one more thing it would do for the detour, and the go-ahead says yes to it: a wrap-up step of the detour ('Shall I open a PR for it?', 'Je pousse la branche ?') or more of it ('The same null check is missing in the export handler: want me to add it there too?', 'Je fais pareil dans le module d'import ?'), also when a remark follows the offer ('Shall I push the branch? CI takes about ten minutes.') or when the offer has no question mark ('dis-moi si je lance aussi le linter').",
+		No:       "The message names nothing more to do for the detour: it reports the detour done and closes on a general question or a check that offers no step of it ('Anything else?', 'Is that OK?', 'Autre chose ?'); or it offers to go back to the paused work ('Shall I get back to the migration?', 'On reprend la migration ?'); or the go-ahead answers something else.",
 	}
 	DefaultExplicit = catalog.Explicit{
 		Question:      "Does the new prompt `task` explicitly ask the assistant itself to use {x} for its own work (this prompt, or the rest of the work in progress)?",

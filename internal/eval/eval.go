@@ -167,6 +167,10 @@ type Result struct {
 	// ExplicitP is Jev's yes-probability per request a regex found in the
 	// prompt (effort_xhigh, mode_off...).
 	ExplicitP map[string]float64 `json:"explicit_p,omitempty"`
+	// OfferP: a go-ahead after a detour whose paused work needs more, Jev's
+	// yes-probability that the assistant offered one more thing for the
+	// detour (router.Request.BackFirst).
+	OfferP *float64 `json:"offer_p,omitempty"`
 	// FastPath is how the hooks took the prompt without the relation
 	// question (fastPath): RelP is then asked apart, only to diagnose; the
 	// decision and the relation metrics don't use it.
@@ -334,6 +338,10 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	fp := fastPath(env, c, req)
 	ask := jev.Ask{Relation: req.Work != nil && fp == ""}
 	ask.Resume = ask.Relation && req.Paused != nil
+	if fp == "" {
+		_, back := detourGoAhead(env, c, req)
+		ask.Offer = ask.Relation && back
+	}
 	for _, x := range req.Explicit {
 		ask.Explicit = append(ask.Explicit, x.Explicit)
 	}
@@ -361,6 +369,10 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	r.Got = argmax(r.Probs, ids)
 	if a, ok := ans[jev.QRelation]; ok {
 		r.RelP, r.RelConf = a.Probabilities, a.Confidence
+	}
+	if a, ok := ans[jev.QOffer]; ok && a.Noul != nil {
+		p := *a.Noul
+		r.OfferP = &p
 	}
 	if fp != "" {
 		// The relation the hooks don't ask, alone in its own call (the
@@ -415,6 +427,9 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 	if fp == router.FollowUpProposal {
 		req.FollowUp = fp
 	}
+	if fp == "" {
+		req.DetourGoAhead, req.BackFirst = detourGoAhead(env, c, req)
+	}
 	r.FastPath = fp
 	var cur *catalog.Tier
 	if req.Current != nil {
@@ -464,6 +479,22 @@ func fastPath(env *router.Env, c Case, req router.Request) string {
 	return "go-ahead"
 }
 
+// detourGoAhead mirrors the hooks for a bare go-ahead to what the
+// assistant asked after a detour (paused work): it is asked the relation
+// question (fastPath is ""), doesn't go below the detour unless it is
+// answered alone or goes back, and goes back first when the paused work
+// needs more (router.Request.DetourGoAhead, BackFirst).
+func detourGoAhead(env *router.Env, c Case, req router.Request) (goAhead, backFirst bool) {
+	task, _ := c.State["task"].(string)
+	last, _ := c.State["last_assistant"].(string)
+	if !env.Cfg.Features.FastPath || req.Work == nil || req.Paused == nil || env.Acknowledges(req.Work, req.Paused) || req.Peer ||
+		!router.GoAhead(task) || c.State["phase"] == "post_compact" || !router.Proposes(last) {
+		return false, false
+	}
+	_, backFirst = env.GoAheadWork(nil, req.Work, req.Paused, false)
+	return true, backFirst
+}
+
 // Rejudge applies the policy of env's catalog (thresholds, penalty, rules)
 // to the answers of a saved run (`automodel eval --json`), without asking
 // Jev again: decision rules can be compared on the same answers. Answers
@@ -483,6 +514,10 @@ func Rejudge(env *router.Env, rs []Result) []Result {
 		}
 		if r.RelP != nil && fastPath(env, r.Case, req) == "" {
 			ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: r.RelP, Confidence: r.RelConf}
+		}
+		if r.OfferP != nil {
+			p := *r.OfferP
+			ans[jev.QOffer] = jev.Answer{Type: "noul", Noul: &p}
 		}
 		for _, n := range []struct {
 			pfx string
@@ -525,9 +560,13 @@ type Summary struct {
 	// one, follows up work that runs on one, or the router moved it.
 	Relation RelationStats
 	Explicit ExplicitStats
-	Follow   Count
-	Model    Count
-	CostUSD  float64
+	// Offer scores the offer question (a go-ahead after a detour whose
+	// paused work needs more) against the relation labels: yes unless the
+	// label is resume.
+	Offer   *Binary
+	Follow  Count
+	Model   Count
+	CostUSD float64
 	// Scopes holds the per-scope tier metrics: exact accuracy, recall per
 	// tier, confusion matrices, tier share against label share, rank
 	// error and calibration.
@@ -556,6 +595,7 @@ type Binary struct {
 	Threshold          float64
 	N, Right           int
 	MeanYesP, MeanNoP  float64
+	MinYesP, MaxNoP    float64 // the gap a threshold can sit in
 	nYes, nNo          int
 	sumYesP, sumNoP    float64
 	FalseYes, FalseNos int
@@ -572,9 +612,13 @@ func (b *Binary) add(p float64, want bool) {
 		b.FalseNos++
 	}
 	if want {
+		if b.nYes == 0 || p < b.MinYesP {
+			b.MinYesP = p
+		}
 		b.nYes++
 		b.sumYesP += p
 	} else {
+		b.MaxNoP = max(b.MaxNoP, p)
 		b.nNo++
 		b.sumNoP += p
 	}
@@ -630,6 +674,12 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 					bucketRight[i]++
 				}
 			}
+		}
+		if r.OfferP != nil && r.Relation != "" {
+			if s.Offer == nil {
+				s.Offer = &Binary{Threshold: cat.Meta.DetourOfferThreshold()}
+			}
+			s.Offer.add(*r.OfferP, r.Relation != catalog.RelationResume)
 		}
 		for m, want := range r.Modes {
 			if p, has := r.ModeP[m]; has {
@@ -704,6 +754,9 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 	}
 	for _, b := range s.Modes {
 		b.finish()
+	}
+	if s.Offer != nil {
+		s.Offer.finish()
 	}
 	s.Scopes = map[string]*ScopeStats{}
 	for _, sc := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
@@ -786,6 +839,10 @@ func PrintSummary(w io.Writer, s Summary) {
 	}
 	for m, c := range s.ModeDecision {
 		fmt.Fprintf(w, "mode %s on/off (router decision): %d/%d right (on %d/%d, off %d/%d)\n", m, c.Right, c.N, c.On.Right, c.On.N, c.Off.Right, c.Off.N)
+	}
+	if b := s.Offer; b != nil {
+		fmt.Fprintf(w, "detour offer @%.2f: %d/%d right (false yes %d, false no %d), yes-cases p %.2f and up, no-cases at most %.2f\n",
+			b.Threshold, b.Right, b.N, b.FalseYes, b.FalseNos, b.MinYesP, b.MaxNoP)
 	}
 	if f := s.Follow; f.N > 0 {
 		fmt.Fprintf(w, "follow-ups (continue, extend, inform, side_question, resume, mid-turn, peer): %d/%d decisions below the work they hold\n", f.N-f.Right, f.N)

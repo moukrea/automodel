@@ -46,9 +46,45 @@ func GoAhead(prompt string) bool {
 	return goAheads[normGoAhead(prompt)]
 }
 
-// Proposes reports whether the assistant's last message ends on a question
-// ("Want me to fix it?"): a go-ahead then starts the proposed work, which
-// can be bigger than the work so far, so it is routed rather than carried.
+// Proposes reports whether the assistant's last message puts a question or
+// an offer on the table at its end ("Want me to fix it?", "Should I push
+// the branch? It would also push the typo fix.", "dis-moi si j'applique le
+// fix"): a go-ahead then answers it, and may start work bigger than the
+// work so far, so it is routed rather than carried (after a detour, with
+// the relation question). Its end is the last paragraph, and the one
+// before when the last is a short remark; code is left out.
 func Proposes(lastAssistant string) bool {
-	return strings.HasSuffix(strings.TrimRight(lastAssistant, " \t\n*_`)"), "?")
+	tail := closing(lastAssistant)
+	return questionRE.MatchString(tail) || offerRE.MatchString(tail)
+}
+
+var (
+	// A question mark that ends a sentence (not "?page=2" nor "a ? b : c"
+	// in code, which closing drops).
+	questionRE = regexp.MustCompile(`\?+(?:[\s*_)"'»”’]|$)`)
+	// An offer in words, without a question mark.
+	offerRE      = regexp.MustCompile(`(?i)(?:^|[^\pL])(?:let\s+me\s+know\s+(?:if|whether|when)|if\s+you(?:['’]d|\s+would)?\s+(?:like|want|prefer)|say\s+the\s+word|just\s+say\s+so|(?:dis|dites)-moi\s+(?:si|quand)|si\s+(?:tu|vous)\s+(?:veux|voulez|le\s+souhaites|le\s+souhaitez|préfères|préférez))(?:[^\pL]|$)`)
+	codeBlockRE  = regexp.MustCompile("(?s)```.*?(?:```|$)")
+	inlineCodeRE = regexp.MustCompile("`[^`\n]*`")
+	paragraphRE  = regexp.MustCompile(`\n\s*\n`)
+)
+
+// closing is the end of an assistant message: its last paragraph, with
+// the one before when the last is short (a remark after the question).
+func closing(text string) string {
+	text = inlineCodeRE.ReplaceAllString(codeBlockRE.ReplaceAllString(text, " "), " ")
+	var ps []string
+	for _, p := range paragraphRE.Split(text, -1) {
+		if p = strings.TrimSpace(p); p != "" {
+			ps = append(ps, p)
+		}
+	}
+	switch n := len(ps); {
+	case n == 0:
+		return ""
+	case n > 1 && len([]rune(ps[n-1])) <= 200:
+		return ps[n-2] + "\n\n" + ps[n-1]
+	default:
+		return ps[n-1]
+	}
 }

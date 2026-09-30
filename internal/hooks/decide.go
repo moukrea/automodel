@@ -164,16 +164,19 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// the paused work when it needs more. A go-ahead to a proposal ("Want
 	// me to fix it?") starts that work, which may be bigger: it is routed,
 	// not below the work in progress. After a detour (paused work), what
-	// was proposed may be to go back to the paused work, a wrap-up step of
-	// the detour ("Want me to push it?") or more of it: routed with the
-	// relation question, which offers resume. Once a wrap-up closed the
-	// work, "ok" or "looks good" mostly acknowledges it: routed, Jev's
-	// relation says whether it reopens the work; unless that work was a
-	// detour and the paused work needs more, which a bare go-ahead goes
-	// back to.
+	// the assistant asked may offer to go back to the paused work, a
+	// wrap-up step of the detour ("Want me to push it?") or more of it:
+	// routed with the relation question, which offers resume; when the
+	// paused work needs more, the go-ahead goes back there unless Jev is
+	// sure it answers the detour ("Anything else?" offers nothing of it).
+	// Once a wrap-up closed the work, "ok" or "looks good" mostly
+	// acknowledges it: routed, Jev's relation says whether it reopens the
+	// work; unless that work was a detour and the paused work needs more,
+	// which a bare go-ahead goes back to.
 	followUp := ""
+	detourGoAhead, backFirst := false, false
 	wip := sess.WorkInProgress()
-	back, _ := env.GoAheadWork(sess.Main, wip, sess.PausedWork(now), false)
+	back, resumed := env.GoAheadWork(sess.Main, wip, sess.PausedWork(now), false)
 	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) && !env.Acknowledges(wip, sess.PausedWork(now)) &&
 		(trigger == "warm" || trigger == "compact" || trigger == "cold") &&
 		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) &&
@@ -185,7 +188,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		case trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant):
 			if sess.PausedWork(now) == nil {
 				followUp = router.FollowUpProposal
-			} // else: routed as any prompt, the relation question offering resume
+			} else {
+				detourGoAhead, backFirst = true, resumed
+			}
 		default:
 			// Typed mid-turn, it lowers nothing.
 			if dec, work = env.Carry(router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger, RepoDir: in.Cwd,
@@ -206,7 +211,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			signals = repo.Signals(ctx, in.Cwd)
 		}
 		req := mainRequest(env, in, sess, tr, signals, trigger)
-		req.FollowUp = followUp
+		req.FollowUp, req.DetourGoAhead, req.BackFirst = followUp, detourGoAhead, backFirst
 		// [model:auto] / [effort:auto] handing a pin back: say so in the
 		// ledger (and to Jev) — the move off a pinned model is the user's call.
 		if (etag == "auto" || mtag == "auto") && sess.Pin != "" {

@@ -38,6 +38,7 @@ type fa struct {
 	asked float64 // asked tiers (tier_*)
 	rel   string
 	relP  float64
+	offer float64 // after a detour: the assistant offered more of it
 	x     map[string]float64
 }
 
@@ -113,6 +114,9 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			v := a.ultra
 			if strings.HasPrefix(id, jev.QTierPfx) {
 				v = a.asked
+			}
+			if id == jev.QOffer {
+				v = a.offer
 			}
 			if x, ok := strings.CutPrefix(id, jev.QExplicitPfx); ok {
 				v = 0.02

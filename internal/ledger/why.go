@@ -214,6 +214,9 @@ func workLine(d Decision, o WhyOptions) string {
 	if len(d.Relation) > 0 {
 		parts = append(parts, "relation: "+ranked(d.Relation, 2))
 	}
+	if d.OfferP != nil {
+		parts = append(parts, fmt.Sprintf("offered more of the detour: %.2f", *d.OfferP))
+	}
 	if len(d.Explicit) > 0 {
 		parts = append(parts, "asks in words: "+ranked(d.Explicit, 3))
 	}

@@ -122,6 +122,10 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 	switch {
 	case e.resumes(req, rd):
 		return work, fmt.Sprintf("back to the paused work (%s %.2f)", top, p)
+	case req.DetourGoAhead && top != catalog.RelationWrapUp && top != catalog.RelationAside:
+		// A go-ahead takes on what the assistant proposed for the detour:
+		// not below it, whatever its words read as ("yes" is no new task).
+		return work, fmt.Sprintf("%s (%s %.2f)", FollowUpProposal, top, p)
 	case rd.separate() >= e.Catalog.Meta.RelationSeparateThreshold():
 		return nil, ""
 	case done && top != catalog.RelationContinue && top != catalog.RelationExtend:
@@ -136,24 +140,33 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 // resumes reports a prompt that goes back to the paused work: resume is
 // Jev's likeliest relation, at relation_separate_threshold at least (it
 // is only offered when there is paused work; it moves the session to
-// another tier, often another model). A go-ahead to a proposal after a
-// detour is asked too: the proposal may be to go back, to wrap the detour
-// up or to extend it. A prompt typed mid-turn or sent by another session
-// doesn't.
+// another tier, often another model). A go-ahead to what the assistant
+// asked after a detour is asked too: the question may offer to go back,
+// to wrap the detour up or to do more of it. When the paused work needs
+// more (BackFirst) such a go-ahead goes back to it, as a bare go-ahead
+// does, unless Jev says the assistant offered one more thing for the
+// detour (the offer question, at meta.detour_offer_threshold): "go" after
+// "Anything else?" read continue up to 0.62 on the relation question, and
+// a go-ahead that stays below the paused work is the lowering the owner
+// rejects. A prompt typed mid-turn or sent by another session doesn't.
 func (e *Env) resumes(req Request, rd Reading) bool {
 	switch {
 	case req.Paused == nil || req.MidTurn || req.Peer || req.FollowUp != "":
 		return false
 	}
 	top, p := rd.relationTop()
-	return top == catalog.RelationResume && p >= e.Catalog.Meta.RelationSeparateThreshold()
+	back := top == catalog.RelationResume && p >= e.Catalog.Meta.RelationSeparateThreshold()
+	if req.BackFirst {
+		return back || rd.offer < e.Catalog.Meta.DetourOfferThreshold()
+	}
+	return back
 }
 
 // Why a prompt follows the work up without the relation question: a
 // go-ahead to what the assistant proposed ("Want me to fix it?"), routed
 // but not below the work (with no paused work: after a detour the
-// proposal may be to go back to it, and the relation question says so);
-// the decision right after a compaction.
+// proposal may be to go back to it, and the relation question says so,
+// see Request.DetourGoAhead); the decision right after a compaction.
 const (
 	FollowUpProposal   = "go-ahead to a proposal"
 	FollowUpCompaction = "compaction"

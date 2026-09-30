@@ -32,13 +32,23 @@ func TestCatalogWordingIsBuiltIn(t *testing.T) {
 	if !reflect.DeepEqual(*c.Questions.Explicit, DefaultExplicit) {
 		t.Errorf("questions.explicit differs from the built-in wording")
 	}
+	if c.Questions.Offer == nil || *c.Questions.Offer != DefaultOffer {
+		t.Errorf("questions.offer differs from the built-in wording")
+	}
 }
 
 func TestQuestions(t *testing.T) {
 	c := testCatalog(t)
 	qs, ids := Questions(c, catalog.ScopeMain, Ask{})
-	if len(ids) != 5 || qs[QLevel].Type != "score" || qs[QRelation].Type != "" {
+	if len(ids) != 5 || qs[QLevel].Type != "score" || qs[QRelation].Type != "" || qs[QOffer].Type != "" {
 		t.Fatalf("no work in progress: %v %v", ids, qs)
+	}
+	// The offer yes/no only after a detour whose paused work needs more.
+	if o := func() map[string]Question {
+		q, _ := Questions(c, catalog.ScopeMain, Ask{Relation: true, Resume: true, Offer: true})
+		return q
+	}()[QOffer]; o.Type != "noul" || !strings.Contains(o.Instructions, "`paused_work.goal`") {
+		t.Errorf("offer question = %+v", o)
 	}
 	xs := []Explicit{
 		{Kind: ExplicitEffort, Value: "xhigh", Label: "xhigh"},
