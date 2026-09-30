@@ -399,6 +399,52 @@ func TestEvalGoAhead(t *testing.T) {
 			t.Errorf("go after %q, %s 0.6: %+v", tc.last, tc.rel, r)
 		}
 	}
+	// Staying on the detour, the go-ahead runs at its level at most, and
+	// holds it unless a wrap-up or an aside is sure on its own.
+	for _, tc := range []struct {
+		level string
+		rel   map[string]float64
+		want  string
+	}{
+		{"xhigh", map[string]float64{"continue": 0.8, "new_task": 0.2}, "medium"},
+		{"xhigh", map[string]float64{"wrap_up": 0.92, "continue": 0.08}, "medium"},
+		{"low", map[string]float64{"wrap_up": 0.92, "continue": 0.08}, "low"},
+		{"low", map[string]float64{"wrap_up": 0.49, "aside": 0.3, "continue": 0.21}, "medium"},
+	} {
+		cs := Case{Scope: catalog.ScopeMain, Warm: true, State: st("last_assistant", "Fixed. The same sleep is in the cart spec: want me to fix it there too?",
+			"current", map[string]any{"tier": "medium"}, "work_in_progress", map[string]any{"goal": "fix the flaky checkout spec", "level": "medium"},
+			"paused_work", map[string]any{"goal": "migrate the handlers", "level": "xhigh", "mode": "ultracode"})}
+		cs.State["task"] = "yes"
+		_, req := setup(c, cs)
+		ans, ids := levelAnswer(c, tc.level)
+		ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: tc.rel, Confidence: 0.5}
+		offer, ultra := 0.9, 0.95
+		ans[jev.QOffer] = jev.Answer{Type: "noul", Noul: &offer}
+		ans[jev.QModePfx+"ultracode"] = jev.Answer{Type: "noul", Noul: &ultra}
+		r := Result{Case: cs}
+		r.judge(env, req, ans, ids)
+		if r.Decision != tc.want || r.Mode != "" {
+			t.Errorf("yes staying on a medium detour, level %s, %v: %+v", tc.level, tc.rel, r)
+		}
+	}
+	// Once a wrap-up closed the work (no paused work), a go-ahead to a
+	// proposal is asked the relation, and holds the work unless it is a
+	// wrap-up step or an aside.
+	for rel, want := range map[string]string{"new_task": "high", "continue": "high", "wrap_up": "low", "aside": "low"} {
+		cs := Case{Scope: catalog.ScopeMain, Warm: true, State: st("task", "yes", "last_assistant", "Committed. The exporter has no such check: want me to add it there too?",
+			"current", map[string]any{"tier": "high"}, "work_in_progress", map[string]any{"goal": "validate the CSV import", "level": "high", "done": true})}
+		_, req := setup(c, cs)
+		if g, b := proposalGoAhead(env, cs, req); !g || b || fastPath(env, cs, req) != "" {
+			t.Errorf("yes to a proposal after a done work: go-ahead %v, back first %v", g, b)
+		}
+		ans, ids := levelAnswer(c, "low")
+		ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: map[string]float64{rel: 0.9, "extend": 0.1}, Confidence: 0.9}
+		r := Result{Case: cs}
+		r.judge(env, req, ans, ids)
+		if r.Decision != want {
+			t.Errorf("yes to a proposal after a done work, %s: %+v", rel, r)
+		}
+	}
 	// Typed mid-turn during the detour: it goes on with the turn.
 	r = judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st("mid_turn", true,
 		"current", map[string]any{"tier": "low"}, "work_in_progress", map[string]any{"goal": "fix the README typo", "level": "low"},

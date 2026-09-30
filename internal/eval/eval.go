@@ -339,7 +339,7 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	ask := jev.Ask{Relation: req.Work != nil && fp == ""}
 	ask.Resume = ask.Relation && req.Paused != nil
 	if fp == "" {
-		_, back := detourGoAhead(env, c, req)
+		_, back := proposalGoAhead(env, c, req)
 		ask.Offer = ask.Relation && back
 	}
 	for _, x := range req.Explicit {
@@ -428,7 +428,7 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 		req.FollowUp = fp
 	}
 	if fp == "" {
-		req.DetourGoAhead, req.BackFirst = detourGoAhead(env, c, req)
+		req.ProposalGoAhead, req.BackFirst = proposalGoAhead(env, c, req)
 	}
 	r.FastPath = fp
 	var cur *catalog.Tier
@@ -479,19 +479,25 @@ func fastPath(env *router.Env, c Case, req router.Request) string {
 	return "go-ahead"
 }
 
-// detourGoAhead mirrors the hooks for a bare go-ahead to what the
-// assistant asked after a detour (paused work): it is asked the relation
-// question (fastPath is ""), doesn't go below the detour unless it is
-// answered alone or goes back, and goes back first when the paused work
-// needs more (router.Request.DetourGoAhead, BackFirst).
-func detourGoAhead(env *router.Env, c Case, req router.Request) (goAhead, backFirst bool) {
+// proposalGoAhead mirrors the hooks for a bare go-ahead to what the
+// assistant asked, routed with the relation question (fastPath is ""):
+// after a detour (paused work), or once a wrap-up closed the work
+// (router.Acknowledges). It doesn't go below the work it follows unless it
+// is answered alone or goes back, and after a detour it goes back first
+// when the paused work needs more and the prompt wasn't typed mid-turn
+// (router.Request.ProposalGoAhead, BackFirst).
+func proposalGoAhead(env *router.Env, c Case, req router.Request) (goAhead, backFirst bool) {
 	task, _ := c.State["task"].(string)
 	last, _ := c.State["last_assistant"].(string)
-	if !env.Cfg.Features.FastPath || req.Work == nil || req.Paused == nil || env.Acknowledges(req.Work, req.Paused) || req.Peer ||
+	ack := req.Work != nil && env.Acknowledges(req.Work, req.Paused)
+	if !env.Cfg.Features.FastPath || req.Work == nil || (req.Paused == nil && !ack) || req.Peer ||
 		!router.GoAhead(task) || c.State["phase"] == "post_compact" || !router.Proposes(last) {
 		return false, false
 	}
-	_, backFirst = env.GoAheadWork(nil, req.Work, req.Paused, false)
+	if ack {
+		return true, false
+	}
+	_, backFirst = env.GoAheadWork(nil, req.Work, req.Paused, req.MidTurn)
 	return true, backFirst
 }
 

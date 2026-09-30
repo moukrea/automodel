@@ -1259,11 +1259,14 @@ func detourHarness(t *testing.T) (fj *fakeJev, decide func(sid, p string, a fa) 
 // else?" or "Shall I carry on?" offers nothing of it, and Jev read "go"
 // after them as continue up to 0.81, which kept the migration at the
 // typo's level. An offer followed by a remark is still an offer ("Should
-// I push the branch? It would also push the typo fix.").
+// I push the branch? It would also push the typo fix."). Back by default,
+// a detour that isn't done waits in turn: if the assistant did offer more
+// of it (Jev misread "nickel" as no), it isn't lost.
 func TestGoAheadToAQuestionAfterADetour(t *testing.T) {
 	fj, decide, detour, last := detourHarness(t)
 	back := func(s *state.Session) bool {
-		return s.Main.Tier == "xhigh" && s.Main.Mode == "ultracode" && s.Paused == nil && s.Work.Goal == workGoal && !s.Work.Done
+		return s.Main.Tier == "xhigh" && s.Main.Mode == "ultracode" && s.Work.Goal == workGoal && !s.Work.Done &&
+			(s.Paused == nil || s.Paused.Goal != workGoal && !s.Paused.Done)
 	}
 	for i, tc := range []struct {
 		last, prompt string
@@ -1281,7 +1284,8 @@ func TestGoAheadToAQuestionAfterADetour(t *testing.T) {
 		last(tc.last)
 		n := fj.calls()
 		s := decide(sid, tc.prompt, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: tc.rel, relP: tc.relP})
-		if opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any); fj.calls() != n+1 || opts[catalog.RelationResume] == nil || fj.last().Questions[jev.QOffer].Type != "noul" || !back(s) {
+		if opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any); fj.calls() != n+1 || opts[catalog.RelationResume] == nil || fj.last().Questions[jev.QOffer].Type != "noul" || !back(s) ||
+			(s.Paused != nil) != !tc.done {
 			t.Errorf("%q after %q (%s %.2f): %d calls, main %s/%s, work %+v, paused %+v", tc.prompt, tc.last, tc.rel, tc.relP, fj.calls()-n, s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
 		}
 	}
@@ -1381,5 +1385,262 @@ func TestLateAskedNoticeOnAnotherWork(t *testing.T) {
 	}
 	if s, _ := env.State.Load("ln"); s.PendingAsked != nil {
 		t.Errorf("pending notice kept: %+v", s.PendingAsked)
+	}
+}
+
+// A go-ahead that stays on a detour while bigger work waits runs at the
+// detour's level at most, without a mode, and never raises the detour:
+// the bare words carry no level, and Jev's level and mode answers lean on
+// the paused work (live: "yes" to "Should I push it?" read low 0.46 /
+// xhigh 0.54 and ran the push at xhigh; "ok" to "Dis-moi si tu veux que je
+// pousse." raised the detour to xhigh, and the next detour paused it in
+// place of the migration).
+func TestGoAheadStayingOnADetourKeepsItsLevel(t *testing.T) {
+	_, decide, detour, last := detourHarness(t)
+	for i, tc := range []struct {
+		last, rel string
+		relP      float64
+		done      bool // the detour ends up done (a wrap-up step, sure)
+	}{
+		{"Fixed the typo and committed it. Should I push it?\n\nIt would also push yesterday's lockfile bump.", "wrap_up", 0.92, true},
+		{"C'est corrigé et commité. Dis-moi si je pousse la branche.", "resume", 0.34, false},
+		{"Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?", "continue", 0.8, false},
+		{"Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?", "new_task", 0.9, false},
+	} {
+		sid := fmt.Sprint("ds", i)
+		detour(sid, "low", false)
+		last(tc.last)
+		s := decide(sid, "yes", fa{tier: "xhigh", conf: 0.3, ultra: 0.9, rel: tc.rel, relP: tc.relP, offer: 0.87})
+		if s.Main.Tier != "low" || s.Main.Mode != "" || s.Work.Tier != "low" || s.Work.Mode != "" || s.Work.Done != tc.done || s.Work.Goal == workGoal || s.Work.Goal == "yes" ||
+			s.Paused == nil || s.Paused.Goal != workGoal || s.Paused.Tier != "xhigh" {
+			t.Errorf("yes after %q (%s %.2f), Jev's level xhigh: main %s/%s, work %+v, paused %+v", tc.last, tc.rel, tc.relP, s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
+		}
+	}
+	// A wrap-up step Jev rates below the detour takes its own level.
+	detour("dsw", "medium", false)
+	last("Fixed. Should I push it?")
+	if s := decide("dsw", "yes", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "wrap_up", relP: 0.9, offer: 0.9}); s.Main.Tier != "low" || !s.Work.Done || s.Paused == nil {
+		t.Errorf("yes to pushing a medium detour: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+}
+
+// A go-ahead to one more thing on an open detour is no wrap-up or aside
+// unless Jev is sure of that relation alone: live, "looks good" to "want
+// me to switch them to the same wait?" read wrap_up 0.45-0.49 and aside
+// 0.28-0.33, ran at low under a medium detour and closed it.
+func TestGoAheadToMoreOfAnOpenDetourHolds(t *testing.T) {
+	_, decide, detour, last := detourHarness(t)
+	for i, rel := range []string{"wrap_up", "aside"} {
+		sid := fmt.Sprint("lg", i)
+		detour(sid, "medium", false)
+		last("Fixed: the checkout spec waits for the response now. The cart and orders specs sleep the same way: shall I give them the same wait?")
+		if s := decide(sid, "looks good", fa{tier: "low", conf: 0.6, ultra: 0.05, rel: rel, relP: 0.49, offer: 0.71}); s.Main.Tier != "medium" || s.Work.Done || s.Work.Tier != "medium" || s.Paused == nil || s.Paused.Goal != workGoal {
+			t.Errorf("looks good (%s 0.49): main %+v, work %+v, paused %+v", rel, s.Main, s.Work, s.Paused)
+		}
+	}
+	// Once the detour is done, an acknowledgement is answered alone.
+	detour("lgd", "medium", true)
+	last("Committed. The cart spec sleeps the same way: shall I give it the same wait?")
+	if s := decide("lgd", "looks good", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "aside", relP: 0.45, offer: 0.7}); s.Main.Tier != "low" || !s.Work.Done || s.Paused == nil {
+		t.Errorf("looks good after the done detour (aside 0.45): main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+}
+
+// Back to the paused work by default (the offer question under its bar:
+// live, acknowledgements such as "nickel" to "je fais pareil ?" read
+// 0.27-0.44), an open detour waits in turn: the next wrap-up closes it,
+// not the work it went back to, and going back to it pauses that work
+// again.
+func TestBackByDefaultKeepsTheDetour(t *testing.T) {
+	_, decide, detour, last := detourHarness(t)
+	offerMore := "C'est corrigé : la spec attend la réponse au lieu d'un sleep. Les specs du panier et des commandes dorment pareil : je leur mets la même attente ?"
+	detour("bk", "medium", false)
+	last(offerMore)
+	s := decide("bk", "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.33})
+	if s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Work.Goal != workGoal || s.Paused == nil || !s.Paused.Kept || s.Paused.Tier != "medium" || s.Paused.Goal == workGoal {
+		t.Fatalf("nickel, offer 0.33: main %s/%s, work %+v, paused %+v", s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
+	}
+	last("C'est fait : les specs du panier et des commandes attendent aussi la réponse.")
+	s = decide("bk", "commite ça", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.95})
+	if s.Main.Tier != "low" || s.Work.Goal != workGoal || s.Work.Done || s.Work.Mode != "ultracode" || s.Paused != nil {
+		t.Errorf("commit after going back by default: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	// Going back to the kept detour pauses the work it went back to.
+	detour("bk2", "medium", false)
+	last(offerMore)
+	decide("bk2", "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.33})
+	s = decide("bk2", "non attends, reviens à la spec du checkout d'abord", fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.9})
+	if s.Main.Tier != "medium" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal || s.Paused.Kept || s.Paused.Mode != "ultracode" {
+		t.Errorf("back to the kept detour: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	// A done detour isn't kept.
+	detour("bk3", "low", true)
+	last("Committed. Anything else?")
+	if s = decide("bk3", "ok", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "continue", relP: 0.6, offer: 0.1}); s.Main.Tier != "xhigh" || s.Paused != nil {
+		t.Errorf("back from a done detour: main %+v, paused %+v", s.Main, s.Paused)
+	}
+}
+
+// Jev timing out on a go-ahead after a detour: the turn runs at the paused
+// work's level, but the work is left to the late decision, which may still
+// stay on the detour (it used to resume the paused work for good).
+func TestDetourGoAheadTimeoutLeavesTheWorkToTheLateDecision(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	var got struct {
+		trigger string
+		at      time.Time
+	}
+	spawnLate = func(in *Input, trigger string, at time.Time) { got.trigger, got.at = trigger, at }
+	t.Cleanup(func() { spawnLate = func(*Input, string, time.Time) {} })
+	env.Cfg.Features.WarmTimeout.Duration = 50 * time.Millisecond
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	last := func(text string) {
+		os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":`+strconvQuote(text)+`}]}}`+"\n"), 0o600)
+	}
+	in := map[string]any{"session_id": "dt", "prompt": "yes", "cwd": cwd, "transcript_path": tp}
+	workSession(t, env, "dt", "xhigh", "ultracode", "xhigh")
+	last("On it.")
+	fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"}}
+	run(t, env, "decide", map[string]any{"session_id": "dt", "prompt": "quick one: the flaky checkout spec fails once in ten, fix it", "cwd": cwd, "transcript_path": tp})
+	last("Fixed. The cart spec sleeps the same way: want me to fix it there too?")
+	fj.delay, fj.answers = 300*time.Millisecond, []fa{{tier: "low", conf: 0.95, ultra: 0.05, rel: "continue", relP: 0.9, offer: 0.95}}
+	run(t, env, "decide", in)
+	fj.delay = 0
+	s, _ := env.State.Load("dt")
+	if got.trigger != "warm" || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+		t.Fatalf("timed out (late %q): main %s/%s, work %+v, paused %+v", got.trigger, s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
+	}
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; d.Trigger != "fallback" || d.Work != "" || !strings.Contains(d.Hold, "until Jev answers") {
+		t.Errorf("ledger of the timed-out go-ahead: %+v", d)
+	}
+	t.Setenv(LateEnv, fmt.Sprintf("%s:%d", got.trigger, got.at.UnixNano()))
+	run(t, env, "decide", in)
+	t.Setenv(LateEnv, "")
+	if s, _ = env.State.Load("dt"); s.Main.Tier != "low" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+		t.Errorf("late decision, the assistant offered more of the detour: main %s/%s, work %+v, paused %+v", s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
+	}
+}
+
+// Once a wrap-up closed the work (no paused work that needs more), a
+// go-ahead to a proposal is routed with the relation question, but never
+// starts a work of its own below the work ("yes" is no goal): it holds the
+// work's level and reopens it, unless it is a wrap-up step or an
+// acknowledgement (live: "yes" to "want me to add the same validation
+// there too?" read new_task 0.46 and stored a work "yes" at medium under
+// high).
+func TestGoAheadToAProposalAfterADoneWork(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	last := func(text string) {
+		os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":`+strconvQuote(text)+`}]}}`+"\n"), 0o600)
+	}
+	for i, tc := range []struct {
+		last, rel string
+		relP      float64
+		want      string
+		done      bool
+	}{
+		{"Committed. The exporter reads the same file and has no such check: want me to add it there too?", "new_task", 0.9, "high", false},
+		{"Committed. The exporter reads the same file and has no such check: want me to add it there too?", "continue", 0.9, "high", false},
+		{"Committed. Want me to open the PR?", "wrap_up", 0.9, "low", true},
+		{"Committed. Want me to open the PR?", "aside", 0.4, "low", true},
+	} {
+		sid := fmt.Sprint("pd", i)
+		workSession(t, env, sid, "high", "", "high")
+		env.State.Update(sid, func(s *state.Session) bool { s.Work.Done = true; return true })
+		last(tc.last)
+		fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.05, rel: tc.rel, relP: tc.relP}}
+		n := fj.calls()
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": "yes", "cwd": cwd, "transcript_path": tp})
+		s, _ := env.State.Load(sid)
+		if _, ok := fj.last().Questions[jev.QRelation]; fj.calls() != n+1 || !ok || s.Main.Tier != tc.want || s.Work.Goal != workGoal || s.Work.Done != tc.done || s.Work.Tier != "high" {
+			t.Errorf("yes to %q after a done work (%s %.2f): main %s, work %+v", tc.last, tc.rel, tc.relP, s.Main.Tier, s.Work)
+		}
+	}
+}
+
+// Typed mid-turn during a detour, a go-ahead goes on with the turn: the
+// offer question can't change that and isn't asked (the switch-cost gate
+// applies), and a Jev error keeps the turn's decision without claiming to
+// go back. After a Jev error on a cold turn, the ledger says the paused
+// work was resumed, and that the open detour waits.
+func TestDetourGoAheadMidTurnAndFallbackLedger(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	busy := filepath.Join(cwd, "busy.jsonl")
+	os.WriteFile(busy, []byte(strings.Join([]string{
+		`{"type":"user","message":{"role":"user","content":"quick one: the flaky checkout spec fails once in ten, fix it"}}`,
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"Is it the fixed timeout? Let me look at the spec."},{"type":"tool_use","id":"t1","name":"Read","input":{}}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+	}, "\n")+"\n"), 0o600)
+	decide := func(sid, p, tp string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd, "transcript_path": tp})
+		s, _ := env.State.Load(sid)
+		return s
+	}
+	for i, fail := range []bool{false, true} {
+		sid := fmt.Sprint("mt", i)
+		workSession(t, env, sid, "xhigh", "ultracode", "xhigh")
+		decide(sid, "quick one: the flaky checkout spec fails once in ten, fix it", "", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"})
+		fj.fail = fail
+		n := fj.calls()
+		s := decide(sid, "go on", busy, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "continue", relP: 0.8, offer: 0.05})
+		fj.fail = false
+		_, offer := fj.last().Questions[jev.QOffer]
+		all, _ := ledger.Decisions(env.Cfg.Ledger)
+		d := all[len(all)-1]
+		if fj.calls() > n+1 || (fj.calls() == n+1 && offer) || s.Main.Tier != "low" || s.Paused == nil || s.Paused.Goal != workGoal || strings.Contains(d.Hold, "paused work") {
+			t.Errorf("go on mid-turn (Jev failing %v): %d calls, offer asked %v, main %+v, paused %+v, ledger %+v", fail, fj.calls()-n, offer, s.Main, s.Paused, d)
+		}
+	}
+	tp := filepath.Join(cwd, "t.jsonl")
+	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Fixed. The cart spec sleeps the same way: want me to fix it there too?"}]}}`+"\n"), 0o600)
+	workSession(t, env, "cf", "xhigh", "ultracode", "xhigh")
+	decide("cf", "quick one: the flaky checkout spec fails once in ten, fix it", "", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"})
+	env.State.Update("cf", func(s *state.Session) bool { s.ColdHint = true; return true })
+	fj.fail = true
+	s := decide("cf", "yes", tp, fa{})
+	fj.fail = false
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; d.Trigger != "fallback" || d.Work != router.WorkResumed || !d.Pauses || d.Hold != "go-ahead: back to the paused work" ||
+		s.Main.Tier != "xhigh" || s.Work.Goal != workGoal || s.Paused == nil || !s.Paused.Kept {
+		t.Errorf("cold go-ahead, Jev failing: ledger %+v, main %+v, work %+v, paused %+v", d, s.Main, s.Work, s.Paused)
+	}
+}
+
+// A new detour below a paused work that ties with the work in progress
+// (a detour raised to the paused work's level) keeps the work paused
+// first: a detour never evicts the work it detoured from (live, without
+// ultracode: the raised README detour took the migration's place, and "oui"
+// to "On reprend la migration ?" resumed the README's goal).
+func TestNewDetourKeepsTheWorkPausedFirst(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	decide := func(p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": "tp", "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load("tp")
+		return s
+	}
+	workSession(t, env, "tp", "xhigh", "", "xhigh")
+	decide("quick one: the flaky checkout spec fails once in ten, fix it", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"})
+	// The detour grows to the paused work's level.
+	s := decide("and rewrite every checkout spec's waits while you're at it", fa{tier: "xhigh", conf: 0.95, ultra: 0.05, rel: "extend"})
+	if s.Work.Tier != "xhigh" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+		t.Fatalf("raised detour: work %+v, paused %+v", s.Work, s.Paused)
+	}
+	s = decide("quick: rename the README's Orders heading to Commandes", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"})
+	if s.Paused == nil || s.Paused.Goal != workGoal || s.Work.Tier != "low" {
+		t.Errorf("new detour after a raised one: work %+v, paused %+v", s.Work, s.Paused)
 	}
 }

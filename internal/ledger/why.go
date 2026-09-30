@@ -250,11 +250,17 @@ func workLine(d Decision, o WhyOptions) string {
 	case "raised":
 		parts = append(parts, "raises the work in progress")
 	case "resumed":
-		parts = append(parts, "resumes the paused work ("+d.PausedTier+")")
+		if d.Pauses {
+			parts = append(parts, "resumes the paused work ("+d.PausedTier+"), the detour waits")
+		} else {
+			parts = append(parts, "resumes the paused work ("+d.PausedTier+")")
+		}
 	case "done":
 		parts = append(parts, "marks the work in progress done")
 	case "reopened":
 		parts = append(parts, "reopens the work in progress")
+	case "detour-done":
+		parts = append(parts, "closes the detour that waited, not the work in progress")
 	}
 	return strings.Join(parts, " · ")
 }

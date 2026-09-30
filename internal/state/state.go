@@ -46,7 +46,9 @@ const PinnedTier = "pinned"
 // model than the tiers' the user asked for in words: the work runs on it
 // (the tier is then only its level) until separate new work starts. Done:
 // a wrap-up closed it; only more work on it (a go-ahead, an addition)
-// reopens it and holds its level.
+// reopens it and holds its level. Kept (paused work only): a detour a
+// go-ahead went back from by default, below the work it went back to,
+// kept in case the assistant had offered more of it.
 type Work struct {
 	Tier  string    `json:"tier"`
 	Mode  string    `json:"mode,omitempty"`
@@ -54,6 +56,7 @@ type Work struct {
 	Goal  string    `json:"goal,omitempty"` // head of the prompt that started it
 	Since time.Time `json:"since,omitzero"` // started; for paused work, paused
 	Done  bool      `json:"done,omitempty"`
+	Kept  bool      `json:"kept,omitempty"`
 }
 
 // WorkGoalChars bounds the goal kept for the work in progress.

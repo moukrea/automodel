@@ -24,7 +24,11 @@ import (
 // migration", or a bare "continue" once the detour is done) brings back
 // its tier, mode and model. Another new task drops it, unless it is below
 // it too (the detour goes on: "and the broken link in the install section
-// too"); so do two hours.
+// too"); so do two hours. A go-ahead that goes back by default (the
+// assistant asked something, and Jev doesn't say it offered more of the
+// detour) keeps the detour, unless done, paused in turn (Kept): going back
+// to it pauses the work again, and the next wrap-up closes the detour, not
+// the work (it may be the detour's, if the assistant did offer more of it).
 //
 // An aside (a question unrelated to the work) gets its own level for that
 // turn and changes nothing. A wrap-up marks the work done: from then on a
@@ -37,21 +41,25 @@ type WorkUpdate struct {
 	Tier  string
 	Mode  string
 	Model string // the model it runs on besides the tiers' ("": the tier's)
-	// Pause: new work below the work in progress, which waits, paused.
+	// Pause: new work below the work in progress, which waits, paused; on
+	// WorkResumed, the detour waits in turn (a go-ahead went back to the
+	// paused work by default, not because Jev read it going back).
 	// KeepPaused: new work below the work already paused, which waits on
-	// (a detour of a detour); of the two, the one that needs more waits.
+	// (a detour of a detour); of the two, the one that needs more waits,
+	// the one paused first on a tie.
 	Pause, KeepPaused bool
 	// Done: a wrap-up closed the work (any other update opens it).
 	Done bool
 }
 
 const (
-	WorkNew      = "new"      // the prompt starts it: tier, mode and goal from this turn
-	WorkSet      = "set"      // the user set its effort, mode or model in words
-	WorkRaised   = "raised"   // a follow-up needed more
-	WorkResumed  = "resumed"  // the prompt went back to the paused work
-	WorkDone     = "done"     // a wrap-up closed it
-	WorkReopened = "reopened" // more work on it after a wrap-up
+	WorkNew        = "new"         // the prompt starts it: tier, mode and goal from this turn
+	WorkSet        = "set"         // the user set its effort, mode or model in words
+	WorkRaised     = "raised"      // a follow-up needed more
+	WorkResumed    = "resumed"     // the prompt went back to the paused work
+	WorkDone       = "done"        // a wrap-up closed it
+	WorkReopened   = "reopened"    // more work on it after a wrap-up
+	WorkDetourDone = "detour-done" // a wrap-up closed the detour kept paused, not the work
 )
 
 // Apply records the update on the session (prompt: the one decided on).
@@ -59,11 +67,23 @@ func (u *WorkUpdate) Apply(s *state.Session, prompt string, now time.Time) {
 	if u == nil {
 		return
 	}
+	if u.Kind == WorkDetourDone {
+		s.Paused = nil
+		return
+	}
 	w := state.Work{Tier: u.Tier, Mode: u.Mode, Model: u.Model, Since: now, Done: u.Done}
 	prev := s.WorkInProgress()
 	switch {
 	case u.Kind == WorkResumed && s.Paused != nil:
+		// Back by default, the detour waits (Kept); back to a detour kept
+		// so, the work it went back to waits again.
+		kept := s.Paused.Kept
 		w.Goal, s.Paused = s.Paused.Goal, nil
+		if (u.Pause || kept) && prev != nil && !prev.Done {
+			p := *prev
+			p.Since, p.Kept = now, u.Pause
+			s.Paused = &p
+		}
 	case u.Kind != WorkNew && prev != nil:
 		w.Goal, w.Since = prev.Goal, prev.Since
 	default:
@@ -122,9 +142,16 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 	switch {
 	case e.resumes(req, rd):
 		return work, fmt.Sprintf("back to the paused work (%s %.2f)", top, p)
-	case req.DetourGoAhead && top != catalog.RelationWrapUp && top != catalog.RelationAside:
-		// A go-ahead takes on what the assistant proposed for the detour:
-		// not below it, whatever its words read as ("yes" is no new task).
+	case req.ProposalGoAhead:
+		// A go-ahead takes on what the assistant proposed: not below the
+		// work, whatever its words read as ("yes" is no new task), unless
+		// it is a wrap-up step or an aside, which Jev is sure of on its own
+		// or which follows a done work (live: "looks good" to one more fix
+		// of an open detour read wrap_up 0.45-0.49 and aside 0.28-0.33,
+		// 0.77 separate in all, and dropped below the detour, closing it).
+		if (top == catalog.RelationWrapUp || top == catalog.RelationAside) && (p >= e.Catalog.Meta.RelationSeparateThreshold() || done) {
+			return nil, ""
+		}
 		return work, fmt.Sprintf("%s (%s %.2f)", FollowUpProposal, top, p)
 	case rd.separate() >= e.Catalog.Meta.RelationSeparateThreshold():
 		return nil, ""
@@ -148,25 +175,39 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 // detour (the offer question, at meta.detour_offer_threshold): "go" after
 // "Anything else?" read continue up to 0.62 on the relation question, and
 // a go-ahead that stays below the paused work is the lowering the owner
-// rejects. A prompt typed mid-turn or sent by another session doesn't.
+// rejects (backByDefault). A prompt typed mid-turn or sent by another
+// session doesn't.
 func (e *Env) resumes(req Request, rd Reading) bool {
 	switch {
 	case req.Paused == nil || req.MidTurn || req.Peer || req.FollowUp != "":
 		return false
 	}
+	return e.sureResume(rd) || e.backByDefault(req, rd)
+}
+
+// sureResume: Jev reads the prompt going back to the paused work.
+func (e *Env) sureResume(rd Reading) bool {
 	top, p := rd.relationTop()
-	back := top == catalog.RelationResume && p >= e.Catalog.Meta.RelationSeparateThreshold()
-	if req.BackFirst {
-		return back || rd.offer < e.Catalog.Meta.DetourOfferThreshold()
-	}
-	return back
+	return top == catalog.RelationResume && p >= e.Catalog.Meta.RelationSeparateThreshold()
+}
+
+// backByDefault: a go-ahead after a detour goes back to the paused work
+// that needs more because the offer question doesn't say the assistant
+// offered more of the detour, not because Jev read it going back. The
+// detour, unless done, waits then (WorkUpdate.Pause): if the assistant
+// did offer more of it and goes on with it, the next wrap-up or "back to
+// the typo fix" still finds it.
+func (e *Env) backByDefault(req Request, rd Reading) bool {
+	return req.BackFirst && !req.MidTurn && !req.Peer && req.Paused != nil && req.FollowUp == "" &&
+		!e.sureResume(rd) && rd.offer < e.Catalog.Meta.DetourOfferThreshold()
 }
 
 // Why a prompt follows the work up without the relation question: a
 // go-ahead to what the assistant proposed ("Want me to fix it?"), routed
-// but not below the work (with no paused work: after a detour the
-// proposal may be to go back to it, and the relation question says so,
-// see Request.DetourGoAhead); the decision right after a compaction.
+// but not below the work (with no paused work and the work open: after a
+// detour the proposal may be to go back to it, and once the work is done
+// it may be a wrap-up step; the relation question says so, see
+// Request.ProposalGoAhead); the decision right after a compaction.
 const (
 	FollowUpProposal   = "go-ahead to a proposal"
 	FollowUpCompaction = "compaction"
@@ -226,6 +267,22 @@ func (e *Env) GoAheadWork(cur *state.Decision, work, paused *state.Work, midTurn
 func (e *Env) Acknowledges(work, paused *state.Work) bool {
 	back, _ := e.GoAheadWork(nil, work, paused, false)
 	return work != nil && work.Done && back == work
+}
+
+// needsMore reports work a that needs strictly more than b: a higher
+// tier, or the same with a mode b hasn't.
+func (e *Env) needsMore(a, b *state.Work) bool {
+	if a == nil || b == nil {
+		return a != nil
+	}
+	ta, tb := e.Catalog.Tier(catalog.ScopeMain, a.Tier), e.Catalog.Tier(catalog.ScopeMain, b.Tier)
+	switch {
+	case ta == nil || tb == nil:
+		return ta != nil
+	case ta.Rank != tb.Rank:
+		return ta.Rank > tb.Rank
+	}
+	return a.Mode != "" && b.Mode == ""
 }
 
 // higher returns the higher-ranked of two tiers (either may be nil).

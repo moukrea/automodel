@@ -116,15 +116,23 @@ type Request struct {
 	Work, Paused  *state.Work
 	MidTurn, Peer bool
 	FollowUp      string
-	// DetourGoAhead: a bare go-ahead to what the assistant asked or offered
-	// after a detour (paused work), asked the relation question with resume
-	// offered. It doesn't go below the work in progress unless it goes back
-	// to the paused work or is answered alone (a wrap-up step, an aside).
-	// BackFirst: the paused work needs more than the detour; the go-ahead
-	// goes back there, as a bare go-ahead does, unless Jev reads another
-	// relation at meta.detour_stay_threshold at least ("Anything else?"
-	// offers nothing of the detour).
-	DetourGoAhead, BackFirst bool
+	// ProposalGoAhead: a bare go-ahead to what the assistant asked or
+	// offered, asked the relation question: after a detour (paused work,
+	// resume offered), or once a wrap-up closed the work ("yes" to "Want
+	// me to add the same check to the importer?"). It doesn't go below the
+	// work it follows, nor starts a work of its own ("yes" is no goal),
+	// unless it goes back to the paused work or is answered alone: a
+	// wrap-up step or an aside Jev is sure of on its own, or any once the
+	// work is done.
+	// BackFirst: after a detour, the paused work needs more; the go-ahead
+	// goes back there, as a bare go-ahead does, unless the offer question
+	// says yes at meta.detour_offer_threshold at least (the assistant
+	// offered one more thing for the detour; "Anything else?" offers
+	// nothing of it). Staying on the detour, it runs at the detour's level
+	// at most: the bare words carry no level, and Jev's reading of them
+	// leans on the paused work. Not set on a prompt typed mid-turn, which
+	// goes on with the turn.
+	ProposalGoAhead, BackFirst bool
 	// Explicit are the requests the prompt's words may make, for Jev to
 	// confirm.
 	Explicit []Candidate
@@ -179,7 +187,8 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	// the prompt's text Jev can't confirm what it asks for, nor read what
 	// the assistant offered (a go-ahead after a detour then goes back).
 	metadata := rp.Privacy == PrivacyMetadata || e.Cfg.Privacy == PrivacyMetadata
-	ask.Offer = ask.Relation && req.BackFirst && !metadata
+	backFirst := req.BackFirst && !req.MidTurn && !req.Peer
+	ask.Offer = ask.Relation && backFirst && !metadata
 	task, _ := req.State["task"].(string)
 	if metadata {
 		req.State = MetadataOnly(req.State)
@@ -225,7 +234,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 
 	// A warm switch has to pay back its cost: when no answer could, Jev
 	// is not asked at all (unless the prompt may ask for something).
-	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" && len(req.Explicit) == 0 && !req.BackFirst && !e.AboveCap(req.SessionID, req.Scope, cur) {
+	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" && len(req.Explicit) == 0 && !backFirst && !e.AboveCap(req.SessionID, req.Scope, cur) {
 		// Modes flip for free but wait for the next free moment then.
 		if g := policy.MaxGain(c, req.Scope, cur, req.SwitchCost, params); g <= 0 {
 			rec.Skipped = true
@@ -275,16 +284,29 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if err != nil {
 		rec.Error = err.Error()
 		timedOut := errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)
-		if req.BackFirst {
+		if backFirst {
 			// A go-ahead after a detour goes back to the paused work that
-			// needs more, as without the question (Carried).
+			// needs more, as without the question (Carried), and the detour
+			// waits: Jev couldn't say whether the assistant offered more of
+			// it. On a timeout this turn runs the paused work's level and
+			// the work is left to the late decision, which may still stay
+			// on the detour.
 			r := req
 			if r.Current == nil {
 				r.Current = e.DefaultDecision(req.Scope, req.Trigger)
 			}
 			d, u := e.Carried(r, rp)
 			d.Trigger, d.Cause, d.DecidedAt = "fallback", req.Trigger, start
-			rec.Trigger, rec.Cause, rec.Hold = "fallback", req.Trigger, "go-ahead: back to the paused work"
+			rec.Trigger, rec.Cause = "fallback", req.Trigger
+			switch {
+			case u == nil:
+				rec.Hold = "go-ahead: continues the work in progress"
+			case timedOut:
+				u, rec.Hold = nil, "go-ahead: the paused work's level until Jev answers"
+			default:
+				u.Pause = req.Work != nil && !req.Work.Done
+				rec.Hold, rec.Work, rec.Pauses = "go-ahead: back to the paused work", u.Kind, u.Pause
+			}
 			rec.Chosen, rec.Model, rec.Effort, rec.Mode = d.Tier, d.APIID, d.Effort, d.Mode
 			log.Printf("jev %s/%s: %v (go-ahead: %s)", req.Scope, req.Trigger, err, d.Tier)
 			if err := e.Ledger.Append(rec); err != nil {
@@ -480,8 +502,15 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	// A wrap-up, a side question or an aside is answered alone: without the
 	// work's mode, which stays the work's (Jev's mode answer reads the whole
 	// work: "open the draft PR" after a sweep still reads as the sweep);
-	// not a go-ahead that goes back to the paused work.
-	alone := thisTurn(top) && !req.MidTurn && !req.Peer && !back
+	// not a go-ahead that goes back to the paused work, nor one to a
+	// proposal that holds the work.
+	alone := thisTurn(top) && !req.MidTurn && !req.Peer && !back && !(req.ProposalGoAhead && hold != nil)
+	// A go-ahead that stays on a detour while bigger work waits runs at
+	// the detour's level at most, on its mode: the bare words carry no
+	// level, and Jev's level and mode answers lean on the paused work
+	// (live: "yes" to "Should I push it?" read low 0.46 / xhigh 0.54 and
+	// ran the push at xhigh).
+	capped := req.ProposalGoAhead && req.BackFirst && !back && !req.MidTurn && !req.Peer && work != nil
 	// The mode a follow-up keeps on: the work's, and on a mid-turn prompt
 	// or a peer message the one the turn runs with (only that one once the
 	// work is done: the turn runs something else).
@@ -546,11 +575,18 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		if floor != nil && tier.Rank < floor.Rank {
 			tier = floor
 		}
+		if capped && tier.Rank > work.Rank {
+			tier = work
+		}
 	}
 	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context) // within the repo's bounds
 	mode := ""
 	if !alone || x.on != "" {
-		mode, tier = e.mode(req, rd, tier, rp, x, keepMode, fresh)
+		rdm := rd
+		if capped {
+			rdm.modeP = nil
+		}
+		mode, tier = e.mode(req, rdm, tier, rp, x, keepMode, fresh)
 	}
 	if mode != "" {
 		// The tier the mode needs may be past the repo's bounds.
@@ -632,16 +668,29 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		// Claude runs something else, nor another session's message).
 		reopen := followed != nil && followed.Done && hold != nil && !req.MidTurn && !req.Peer &&
 			(top == catalog.RelationContinue || top == catalog.RelationExtend || req.FollowUp == FollowUpProposal ||
-				(req.DetourGoAhead && !back && !thisTurn(top)))
+				(req.ProposalGoAhead && !back && !thisTurn(top)))
 		w := v
 		w.Model = workModel
 		v.Work = workUpdate(w, followed, work, hold, x, top, fresh, back, reopen)
 		// New work below the paused work: a longer detour, the paused work
-		// waits on (unless the work it replaces needs more and waits instead).
+		// waits on, unless the work it replaces needs more and waits
+		// instead; on a tie the work paused first waits on (live: a detour
+		// raised to the paused work's xhigh took its place, and the next
+		// "on reprend la migration ?" resumed the detour's goal).
 		if u := v.Work; u != nil && u.Kind == WorkNew && req.Paused != nil {
-			if p := c.Tier(req.Scope, req.Paused.Tier); p != nil && v.Tier.Rank < p.Rank && (!u.Pause || e.HigherWork(req.Work, req.Paused) == req.Paused) {
+			if p := c.Tier(req.Scope, req.Paused.Tier); p != nil && v.Tier.Rank < p.Rank && (!u.Pause || !e.needsMore(req.Work, req.Paused)) {
 				u.Pause, u.KeepPaused = false, true
 			}
+		}
+		// Back to the paused work by default: the detour waits in turn
+		// (Kept), and the next wrap-up closes it, not the work it went back
+		// to (live: after "nickel" to more of the detour read as no, "commite
+		// ça" read wrap_up 0.95 whichever work was in progress).
+		if u := v.Work; u != nil && u.Kind == WorkResumed && e.backByDefault(req, rd) && req.Work != nil && !req.Work.Done {
+			u.Pause = true
+		}
+		if u := v.Work; u != nil && u.Kind == WorkDone && req.Paused != nil && req.Paused.Kept {
+			v.Work = &WorkUpdate{Kind: WorkDetourDone}
 		}
 		// More thinking read from the words alone raises this turn only:
 		// the work in progress is what it would be without it.
