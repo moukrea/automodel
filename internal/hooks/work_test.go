@@ -439,3 +439,130 @@ func TestCompactionKeepsWork(t *testing.T) {
 		t.Errorf("after the first prompt: %+v", s.Main)
 	}
 }
+
+// Requests in words: an effort talked about for something else (a
+// subagent, a tuning file, a quoted prompt) must not lower the work; an
+// effort below the work needs a surer yes (router.LowerEffortP); an effort
+// asked for a wrap-up or a side question is for that answer only; an
+// effort asked in words keeps the work's mode and lets Jev turn one on.
+func TestRequestsInWords(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	decide := func(sid, p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load(sid)
+		return s
+	}
+	low := func(p float64) map[string]float64 { return map[string]float64{"effort_low": p} }
+
+	// A mention Jev half-reads as a request (0.88, as live for these
+	// prompts) doesn't lower xhigh work; a real one (0.95) does.
+	for i, c := range []struct {
+		prompt string
+		p      float64
+		want   string
+	}{
+		{"set it to low in the tuning file for the subagents, then keep going on the deadlock", 0.88, "xhigh"},
+		{"use low for the explore agents in the workflow, and keep going on the race", 0.89, "xhigh"},
+		{"passe en low pour la suite, c'est mécanique", 0.95, "low"},
+	} {
+		sid := fmt.Sprint("lo", i)
+		workSession(t, env, sid, "xhigh", "", "xhigh")
+		s := decide(sid, c.prompt, fa{tier: "high", conf: 0.9, rel: "extend", x: low(c.p)})
+		if s.Main.Tier != c.want || s.Work.Tier != c.want {
+			t.Errorf("%q (effort_low %.2f): decision %s, work %s, want %s", c.prompt, c.p, s.Main.Tier, s.Work.Tier, c.want)
+		}
+		if q := fj.last().Questions["explicit_effort_low"]; !strings.Contains(q.Instructions, "itself") || !strings.Contains(q.Instructions, "its own work") {
+			t.Errorf("effort question = %q", q.Instructions)
+		}
+	}
+	// An effort above the work needs only meta.explicit_threshold.
+	workSession(t, env, "up", "medium", "", "medium")
+	if s := decide("up", "fais la suite en xhigh", fa{tier: "medium", conf: 0.9, rel: "extend", x: map[string]float64{"effort_xhigh": 0.85}}); s.Main.Tier != "xhigh" || s.Work.Tier != "xhigh" {
+		t.Errorf("raise at 0.85: %s, work %s", s.Main.Tier, s.Work.Tier)
+	}
+
+	// Asked for a wrap-up or a side question: that answer only.
+	workSession(t, env, "wu", "xhigh", "", "xhigh")
+	if s := decide("wu", "write the commit message, in low effort", fa{tier: "low", conf: 0.95, rel: "wrap_up", x: low(0.95)}); s.Main.Tier != "low" || s.Work.Tier != "xhigh" {
+		t.Fatalf("effort for a wrap-up: %s, work %s", s.Main.Tier, s.Work.Tier)
+	}
+	n := fj.calls()
+	if s := decide("wu", "ok, continue", fa{}); fj.calls() != n || s.Main.Tier != "xhigh" {
+		t.Errorf("go-ahead after the wrap-up: %s (%d calls)", s.Main.Tier, fj.calls()-n)
+	}
+	workSession(t, env, "sq", "xhigh", "ultracode", "xhigh")
+	s := decide("sq", "why did the retry fail there? answer at low effort", fa{tier: "low", conf: 0.95, ultra: 0.1, rel: "side_question", x: low(0.95)})
+	if s.Main.Tier != "low" || s.Main.Mode != "" || s.Work.Tier != "xhigh" || s.Work.Mode != "ultracode" {
+		t.Errorf("effort for a side question: %+v, work %+v", s.Main, s.Work)
+	}
+
+	// The mode: an effort asked in words doesn't turn it off, nor stop
+	// Jev turning it on, unless the mode would raise that effort.
+	markJev(t, env, "m1")
+	if s = decide("m1", "Audite tout le repo en xhigh pour les injections SQL, module par module", fa{tier: "xhigh", conf: 0.9, ultra: 0.95, x: map[string]float64{"effort_xhigh": 0.95}}); s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" {
+		t.Errorf("first prompt with an effort: %+v", s.Main)
+	}
+	markJev(t, env, "m2")
+	if s = decide("m2", "Audit the whole repo for SQL injections at high effort", fa{tier: "xhigh", conf: 0.9, ultra: 0.95, x: map[string]float64{"effort_high": 0.95}}); s.Main.Tier != "high" || s.Main.Mode != "" {
+		t.Errorf("a mode that would raise the asked effort: %+v", s.Main)
+	}
+	workSession(t, env, "m3", "xhigh", "ultracode", "xhigh")
+	decide("m3", "write the commit message", fa{tier: "low", conf: 0.95, ultra: 0.1, rel: "wrap_up"})
+	s = decide("m3", "ok, maintenant continue en xhigh", fa{tier: "high", conf: 0.9, ultra: 0.1, rel: "continue", x: map[string]float64{"effort_xhigh": 0.95}})
+	if s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Work.Mode != "ultracode" {
+		t.Errorf("continue en xhigh after a wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+
+	// Refusing the mode, in the words people use.
+	for i, p := range []string{"no need for ultracode here, just fix the error message", "n'utilise pas ultracode pour ça, corrige juste le message",
+		"skip ultracode for this one, just fix the message", "ultracode isn't needed, just fix the message"} {
+		sid := fmt.Sprint("off", i)
+		workSession(t, env, sid, "xhigh", "ultracode", "xhigh")
+		s = decide(sid, p, fa{tier: "low", conf: 0.9, ultra: 0.1, rel: "extend", x: map[string]float64{"mode_off": 0.95}})
+		if s.Main.Mode != "" || s.Main.Tier != "xhigh" {
+			t.Errorf("%q: %+v", p, s.Main)
+		}
+	}
+	// Efforts asked in words the old regex missed.
+	for i, p := range []string{"set the effort to medium for the rest, it's mechanical", "mets l'effort à medium pour la suite", "effort moyen pour la suite"} {
+		sid := fmt.Sprint("mid", i)
+		workSession(t, env, sid, "xhigh", "", "xhigh")
+		if s = decide(sid, p, fa{tier: "high", conf: 0.9, rel: "extend", x: map[string]float64{"effort_medium": 0.95}}); s.Main.Tier != "medium" {
+			t.Errorf("%q: %s", p, s.Main.Tier)
+		}
+	}
+}
+
+// In metadata privacy Jev never sees the words: only the forms that ask
+// for more thinking whatever the context count, and they raise the turn,
+// never the work in progress.
+func TestMoreThinkingInMetadataMode(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	env.Cfg.Privacy = "metadata"
+	cwd := t.TempDir()
+	decide := func(p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": "md", "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load("md")
+		return s
+	}
+	workSession(t, env, "md", "high", "", "high")
+	if s := decide("lis le fichier de config en profondeur et dis-moi ce qui cloche", fa{tier: "medium", conf: 0.9, rel: "side_question"}); s.Main.Tier != "high" || s.Work.Tier != "high" {
+		t.Errorf("en profondeur: %s, work %s", s.Main.Tier, s.Work.Tier)
+	}
+	if s := decide("le CPU tourne à fond depuis ce matin, pour info", fa{tier: "low", conf: 0.9, rel: "inform"}); s.Main.Tier != "high" || s.Work.Tier != "high" {
+		t.Errorf("à fond: %s, work %s", s.Main.Tier, s.Work.Tier)
+	}
+	if s := decide("réfléchis bien avant de toucher au verrou", fa{tier: "medium", conf: 0.9, rel: "extend"}); s.Main.Tier != "xhigh" || s.Work.Tier != "high" {
+		t.Errorf("réfléchis bien: %s, work %s", s.Main.Tier, s.Work.Tier)
+	}
+	if q := fj.last().Questions; len(q) == 0 || q["explicit_effort_more"].Type != "" {
+		t.Errorf("questions in metadata mode: %v", q)
+	}
+}

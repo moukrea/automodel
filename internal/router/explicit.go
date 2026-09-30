@@ -30,17 +30,36 @@ func words(alt string) *regexp.Regexp {
 
 var (
 	// xhigh and max anywhere; low, medium and high only next to a word
-	// that makes them an effort ("en high", "switch to low", "high effort").
+	// that makes them an effort ("en high", "switch to low", "high effort",
+	// "set the effort to medium", "mets l'effort à low", "effort élevé").
 	effortAnyRE  = words(`(x-?high|max)`)
-	effortNearRE = words(`(?:effort(?:\s+level)?\s*[:=]?|en|in|at|mode|passe[rz]?(?:\s+(?:en|à|a))?|switch(?:\s+to)?|set(?:\s+it)?\s+to|use|utilise[rz]?)\s+(?:the\s+|le\s+|l'|du\s+)?(low|medium|high)`)
-	effortPostRE = words(`(low|medium|high)[\s-]+effort`)
+	effortNearRE = words(`(?:(?:effort|niveau|reasoning|raisonnement)(?:\s*[:=]\s*|\s+(?:\S+\s+){0,2})|(?:en|in|at|mode|passe[rz]?(?:\s+(?:en|à|a))?|switch(?:\s+to)?|set(?:\s+it)?\s+to|use|utilise[rz]?)\s+(?:the\s+|le\s+|l'|du\s+)?)(low|medium|high|[ée]lev[ée]e?|haut|faible|bas|moyen)`)
+	effortPostRE = words(`(low|medium|high)[\s-]+(?:reasoning[\s-]+)?(?:effort|reasoning)`)
+	// moreRE finds the words that may ask for more thinking, for Jev to
+	// confirm; narrowMoreRE the forms that ask for it whatever the context,
+	// which count without Jev in metadata mode (it never sees the words).
 	moreRE       = words(`think\s+(?:really\s+|very\s+|much\s+|a\s+lot\s+)?hard(?:er)?|think\s+(?:more|deeply|carefully|longer|it\s+through)|take\s+your\s+time|be\s+thorough|dig\s+deeper|r[ée]fl[ée]chi(?:s|ssez|sse|r)\s+(?:plus|bien|davantage|longtemps|en\s+profondeur|[àa]\s+fond)|prends?\s+(?:ton|le|bien\s+le)\s+temps|creuse\s+(?:plus|bien|davantage)|[àa]\s+fond|en\s+profondeur|met(?:s|z|tre)?\s+le\s+paquet`)
-	modeWords    = `ultracode|workflows?|en\s+parall[èe]le|agents\s+en\s+parall[èe]le|plusieurs\s+agents|parallel\s+agents|multi-?agents?`
-	modeRE       = words(modeWords)
-	modeOffRE    = words(`(?:(?:pas|plus)\s+besoin\s+d[e']\s*|pas\s+d[e']\s*|plus\s+d[e']\s*|sans\s+|no\s+|without\s+|don'?t\s+use\s+|do\s+not\s+use\s+|stop(?:\s+using)?\s+|arr[êe]te(?:\s+(?:le|les|l'|d'utiliser))?\s*|d[ée]sactive(?:\s+(?:le|l'))?\s*|turn\s+off\s+|disable\s+)(?:the\s+|le\s+|l'|les\s+)?(?:mode\s+)?(?:` + modeWords + `)|(?:ultracode|workflows?)\s+off`)
+	narrowMoreRE = words(`think\s+(?:harder|more|deeply)|r[ée]fl[ée]chi(?:s|ssez)\s+(?:bien|plus|davantage|en\s+profondeur)|prends?\s+ton\s+temps`)
+	// A mode word asks both questions, the mode and its refusal ("no need
+	// for ultracode here", "n'utilise pas ultracode", "skip ultracode"): a
+	// regex can't tell them apart.
+	modeRE       = words(`ultracode|workflows?|en\s+parall[èe]le|plusieurs\s+agents|parallel\s+agents|multi-?agents?|in\s+parallel|(?:several|multiple|many)\s+(?:sub-?)?agents|sub-?agents\s+in\s+parallel`)
 	modelRE      = words(`(opus|sonnet|haiku|fable)`)
 	ultrathinkRE = words(`ultrathink`)
 )
+
+// effortName is the effort a word the regexes found names ("élevé": high).
+func effortName(w string) string {
+	switch w = strings.ReplaceAll(strings.ToLower(w), "é", "e"); {
+	case strings.HasPrefix(w, "elev"), w == "haut":
+		return "high"
+	case w == "faible", w == "bas":
+		return "low"
+	case w == "moyen":
+		return "medium"
+	}
+	return w
+}
 
 // Ultrathink reports Claude Code's ultrathink keyword: a floor at xhigh,
 // without asking Jev (it is a keyword, not prose).
@@ -58,7 +77,7 @@ func ExplicitCandidates(c *catalog.Catalog, prompt, model string) []Candidate {
 	}
 	for _, re := range []*regexp.Regexp{effortNearRE, effortPostRE} {
 		for _, m := range re.FindAllStringSubmatch(prompt, -1) {
-			efforts[strings.ToLower(m[1])] = true
+			efforts[effortName(m[1])] = true
 		}
 	}
 	for _, e := range []string{"low", "medium", "high", "xhigh", "max"} {
@@ -74,10 +93,8 @@ func ExplicitCandidates(c *catalog.Catalog, prompt, model string) []Candidate {
 			continue
 		}
 		if modeRE.MatchString(prompt) || strings.Contains(strings.ToLower(prompt), md.ID) {
-			out = append(out, Candidate{Explicit: jev.Explicit{Kind: jev.ExplicitMode, Value: md.ID, Label: md.ID}})
-		}
-		if modeOffRE.MatchString(prompt) {
-			out = append(out, Candidate{Explicit: jev.Explicit{Kind: jev.ExplicitMode, Value: jev.ExplicitOff, Label: md.ID}})
+			out = append(out, Candidate{Explicit: jev.Explicit{Kind: jev.ExplicitMode, Value: md.ID, Label: md.ID}},
+				Candidate{Explicit: jev.Explicit{Kind: jev.ExplicitMode, Value: jev.ExplicitOff, Label: md.ID}})
 		}
 		break // one workflow mode: the words are the same
 	}
@@ -129,15 +146,21 @@ func sortedModelKeys(c *catalog.Catalog) []string {
 }
 
 // unconfirmedMore counts a "think harder" request as asked without Jev (in
-// metadata mode Jev never sees the words): more thinking only raises the
-// floor, so a mention costs little there.
-func (rd *Reading) unconfirmedMore(cs []Candidate) {
+// metadata mode Jev never sees the words), only in the forms that ask for
+// it whatever the context ("think harder", "réfléchis bien"): "le CPU
+// tourne à fond" is no request. It raises this turn only, never the work
+// in progress (Judge).
+func (rd *Reading) unconfirmedMore(prompt string, cs []Candidate) {
+	if !narrowMoreRE.MatchString(prompt) {
+		return
+	}
 	for _, x := range cs {
 		if x.Kind == jev.ExplicitEffort && x.Value == jev.ExplicitMore {
 			if rd.explicit == nil {
 				rd.explicit = map[string]float64{}
 			}
 			rd.explicit[x.ID()] = 1
+			rd.guessedMore = true
 		}
 	}
 }
@@ -149,6 +172,21 @@ func ExplicitThreshold(c *catalog.Catalog, kind string) float64 {
 		return c.Meta.ExplicitModelThreshold()
 	}
 	return c.Meta.ExplicitThreshold()
+}
+
+// LowerEffortP is the least yes-probability an effort below the work in
+// progress needs: lowering hard work on a mention Jev misread ("set it to
+// low for the subagents") costs far more than a missed request.
+const LowerEffortP = 0.9
+
+// RequestThreshold is the yes-probability from which request x counts,
+// work being the tier of the work in progress (nil: none).
+func RequestThreshold(c *catalog.Catalog, x Candidate, work *catalog.Tier) float64 {
+	th := ExplicitThreshold(c, x.Kind)
+	if t := c.Tier(catalog.ScopeMain, x.Tier); x.Kind == jev.ExplicitEffort && t != nil && work != nil && t.Rank < work.Rank {
+		th = max(th, LowerEffortP)
+	}
+	return th
 }
 
 // asks is what a prompt explicitly asked for, as Jev confirmed it.
@@ -164,14 +202,19 @@ func (a asks) any() bool { return a.effort != nil || a.more || a.on != "" || a.o
 
 // confirmed reads Jev's answers to the explicit-request questions: a request
 // counts from meta.explicit_threshold, a model from the stricter
-// meta.explicit_model_threshold; of two efforts (or models) the more likely
-// wins, and so does the more likely of a mode asked and refused.
+// meta.explicit_model_threshold, an effort below the work in progress from
+// LowerEffortP; of two efforts (or models) the more likely wins, and so
+// does the more likely of a mode asked and refused.
 func (e *Env) confirmed(req Request, rd Reading) asks {
 	var a asks
 	var effortP, modelP, onP, offP float64
+	var work *catalog.Tier
+	if req.Work != nil {
+		work = e.Catalog.Tier(req.Scope, req.Work.Tier)
+	}
 	for _, x := range req.Explicit {
 		p, ok := rd.explicit[x.ID()]
-		if !ok || p < ExplicitThreshold(e.Catalog, x.Kind) {
+		if !ok || p < RequestThreshold(e.Catalog, x, work) {
 			continue
 		}
 		switch {

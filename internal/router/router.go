@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -153,6 +154,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	// A repository can only make privacy stricter, never looser. Without
 	// the prompt's text Jev can't confirm what it asks for.
 	metadata := rp.Privacy == PrivacyMetadata || e.Cfg.Privacy == PrivacyMetadata
+	task, _ := req.State["task"].(string)
 	if metadata {
 		req.State = MetadataOnly(req.State)
 	} else {
@@ -282,7 +284,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 
 	rd := e.Read(ans, ids, req.Scope)
 	if metadata {
-		rd.unconfirmedMore(req.Explicit) // the words alone, as before Jev confirmed them
+		rd.unconfirmedMore(task, req.Explicit) // the words alone, as before Jev confirmed them
 	}
 	rec.Probs, rec.Confidence, rec.JevChoice, rec.ModeP, rec.AskedP = rd.probs, rd.conf, rd.top, rd.modeP, rd.asked
 	rec.Relation = rd.relation
@@ -418,6 +420,9 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	v := Verdict{Pick: pk}
 	var why []string
 	hold, reason := e.holdAt(req, rd, work, cur)
+	top, _ := rd.relationTop()
+	// Separate new work (or a first prompt): its own level, mode and model.
+	fresh := work == nil || (hold == nil && top == catalog.RelationNewTask)
 	// The mode a follow-up keeps on: the work's, and on a mid-turn prompt
 	// or a peer message the one the turn runs with.
 	keepMode := ""
@@ -429,8 +434,9 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	}
 	if x.effort != nil {
 		// An effort asked in words is the user's call, up or down: the mode
-		// in force stays unless it would raise that effort.
-		tier, keepMode = x.effort, e.inForceMode(req)
+		// a follow-up keeps stays on unless it would raise that effort (and
+		// Jev may still turn on one that doesn't, see mode).
+		tier = x.effort
 		if keepMode != "" && !c.KeepsMode(keepMode, x.effort.Effort) {
 			keepMode = ""
 		}
@@ -453,7 +459,7 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		}
 	}
 	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context) // within the repo's bounds
-	mode, tier := e.mode(req, rd, tier, rp, x, keepMode, x.effort == nil)
+	mode, tier := e.mode(req, rd, tier, rp, x, keepMode, false)
 	if mode != "" {
 		// The tier the mode needs may be past the repo's bounds.
 		if t := policy.Constrain(c, req.Scope, tier, rp, req.Context); t.ID != tier.ID {
@@ -471,8 +477,6 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	}
 	// The model: one asked for in words, else the work's as long as the
 	// prompt doesn't start separate new work (a wrap-up stays on it too).
-	top, _ := rd.relationTop()
-	fresh := work == nil || (hold == nil && top == catalog.RelationNewTask)
 	if !fresh {
 		v.Model = followed.Model
 	}
@@ -503,7 +507,15 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		}
 	}
 	if req.Scope == catalog.ScopeMain {
-		v.Work = workUpdate(v, followed, work, hold, x, fresh, back)
+		v.Work = workUpdate(v, followed, work, hold, x, top, fresh, back)
+		// More thinking read from the words alone raises this turn only:
+		// the work in progress is what it would be without it.
+		if x.more && rd.guessedMore {
+			without := rd
+			without.guessedMore, without.explicit = false, maps.Clone(rd.explicit)
+			delete(without.explicit, jev.Explicit{Kind: jev.ExplicitEffort, Value: jev.ExplicitMore}.ID())
+			v.Work = e.Judge(req, without, cur, rp, params).Work
+		}
 	}
 	return v
 }
@@ -513,8 +525,11 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 // the new work is below it (a detour); going back to the paused work
 // restores it; an effort, a mode or a model asked in words sets it; a
 // follow-up that needs more raises it; a wrap-up, a side question or a
-// plain follow-up leave it as it is.
-func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x asks, fresh, back bool) *WorkUpdate {
+// plain follow-up leave it as it is. An effort or a mode asked for a
+// wrap-up or a side question is for that answer only (top: the prompt's
+// likeliest relation).
+func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x asks, top string, fresh, back bool) *WorkUpdate {
+	thisTurn := top == catalog.RelationWrapUp || top == catalog.RelationSideQuestion
 	switch {
 	case fresh:
 		u := &WorkUpdate{Kind: WorkNew, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
@@ -522,6 +537,11 @@ func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x ask
 		return u
 	case back:
 		return &WorkUpdate{Kind: WorkResumed, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
+	case (x.effort != nil || x.on != "" || x.off) && thisTurn:
+		if v.Model != followed.Model {
+			return &WorkUpdate{Kind: WorkSet, Tier: work.ID, Mode: followed.Mode, Model: v.Model}
+		}
+		return nil
 	case x.effort != nil || x.on != "" || x.off:
 		return &WorkUpdate{Kind: WorkSet, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
 	}
@@ -581,6 +601,9 @@ type Reading struct {
 	relation map[string]float64 // the prompt's relation to the work in progress (and to paused work)
 	explicit map[string]float64 // explicit requests: yes-probability by question ID
 	asked    map[string]float64 // asked tiers: Jev's yes-probability
+	// guessedMore: more thinking counted from the words alone (metadata
+	// privacy), without Jev's confirmation.
+	guessedMore bool
 }
 
 // separate is the probability that the prompt is separate from the work in
@@ -658,11 +681,14 @@ func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Par
 
 // mode decides the mode layered on the tier (one at most is used) and the
 // tier it runs at. A mode asked for or refused in words wins; a follow-up
-// keeps the work in progress's mode on (keep); otherwise, with jevDecides,
-// Jev's answer decides, and a mode in force only turns off on a clear no.
-// A mode that ends up on raises the tier to its min_tier and to the tier
-// its effort runs as, so the tier stored says what runs.
-func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolicy, x asks, keep string, jevDecides bool) (string, *catalog.Tier) {
+// keeps the work in progress's mode on (keep); otherwise Jev's answer
+// decides, except for a mode that would raise an effort asked in words,
+// and a mode in force only turns off on a clear no, unless the prompt
+// starts separate new work (fresh: a small new task in an ultracode
+// session gets no mode). A mode that ends up on raises the tier to its
+// min_tier and to the tier its effort runs as, so the tier stored says
+// what runs.
+func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolicy, x asks, keep string, fresh bool) (string, *catalog.Tier) {
 	c := e.Catalog
 	allowed := func(id string) bool {
 		for _, m := range c.ModesFor(req.Scope) {
@@ -679,16 +705,14 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolic
 		return x.on, e.modeTier(req.Scope, t, x.on)
 	case keep != "" && allowed(keep):
 		return keep, e.modeTier(req.Scope, t, keep)
-	case !jevDecides:
-		return "", t
 	}
 	inForce := e.inForceMode(req)
 	for _, m := range c.ModesFor(req.Scope) {
 		p, ok := rd.modeP[m.ID]
-		if !ok || !rp.ModeAllowed(m.ID) {
+		if !ok || !rp.ModeAllowed(m.ID) || (x.effort != nil && !c.KeepsMode(m.ID, x.effort.Effort)) {
 			continue
 		}
-		if inForce == m.ID {
+		if inForce == m.ID && !fresh {
 			if p > 1-m.Threshold { // turning off needs a clear no
 				return m.ID, e.modeTier(req.Scope, t, m.ID)
 			}

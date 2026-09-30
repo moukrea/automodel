@@ -72,10 +72,10 @@ func TestQuestions(t *testing.T) {
 		}
 	}
 	for id, want := range map[string]string{
-		"explicit_effort_xhigh":            "to use the xhigh reasoning effort for this work?",
+		"explicit_effort_xhigh":            "ask the assistant itself to use the xhigh reasoning effort for its own work on this prompt?",
 		"explicit_effort_more":             "to use more thinking than so far",
-		"explicit_mode_off":                "to stop using the ultracode mode (several agents working in parallel",
-		"explicit_model_claude-sonnet-5-5": "ask the assistant to run on the Sonnet 5.5 model itself for this work",
+		"explicit_mode_off":                "not to use the ultracode mode (several agents working in parallel",
+		"explicit_model_claude-sonnet-5-5": "ask the assistant to run on the Sonnet 5.5 model itself for its own work",
 	} {
 		q := qs[id]
 		crit, _ := q.Criteria.(map[string]string)

@@ -104,8 +104,9 @@ func PrintRelation(w io.Writer, s RelationStats) {
 }
 
 // ExplicitStats scores the requests confirmed in words (a yes at
-// meta.explicit_threshold, meta.explicit_model_threshold for a model)
-// against the labels: a case without an explicit label asks for nothing,
+// meta.explicit_threshold, meta.explicit_model_threshold for a model,
+// router.LowerEffortP for an effort below the work in progress) against
+// the labels: a case without an explicit label asks for nothing,
 // so a request confirmed there is a false one; a labeled request the regex
 // missed, or Jev didn't confirm, is missed. ByKind splits them by kind.
 type ExplicitStats struct {
@@ -157,10 +158,16 @@ func ExplicitMetrics(cat *catalog.Catalog, rs []Result) ExplicitStats {
 		for _, id := range r.Explicit.requests(cat, r.sessionModel(cat)) {
 			want[id] = true
 		}
+		work := cat.Tier(catalog.ScopeMain, r.WorkTier)
 		for id, p := range r.ExplicitP {
 			c := kind(id)
+			k, v, _ := strings.Cut(id, "_")
+			x := router.Candidate{Explicit: jev.Explicit{Kind: k, Value: v}}
+			if t := router.EffortTier(cat, r.sessionModel(cat), v); k == jev.ExplicitEffort && t != nil {
+				x.Tier = t.ID
+			}
 			switch {
-			case p < c.Threshold:
+			case p < router.RequestThreshold(cat, x, work):
 			case want[id]:
 				e.TP++
 				c.TP++
