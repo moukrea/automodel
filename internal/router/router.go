@@ -455,12 +455,26 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		if reason != "" {
 			why = append(why, reason)
 		}
+		// A model asked in words for the work as it stands (not with more
+		// work to it) keeps the work's level: the words say which model, and
+		// Jev's level rates them ("no need for Opus for CSS", "it's the
+		// tricky part").
+		if x.model != "" && hold != nil && top != catalog.RelationExtend {
+			tier = hold
+		}
 		if t := c.Tier(req.Scope, req.MinTier); t != nil {
 			floor = higher(floor, t)
 			why = append(why, "ultrathink")
 		}
 		if x.more {
-			floor = higher(floor, e.above(req.Scope, higher(work, cur)))
+			// More thinking is one rank above what runs; on a follow-up that
+			// is the decision too, since Jev's level rates the words asking
+			// for it ("think harder" reads as hard work).
+			more := e.above(req.Scope, higher(work, cur))
+			if hold != nil {
+				tier = more
+			}
+			floor = higher(floor, more)
 			why = append(why, "explicit: more thinking")
 		}
 		if floor != nil && tier.Rank < floor.Rank {
@@ -564,9 +578,9 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 // back to the paused work restores it; an effort, a mode or a model asked
 // in words sets it; a follow-up that needs more raises it; a wrap-up marks
 // it done, and more work on it (reopen) opens it again; a side question,
-// an aside or a plain follow-up leave it as it is. An effort or a mode
-// asked for a wrap-up, a side question or an aside is for that answer only
-// (top: the prompt's likeliest relation).
+// an aside or a plain follow-up leave it as it is. An effort (more thinking
+// too) or a mode asked for a wrap-up, a side question or an aside is for
+// that answer only (top: the prompt's likeliest relation).
 func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x asks, top string, fresh, back, reopen bool) *WorkUpdate {
 	switch {
 	case fresh:
@@ -585,7 +599,7 @@ func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x ask
 	case hold == nil && top == catalog.RelationWrapUp && !followed.Done:
 		same.Kind, same.Done = WorkDone, true
 		return same
-	case thisTurn(top) && (x.effort != nil || x.on != "" || x.off), hold == nil:
+	case thisTurn(top) && (x.effort != nil || x.more || x.on != "" || x.off), hold == nil:
 		if same.Kind == "" {
 			return nil
 		}

@@ -389,7 +389,9 @@ func TestDoneWorkHolds(t *testing.T) {
 // The held-out cases of the first fresh run (2026-09-30) the router got
 // wrong, on the answers Jev gave then: a wrap-up or an aside in an
 // ultracode session ran with the mode (Jev's mode answer reads the whole
-// work); "looks good." on a done work was carried at its xhigh.
+// work); "looks good." on a done work was carried at its xhigh; "think
+// harder" on low work went to xhigh, Jev rating the words; a model asked
+// for the rest of medium work went to high.
 func TestHeldOutRound3(t *testing.T) {
 	c := testCatalog(t)
 	env := &router.Env{Cfg: config.Default(), Catalog: c}
@@ -444,5 +446,19 @@ func TestHeldOutRound3(t *testing.T) {
 	}
 	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: done}, answers{level: "low", rel: map[string]float64{"continue": 0.9, "aside": 0.1}}); r.Decision != "xhigh" {
 		t.Errorf("go-ahead reopening a done work: %s (%s)", r.Decision, r.Hold)
+	}
+
+	cache := map[string]any{"phase": "warm", "task": "explain the touch chain again but think harder: why would a price change not refresh the card?",
+		"current": map[string]any{"tier": "low"}, "work_in_progress": map[string]any{"goal": "How does cache invalidation work here? Just explain.", "level": "low"}}
+	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: cache}, answers{spread: map[string]float64{"low": 0.55, "xhigh": 0.45},
+		rel: map[string]float64{"extend": 0.8, "new_task": 0.2}, asks: map[string]float64{"effort_more": 0.97}}); r.Decision != "medium" {
+		t.Errorf("think harder on low work: %s (%s)", r.Decision, r.Hold)
+	}
+
+	landing := map[string]any{"phase": "warm", "task": "fais le reste avec Sonnet, pas besoin d'Opus pour du CSS",
+		"current": map[string]any{"tier": "medium"}, "work_in_progress": map[string]any{"goal": "Fais une landing page (Astro + Tailwind)", "level": "medium"}}
+	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: landing}, answers{spread: map[string]float64{"medium": 0.54, "high": 0.46},
+		rel: map[string]float64{"continue": 0.92, "extend": 0.08}, asks: map[string]float64{"model_claude-sonnet-5-5": 0.88}}); r.Decision != "medium" || r.Model != "claude-sonnet-5-5" {
+		t.Errorf("model for the rest of the work: %s on %q (%s)", r.Decision, r.Model, r.Hold)
 	}
 }

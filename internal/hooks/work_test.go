@@ -105,6 +105,15 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "low", conf: 0.9, rel: "side_question", x: x("effort_xhigh", 0.04)}, want: "high", wantWork: "high"},
 		{name: "passe en low lowers the work too", tier: "xhigh", prompt: "passe en low pour la suite, c'est mécanique", ask: "explicit_effort_low",
 			jev: fa{tier: "medium", conf: 0.9, rel: "extend", x: x("effort_low", 0.93)}, want: "low", wantWork: "low"},
+		// More thinking is one rank above what runs: on a follow-up Jev's
+		// level rates the words asking for it (held-out run 1: low work,
+		// "think harder" read as xhigh), on new work it is a floor.
+		{name: "think harder on low work: medium", tier: "low", prompt: "explain the touch chain again but think harder: why would a price change not refresh the card?", ask: "explicit_effort_more",
+			jev: fa{tier: "xhigh", conf: 0.4, rel: "extend", x: x("effort_more", 0.97)}, want: "medium", wantWork: "medium"},
+		{name: "think harder on xhigh work: max", tier: "xhigh", prompt: "think harder, the last two fixes for this hang didn't hold", ask: "explicit_effort_more",
+			jev: fa{tier: "xhigh", conf: 0.9, rel: "continue", x: x("effort_more", 0.95)}, want: "max", wantWork: "max"},
+		{name: "think harder on a new task: a floor above the session", tier: "medium", prompt: "next: design how to shard the job queue, and think hard about it", ask: "explicit_effort_more",
+			jev: fa{tier: "xhigh", conf: 0.9, rel: "new_task", x: x("effort_more", 0.95)}, want: "xhigh", wantWork: "xhigh", newGoal: true},
 		{name: "ultrathink: xhigh at least, without a question", tier: "low", prompt: "ultrathink: are there other places we read the lease without the lock?",
 			jev: fa{tier: "low", conf: 0.9, rel: "side_question"}, want: "xhigh", wantWork: "xhigh"},
 		{name: "ultracode asked on a continuing turn turns it on", tier: "high", prompt: "continue, en ultracode cette fois", ask: "explicit_mode_ultracode",
@@ -335,6 +344,21 @@ func TestWorkModel(t *testing.T) {
 	s = decide("m1", "now rename the config loader to settings", fa{tier: "medium", conf: 0.9, rel: "new_task"})
 	if s.Main.Model != "claude-opus-5-5" || s.Main.Tier != "medium" || s.Work.Model != "" || s.Work.Tier != "medium" {
 		t.Fatalf("new task: %+v, work %+v", s.Main, s.Work)
+	}
+
+	// Asked for the rest of the work as it stands, the model keeps the
+	// work's level (held-out run 1: "fais le reste avec Sonnet, pas besoin
+	// d'Opus pour du CSS" on medium work went to high); with more work to
+	// it (extend), routing may raise it.
+	workSession(t, env, "m5", "medium", "", "medium")
+	s = decide("m5", "fais le reste avec Sonnet, pas besoin d'Opus pour du CSS", fa{tier: "high", conf: 0.3, rel: "continue", x: model(0.88)})
+	if s.Main.Model != sonnet || s.Main.Effort != "medium" || s.Work.Model != sonnet || s.Work.Tier != "medium" {
+		t.Errorf("model for the rest: %+v, work %+v", s.Main, s.Work)
+	}
+	workSession(t, env, "m6", "medium", "", "medium")
+	s = decide("m6", "switch to Sonnet and also backfill the old rows, that's the part that can corrupt data", fa{tier: "xhigh", conf: 0.9, rel: "extend", x: model(0.9)})
+	if s.Main.Model != sonnet || s.Main.Effort != "xhigh" || s.Work.Tier != "xhigh" {
+		t.Errorf("model with more work: %+v, work %+v", s.Main, s.Work)
 	}
 
 	// Asking for the tiers' model goes back to routing on the tiers.
