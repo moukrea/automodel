@@ -37,7 +37,7 @@ var (
 	moreRE       = words(`think\s+(?:really\s+|very\s+|much\s+|a\s+lot\s+)?hard(?:er)?|think\s+(?:more|deeply|carefully|longer|it\s+through)|take\s+your\s+time|be\s+thorough|dig\s+deeper|r[ée]fl[ée]chi(?:s|ssez|sse|r)\s+(?:plus|bien|davantage|longtemps|en\s+profondeur|[àa]\s+fond)|prends?\s+(?:ton|le|bien\s+le)\s+temps|creuse\s+(?:plus|bien|davantage)|[àa]\s+fond|en\s+profondeur|met(?:s|z|tre)?\s+le\s+paquet`)
 	modeWords    = `ultracode|workflows?|en\s+parall[èe]le|agents\s+en\s+parall[èe]le|plusieurs\s+agents|parallel\s+agents|multi-?agents?`
 	modeRE       = words(modeWords)
-	modeOffRE    = words(`(?:pas\s+besoin\s+d[e']\s*|pas\s+d[e']\s*|plus\s+d[e']\s*|sans\s+|no\s+|without\s+|don'?t\s+use\s+|do\s+not\s+use\s+|stop(?:\s+using)?\s+|arr[êe]te(?:\s+(?:le|les|l'|d'utiliser))?\s*|d[ée]sactive(?:\s+(?:le|l'))?\s*|turn\s+off\s+|disable\s+)(?:the\s+|le\s+|l'|les\s+)?(?:mode\s+)?(?:` + modeWords + `)|(?:ultracode|workflows?)\s+off`)
+	modeOffRE    = words(`(?:(?:pas|plus)\s+besoin\s+d[e']\s*|pas\s+d[e']\s*|plus\s+d[e']\s*|sans\s+|no\s+|without\s+|don'?t\s+use\s+|do\s+not\s+use\s+|stop(?:\s+using)?\s+|arr[êe]te(?:\s+(?:le|les|l'|d'utiliser))?\s*|d[ée]sactive(?:\s+(?:le|l'))?\s*|turn\s+off\s+|disable\s+)(?:the\s+|le\s+|l'|les\s+)?(?:mode\s+)?(?:` + modeWords + `)|(?:ultracode|workflows?)\s+off`)
 	modelRE      = words(`(opus|sonnet|haiku|fable)`)
 	ultrathinkRE = words(`ultrathink`)
 )

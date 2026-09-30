@@ -39,10 +39,12 @@ func TestExplicitCandidates(t *testing.T) {
 		{"lance plusieurs agents en parallèle sur l'audit", opus, "mode_ultracode"},
 		{"pas besoin d'ultracode ici", opus, "mode_ultracode mode_off"},
 		{"fais-le sans workflow", opus, "mode_ultracode mode_off"},
+		{"plus besoin d'ultracode, corrige juste ça", opus, "mode_ultracode mode_off"},
 		{"utilise sonnet pour résumer ça", opus, "model_claude-sonnet-5-5"},
 		{"avec Opus, en xhigh et en ultracode", opus, "effort_xhigh mode_ultracode"},
 		{"a quick one for haiku", opus, ""}, // Haiku can't run a main session
 		{"en high", "claude-haiku-4-5", "effort_high"},
+		{"passe en xhigh et reviens sur opus", "claude-sonnet-5-5", "effort_xhigh model_claude-opus-5-5"}, // on a work's own model
 		{"ultrathink: other places we read the lease without the lock?", opus, ""},
 		{"rename the config loader", opus, ""},
 	} {
