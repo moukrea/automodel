@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/moukrea/automodel/internal/catalog"
+	"github.com/moukrea/automodel/internal/config"
+	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/state"
 )
 
@@ -224,6 +226,24 @@ func TestCaseSetup(t *testing.T) {
 	}
 	if wip, pw := st["work_in_progress"].(map[string]any), st["paused_work"].(map[string]any); len(wip) != 2 || len(pw) != 2 || pw["level"] != "xhigh" {
 		t.Errorf("sent %v, %v", wip, pw)
+	}
+}
+
+// Saved answers are judged again under another policy without asking Jev:
+// the same answers, another threshold, another decision.
+func TestRejudge(t *testing.T) {
+	c := testCatalog(t)
+	env := &router.Env{Cfg: config.Default(), Catalog: c}
+	rel := map[string]float64{"new_task": 0.55, "extend": 0.45}
+	rs := []Result{{Case: Case{ID: "a", Scope: catalog.ScopeMain, Warm: true, Want: "xhigh", Relation: "extend",
+		State: map[string]any{"phase": "warm", "task": "and the retry storm too", "current": map[string]any{"tier": "xhigh"}}},
+		Probs: map[string]float64{"low": 0.1, "medium": 0.8, "high": 0.1}, Conf: 0.7, RelP: rel}}
+	if r := Rejudge(env, rs)[0]; r.Decision != "xhigh" || r.WorkTier != "xhigh" || !strings.HasPrefix(r.Hold, "follow-up of the work in progress") {
+		t.Errorf("held: %+v", r)
+	}
+	c.Meta.RelationSeparateP = 0.5
+	if r := Rejudge(env, rs)[0]; r.Decision != "medium" || r.Hold != "" {
+		t.Errorf("separate at 0.5: %+v", r)
 	}
 }
 
