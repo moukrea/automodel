@@ -32,18 +32,36 @@ func words(alt string) *regexp.Regexp {
 // that makes them an effort, in English and French.
 const levelWords = `low|medium|high|[ée]lev[ée]e?|haut|faible|bas|moyen`
 
+// levelEnd is what may follow an effort a lowering names: the end of the
+// clause, or a word that doesn't make the effort's name an adjective
+// ("down to low for the rest", not "down to low latency").
+const levelEnd = `(?:\s*(?:$|[.,;:!?()\[\]…—–"'«»/])|\s+-\s|\s+(?:for|pour|now|right|then|here|please|pls|again|instead|effort|reasoning|thinking|mode|and|et|but|mais|so|donc|since|as|because|car|parce|puisque|vu|on|sur|from|until|till|jusqu['’]|dès|des|à|a|maintenant|alors|ici|stp|svp|plutôt|plutot|merci|thanks|if|si|unless|sauf|while|pendant|it['’]s|this|that|ça|ca|c['’]est|ce|cette|the|le|la|les|what|with|avec|too|aussi|d['’]effort|when|quand|once|to|or|ou|is|est)(?:[^\pL\pN_]|$))`
+
+// capWords say an effort is enough: "is enough", "suffit", "c'est assez".
+const capWords = `(?:(?:is|should\s+be|will\s+be)\s+enough|(?:ça\s+|ca\s+)?suffi(?:t|ra)|c['’]est\s+assez)`
+
 var (
 	// xhigh and max anywhere; low, medium and high only next to a word
 	// that makes them an effort ("en high", "switch to low", "high effort",
-	// "set the effort to medium", "mets l'effort à low", "effort élevé").
+	// "set the effort to medium", "mets l'effort à low", "effort élevé");
+	// haut and bas only after effort or niveau ("en bas de la page").
 	effortAnyRE  = words(`(x-?high|max)`)
-	effortNearRE = words(`(?:(?:effort|niveau|reasoning|raisonnement)(?:\s*[:=]\s*|\s+(?:\S+\s+){0,2})|(?:en|in|at|mode|passe[rz]?(?:\s+(?:en|à|a))?|switch(?:\s+to)?|set(?:\s+it)?\s+to|use|utilise[rz]?)\s+(?:the\s+|le\s+|l'|du\s+)?)(` + levelWords + `)`)
+	effortNearRE = words(`(?:effort|niveau|reasoning|raisonnement)(?:\s*[:=]\s*|\s+(?:\S+\s+){0,2})(` + levelWords + `)|(?:en|in|at|mode|passe[rz]?(?:\s+(?:en|à|a))?|switch(?:\s+to)?|set(?:\s+it)?\s+to|use|utilise[rz]?)\s+(?:the\s+|le\s+|l'|du\s+)?(low|medium|high|[ée]lev[ée]e?|faible|moyen)`)
 	effortPostRE = words(`(low|medium|high)[\s-]+(?:reasoning[\s-]+)?(?:effort|reasoning)`)
-	// effortDownRE finds the words of a lowering or a cap: "drop to
-	// medium", "go down to low", "redescends à medium", "medium is
-	// enough", "low suffit", "high, ça suffit", "moyen c'est assez" ("pour
-	// la suite en low" is effortNearRE's "en").
-	effortDownRE = words(`(?:drop|down|descends?|redescends?|descendre|redescendre)\s+(?:to|à|a|en)\s+(?:the\s+|le\s+)?(` + levelWords + `)|(` + levelWords + `)\s*,?\s+(?:(?:is|should\s+be|will\s+be)\s+enough|(?:ça\s+|ca\s+)?suffi(?:t|ra)|c['’]est\s+assez)`)
+	// effortDownRE finds the words of a lowering: "drop to medium", "go
+	// down to low for the rest", "redescends à medium", "descends en low
+	// pour la suite" ("pour la suite en low" is effortNearRE's "en"). The
+	// effort has to end the clause, or come before a word that can't be
+	// the noun it would qualify: "comes down to high availability", "boils
+	// down to low latency", "narrow it down to low-level functions",
+	// "scroll down to the high score", "descend à faible charge" make no
+	// request (the pre-filter only picks the questions: Jev confirms).
+	effortDownRE = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])(?:(?:drop|down)\s+to|(?:re)?descend(?:s|re|ez)?\s+(?:à|a|en))\s+(?:the\s+|le\s+)?(` + levelWords + `)` + levelEnd)
+	// effortCapRE finds a cap: "medium is enough", "low suffit", "high,
+	// ça suffit", "moyen c'est assez". A French adjective only at the start
+	// of a clause: "un seuil bas suffit" is a threshold.
+	effortCapRE   = words(`(low|medium|high)\s*,?\s+` + capWords)
+	effortCapFrRE = regexp.MustCompile(`(?i)(?:^|[.,;:!?(]\s*)(faible|bas|moyen|haut|[ée]lev[ée]e?)\s*,?\s+` + capWords + `(?:[^\pL\pN_]|$)`)
 	// moreRE finds the words that may ask for more thinking, for Jev to
 	// confirm; narrowMoreRE the forms that ask for it whatever the context,
 	// which count without Jev in metadata mode (it never sees the words).
@@ -52,7 +70,7 @@ var (
 	// A mode word asks both questions, the mode and its refusal ("no need
 	// for ultracode here", "n'utilise pas ultracode", "skip ultracode"): a
 	// regex can't tell them apart.
-	modeRE       = words(`ultracode|workflows?|en\s+parall[èe]le|plusieurs\s+agents|parallel\s+agents|multi-?agents?|in\s+parallel|(?:several|multiple|many)\s+(?:sub-?)?agents|sub-?agents\s+in\s+parallel`)
+	modeRE       = words(`ultracode|workflows?|en\s+parall[èe]le|plusieurs\s+(?:sous-?)?agents|parallel\s+(?:sub-?)?agents|multi-?agents?|in\s+parallel|(?:several|multiple|many)\s+(?:sub-?)?agents|(?:across|over|between|among|sur|entre)\s+(?:\S+\s+){0,2}(?:sub-?|sous-?)?agents|fan(?:ning)?\s+(?:\S+\s+){0,2}out\s+(?:\S+\s+){0,3}(?:sub-?)?agents`)
 	modelRE      = words(`(opus|sonnet|haiku|fable)`)
 	ultrathinkRE = words(`ultrathink`)
 )
@@ -84,7 +102,7 @@ func ExplicitCandidates(c *catalog.Catalog, prompt, model string) []Candidate {
 	for _, m := range effortAnyRE.FindAllStringSubmatch(prompt, -1) {
 		efforts[strings.ReplaceAll(strings.ToLower(m[1]), "-", "")] = true
 	}
-	for _, re := range []*regexp.Regexp{effortNearRE, effortPostRE, effortDownRE} {
+	for _, re := range []*regexp.Regexp{effortNearRE, effortPostRE, effortDownRE, effortCapRE, effortCapFrRE} {
 		for _, m := range re.FindAllStringSubmatch(prompt, -1) {
 			for _, w := range m[1:] { // the group of the form that matched
 				if w != "" {
