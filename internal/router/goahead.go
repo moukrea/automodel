@@ -51,8 +51,9 @@ func GoAhead(prompt string) bool {
 // the branch? It would also push the typo fix.", "dis-moi si j'applique le
 // fix"): a go-ahead then answers it, and may start work bigger than the
 // work so far, so it is routed rather than carried (after a detour, with
-// the relation question). Its end is the last paragraph, and the one
-// before when the last is a short remark; code is left out.
+// the relation question). Its end is the last paragraph, with the ones
+// before it while only remarks or lists follow (closing); code is left
+// out.
 func Proposes(lastAssistant string) bool {
 	tail := closing(lastAssistant)
 	return questionRE.MatchString(tail) || offerRE.MatchString(tail)
@@ -60,17 +61,20 @@ func Proposes(lastAssistant string) bool {
 
 var (
 	// A question mark that ends a sentence (not "?page=2" nor "a ? b : c"
-	// in code, which closing drops).
-	questionRE = regexp.MustCompile(`\?+(?:[\s*_)"'»”’]|$)`)
+	// in code, which closing drops), also before a no-break space.
+	questionRE = regexp.MustCompile(`\?+(?:[\s\x{00A0}\x{202F}*_)"'»”’]|$)`)
 	// An offer in words, without a question mark.
-	offerRE      = regexp.MustCompile(`(?i)(?:^|[^\pL])(?:let\s+me\s+know\s+(?:if|whether|when)|if\s+you(?:['’]d|\s+would)?\s+(?:like|want|prefer)|say\s+the\s+word|just\s+say\s+so|(?:dis|dites)-moi\s+(?:si|quand)|si\s+(?:tu|vous)\s+(?:veux|voulez|le\s+souhaites|le\s+souhaitez|préfères|préférez))(?:[^\pL]|$)`)
+	offerRE      = regexp.MustCompile(`(?i)(?:^|[^\pL])(?:let\s+me\s+know\s+(?:if|whether|when)|if\s+you(?:['’]d|\s+would)?\s+(?:like|want|prefer)|if\s+needed|say\s+the\s+word|just\s+say\s+so|(?:dis|dites)-moi\s+(?:si|quand)|(?:tu\s+me\s+dis|vous\s+me\s+dites)\s+(?:si|quand)|si\s+besoin|si\s+(?:tu|vous)\s+(?:le\s+)?(?:veux|voulez|souhaites|souhaitez|préfères|préférez))(?:[^\pL]|$)`)
+	listRE       = regexp.MustCompile(`^\s*(?:[-*+•|]|\d+[.)])`)
 	codeBlockRE  = regexp.MustCompile("(?s)```.*?(?:```|$)")
 	inlineCodeRE = regexp.MustCompile("`[^`\n]*`")
 	paragraphRE  = regexp.MustCompile(`\n\s*\n`)
 )
 
 // closing is the end of an assistant message: its last paragraph, with
-// the one before when the last is short (a remark after the question).
+// the ones before it while what follows them is only a remark or lists (at
+// most two paragraphs: "Want me to fix them too?", then the files it
+// names, then "They are all the same one-line change.").
 func closing(text string) string {
 	text = inlineCodeRE.ReplaceAllString(codeBlockRE.ReplaceAllString(text, " "), " ")
 	var ps []string
@@ -79,12 +83,27 @@ func closing(text string) string {
 			ps = append(ps, p)
 		}
 	}
-	switch n := len(ps); {
-	case n == 0:
-		return ""
-	case n > 1 && len([]rune(ps[n-1])) <= 200:
-		return ps[n-2] + "\n\n" + ps[n-1]
-	default:
-		return ps[n-1]
+	i, remark := len(ps)-1, 0
+	for ; i > 0 && len(ps)-i <= 2; i-- {
+		if !list(ps[i]) {
+			if remark += len([]rune(ps[i])); remark > remarkRunes {
+				break
+			}
+		}
 	}
+	return strings.Join(ps[max(i, 0):], "\n\n")
+}
+
+// remarkRunes is the longest remark that may follow a question: two or
+// three sentences ("Should I push? CI takes about ten minutes, and ...").
+const remarkRunes = 300
+
+// list reports a paragraph that is only a list or a table.
+func list(p string) bool {
+	for _, l := range strings.Split(p, "\n") {
+		if !listRE.MatchString(l) {
+			return false
+		}
+	}
+	return true
 }
