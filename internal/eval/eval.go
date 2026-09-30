@@ -444,9 +444,11 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 
 // fastPath says how the hooks take a case's prompt without the relation
 // question: a bare go-ahead carried on without asking Jev ("go-ahead"), or
-// a go-ahead to a proposal routed without it (router.FollowUpProposal).
-// Neither once a wrap-up closed the work, unless the paused work needs
-// more (router.Acknowledges): then it is routed as any prompt.
+// a go-ahead to a proposal routed without it (router.FollowUpProposal),
+// unless a detour paused work (the proposal may be to go back to it: the
+// relation question is asked). Neither once a wrap-up closed the work,
+// unless the paused work needs more (router.Acknowledges): then it is
+// routed as any prompt.
 func fastPath(env *router.Env, c Case, req router.Request) string {
 	task, _ := c.State["task"].(string)
 	last, _ := c.State["last_assistant"].(string)
@@ -454,6 +456,9 @@ func fastPath(env *router.Env, c Case, req router.Request) string {
 	case !env.Cfg.Features.FastPath || req.Work == nil || env.Acknowledges(req.Work, req.Paused) || req.Peer || !router.GoAhead(task):
 		return ""
 	case c.State["phase"] != "post_compact" && router.Proposes(last):
+		if req.Paused != nil {
+			return ""
+		}
 		return router.FollowUpProposal
 	}
 	return "go-ahead"

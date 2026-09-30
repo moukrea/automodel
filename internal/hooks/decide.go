@@ -162,10 +162,13 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// on a warm turn, after a compaction or after a pause; after a detour,
 	// the paused work when it needs more. A go-ahead to a proposal ("Want
 	// me to fix it?") starts that work, which may be bigger: it is routed,
-	// not below the work in progress (nor the paused work). Once a wrap-up
-	// closed the work, "ok" or "looks good" mostly acknowledges it: routed,
-	// Jev's relation says whether it reopens the work; unless that work was
-	// a detour and the paused work needs more, which the go-ahead goes
+	// not below the work in progress. After a detour (paused work), what
+	// was proposed may be to go back to the paused work, a wrap-up step of
+	// the detour ("Want me to push it?") or more of it: routed with the
+	// relation question, which offers resume. Once a wrap-up closed the
+	// work, "ok" or "looks good" mostly acknowledges it: routed, Jev's
+	// relation says whether it reopens the work; unless that work was a
+	// detour and the paused work needs more, which a bare go-ahead goes
 	// back to.
 	followUp := ""
 	wip := sess.WorkInProgress()
@@ -179,7 +182,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		}
 		switch {
 		case trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant):
-			followUp = router.FollowUpProposal
+			if sess.PausedWork(now) == nil {
+				followUp = router.FollowUpProposal
+			} // else: routed as any prompt, the relation question offering resume
 		default:
 			// Typed mid-turn, it lowers nothing.
 			if dec, work = env.Carry(router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger, RepoDir: in.Cwd,

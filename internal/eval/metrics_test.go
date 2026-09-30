@@ -342,7 +342,9 @@ func TestEvalGoAhead(t *testing.T) {
 		t.Errorf("go-ahead after a detour: %+v", r)
 	}
 	// The same once the detour was wrapped up: carried back to the paused
-	// work, and a go-ahead to a proposal to go back is routed, floored there.
+	// work. A go-ahead to a proposal after a detour is routed with the
+	// relation question: back to the paused work, a wrap-up step of the
+	// detour at its own level, or more of the detour.
 	done := func(last string) Case {
 		return Case{Scope: catalog.ScopeMain, Warm: true, State: st("last_assistant", last,
 			"current", map[string]any{"tier": "low"}, "work_in_progress", map[string]any{"goal": "fix the README typo", "level": "low", "done": true},
@@ -351,8 +353,27 @@ func TestEvalGoAhead(t *testing.T) {
 	if r = judge(done("Committed as docs: fix the typo.")); r.FastPath != "go-ahead" || r.Decision != "xhigh" || r.Mode != "ultracode" {
 		t.Errorf("go-ahead after a wrapped-up detour: %+v", r)
 	}
-	if r = judge(done("Committed. Shall I get back to the handlers?")); r.FastPath != router.FollowUpProposal || r.Decision != "xhigh" || r.Mode != "ultracode" {
-		t.Errorf("go-ahead to going back after a wrapped-up detour: %+v", r)
+	proposal := func(last, rel string) Result {
+		t.Helper()
+		cs := done(last)
+		_, req := setup(c, cs)
+		if fp := fastPath(env, cs, req); fp != "" {
+			t.Errorf("%q: fast path %q", last, fp)
+		}
+		ans, ids := levelAnswer(c, "low")
+		ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: map[string]float64{rel: 0.9, "continue": 0.05, "new_task": 0.05}, Confidence: 0.9}
+		r := Result{Case: cs}
+		r.judge(env, req, ans, ids)
+		return r
+	}
+	if r = proposal("Committed. Shall I get back to the handlers?", "resume"); r.Decision != "xhigh" || r.Mode != "ultracode" {
+		t.Errorf("yes to going back after a wrapped-up detour: %+v", r)
+	}
+	if r = proposal("Committed. Want me to push it?", "wrap_up"); r.Decision != "low" || r.Mode != "" {
+		t.Errorf("yes to pushing the wrapped-up detour: %+v", r)
+	}
+	if r = proposal("Committed. Want me to fix the two other typos too?", "extend"); r.Decision != "low" || r.Mode != "" {
+		t.Errorf("yes to more of the wrapped-up detour: %+v", r)
 	}
 	// Typed mid-turn during the detour: it goes on with the turn.
 	r = judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st("mid_turn", true,

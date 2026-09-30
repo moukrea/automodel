@@ -732,15 +732,21 @@ func TestDetourThenGoAhead(t *testing.T) {
 		t.Errorf("ledger of the go-ahead = %+v", d)
 	}
 
-	// A go-ahead to a proposal after a detour: routed, floored at the
-	// paused work, which it resumes.
+	// A go-ahead to a proposal after a detour: routed with the relation
+	// question, which offers resume (the proposal may be to go back, or
+	// more of the detour).
 	tp := filepath.Join(cwd, "t.jsonl")
 	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Typo fixed. Want me to get back to the pool race?"}]}}`+"\n"), 0o600)
 	detour("dp")
 	n := fj.calls()
-	s := decide("dp", "yes", tp, fa{tier: "low", conf: 0.9, ultra: 0.05})
-	if fj.calls() != n+1 || fj.last().Questions[jev.QRelation].Type != "" || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal {
-		t.Fatalf("go-ahead to a proposal after a detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	s := decide("dp", "yes", tp, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.9})
+	if opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any); fj.calls() != n+1 || opts[catalog.RelationResume] == nil || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal {
+		t.Fatalf("go-ahead to a proposal to go back after a detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Typo fixed. I spotted the same typo in CONTRIBUTING.md: want me to fix it too?"}]}}`+"\n"), 0o600)
+	detour("dp2")
+	if s = decide("dp2", "yes", tp, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "extend", relP: 0.9}); s.Main.Tier != "low" || s.Main.Mode != "" || s.Paused == nil || s.Paused.Goal != workGoal || s.Work.Goal == workGoal {
+		t.Errorf("go-ahead to more of the detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
 	}
 
 	// Once the detour was wrapped up ("commit that"), a go-ahead still goes
@@ -764,15 +770,35 @@ func TestDetourThenGoAhead(t *testing.T) {
 			t.Errorf("%q after a wrapped-up detour (%d calls): %+v, work %+v, paused %+v", p, fj.calls()-n, s.Main, s.Work, s.Paused)
 		}
 	}
+	// Once the detour was wrapped up, a go-ahead to a proposal is routed
+	// by its relation (N2: any proposal used to resume the paused work,
+	// "yes" to "Want me to push it?" included, and a later "commit it"
+	// closed the migration): back to the paused work, a wrap-up step of
+	// the detour at its own level (the paused work waits), or more of the
+	// detour, which reopens it.
 	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Committed as docs: fix the README title typo. Shall I get back to the pool race?"}]}}`+"\n"), 0o600)
 	for i, p := range []string{"yes", "oui"} {
 		sid := fmt.Sprint("wp", i)
 		wrapped(sid)
 		n := fj.calls()
-		s := decide(sid, p, tp, fa{tier: "low", conf: 0.9, ultra: 0.05})
-		if fj.calls() != n+1 || fj.last().Questions[jev.QRelation].Type != "" || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal || s.Work.Done {
+		s := decide(sid, p, tp, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.9})
+		if opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any); fj.calls() != n+1 || opts[catalog.RelationResume] == nil || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal || s.Work.Done {
 			t.Errorf("%q to going back after a wrapped-up detour: %+v, work %+v, paused %+v", p, s.Main, s.Work, s.Paused)
 		}
+	}
+	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Committed as docs: fix the README title typo. Want me to push it?"}]}}`+"\n"), 0o600)
+	wrapped("wpush")
+	if s = decide("wpush", "yes", tp, fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.9}); s.Main.Tier != "low" || s.Main.Mode != "" || s.Paused == nil || s.Paused.Goal != workGoal || !s.Work.Done || s.Work.Goal == workGoal {
+		t.Errorf("yes to pushing the detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	// ...and the next "commit it" doesn't close the paused migration.
+	if s = decide("wpush", "commit it", "", fa{tier: "low", conf: 0.95, rel: "wrap_up"}); s.Paused == nil || s.Paused.Goal != workGoal || s.Paused.Done {
+		t.Errorf("commit after pushing the detour: work %+v, paused %+v", s.Work, s.Paused)
+	}
+	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Committed. I also found two more typos in docs/: want me to fix them too?"}]}}`+"\n"), 0o600)
+	wrapped("wmore")
+	if s = decide("wmore", "oui", tp, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "continue", relP: 0.9}); s.Main.Tier != "low" || s.Main.Mode != "" || s.Paused == nil || s.Work.Done || s.Work.Goal == workGoal {
+		t.Errorf("yes to more of the detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
 	}
 
 	// Typed while the detour still runs, a go-ahead goes on with the turn:
