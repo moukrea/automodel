@@ -115,8 +115,19 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "extend"}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode"},
 		{name: "a small new task in an ultracode session gets no mode", tier: "xhigh", mode: "ultracode", prompt: "now write the migration notes for ops",
 			jev: fa{tier: "low", conf: 0.9, ultra: 0.4, rel: "new_task"}, want: "low", wantWork: "low", newGoal: true},
-		{name: "a mode kept on a wrap-up raises the tier to what it runs", tier: "xhigh", mode: "ultracode", prompt: "write the commit message",
-			jev: fa{tier: "low", conf: 0.9, ultra: 0.4, rel: "wrap_up"}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode"},
+		// A wrap-up, a side question or an aside runs without the work's
+		// mode, whatever Jev's mode answer (it reads the whole work: 0.92 to
+		// 0.95 on these, held-out run 1); the work keeps it.
+		{name: "a wrap-up in an ultracode session runs alone", tier: "xhigh", mode: "ultracode", prompt: "commit wave 2, one commit per service",
+			jev: fa{tier: "low", conf: 0.9, ultra: 0.93, rel: "wrap_up", relP: 0.78}, want: "low", wantWork: "xhigh", wantWorkMode: "ultracode"},
+		{name: "an aside in an ultracode session runs alone", tier: "xhigh", mode: "ultracode", prompt: "small unrelated question: what's the Python equivalent of flatMap?",
+			jev: fa{tier: "low", conf: 0.9, ultra: 0.95, rel: "aside"}, want: "low", wantWork: "xhigh", wantWorkMode: "ultracode"},
+		{name: "a side question holds the tier, not the mode", tier: "xhigh", mode: "ultracode", prompt: "how many handlers are left?",
+			jev: fa{tier: "low", conf: 0.9, ultra: 0.92, rel: "side_question"}, want: "xhigh", wantWork: "xhigh", wantWorkMode: "ultracode"},
+		{name: "a side question typed mid-turn keeps the turn's mode", tier: "xhigh", mode: "ultracode", transcript: busy, prompt: "how many handlers are left?",
+			jev: fa{tier: "low", conf: 0.9, ultra: 0.1, rel: "side_question"}, want: "xhigh", wantMode: "ultracode", wantWork: "xhigh", wantWorkMode: "ultracode"},
+		{name: "ultracode asked for a side question: that answer only", tier: "high", prompt: "answer this one with ultracode: which handlers skip the auth check?", ask: "explicit_mode_ultracode",
+			jev: fa{tier: "medium", conf: 0.9, ultra: 0.2, rel: "side_question", x: x("mode_ultracode", 0.95)}, want: "xhigh", wantMode: "ultracode", wantWork: "high"},
 		{name: "a prompt typed mid-turn never lowers", tier: "high", transcript: busy, prompt: "ah et les prix en euros TTC",
 			jev: fa{tier: "low", conf: 0.98, rel: "new_task"}, want: "high", wantWork: "high"},
 		{name: "typed before the turn's first entries: mid-turn", tier: "high", transcript: started, prompt: "au fait, garde les messages d'erreur en anglais",
@@ -164,9 +175,11 @@ func TestWorkInProgress(t *testing.T) {
 	}
 }
 
-// A go-ahead carries the work in progress on: after a wrap-up lowered the
-// tier, "vas-y" brings the work's tier and mode back without asking Jev; a
-// go-ahead to a proposal is routed, not below the work.
+// A go-ahead carries the work in progress on: after a side question
+// lowered the tier, "vas-y" brings the work's tier and mode back without
+// asking Jev; after a wrap-up it is routed (Jev's relation says whether it
+// reopens the work); a go-ahead to a proposal is routed, not below the
+// work.
 func TestGoAheadRestoresWork(t *testing.T) {
 	fj := &fakeJev{}
 	env := setup(t, fj)
@@ -187,31 +200,40 @@ func TestGoAheadRestoresWork(t *testing.T) {
 	if d := all[len(all)-1]; d.Hold != "go-ahead: back to the work in progress" || d.From != "low" || d.Chosen != "xhigh" || d.Kept {
 		t.Errorf("ledger = %+v", d)
 	}
-	// The same flow, live: a wrap-up lowers, the go-ahead restores the mode too.
+	// The same flow, live: a side question in an ultracode session runs
+	// without the mode, the go-ahead restores it.
 	workSession(t, env, "g2", "xhigh", "ultracode", "xhigh")
-	fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.1, rel: "wrap_up"}}
-	decide("g2", "write the commit message", "")
-	if s, _ = env.State.Load("g2"); s.Main.Tier != "low" || s.Main.Mode != "" || s.Work.Mode != "ultracode" {
-		t.Fatalf("wrap-up: %+v, work %+v", s.Main, s.Work)
+	fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.9, rel: "side_question"}}
+	decide("g2", "how many handlers are left?", "")
+	if s, _ = env.State.Load("g2"); s.Main.Tier != "xhigh" || s.Main.Mode != "" || s.UltracodeOn || s.Work.Mode != "ultracode" {
+		t.Fatalf("side question: %+v, work %+v", s.Main, s.Work)
 	}
 	n = fj.calls()
 	decide("g2", "ok, go", "")
 	if s, _ = env.State.Load("g2"); fj.calls() != n || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || !s.UltracodeOn {
-		t.Fatalf("go-ahead after a wrap-up: %+v", s.Main)
+		t.Fatalf("go-ahead after a side question: %+v", s.Main)
 	}
 	// Unchanged: only logged as kept.
 	decide("g2", "continue", "")
 	if s, _ = env.State.Load("g2"); fj.calls() != n || s.Main.Tier != "xhigh" {
 		t.Fatalf("plain go-ahead: %+v", s.Main)
 	}
-	// A session from before the work in progress was recorded: its
-	// decision in force is the work, kept once a wrap-up lowers the tier.
+	// After a wrap-up, a go-ahead or an acknowledgement is routed: "looks
+	// good." on a done xhigh fix (held-out run 1 carried it at xhigh) gets
+	// its own level; "vas-y" Jev reads as more work reopens it.
 	warmSession(t, env, "g4", "xhigh", 300_000)
 	fj.answers = []fa{{tier: "low", conf: 0.95, rel: "wrap_up"}}
 	decide("g4", "résume ce que tu as fait", "")
+	n = fj.calls()
+	fj.answers = []fa{{tier: "low", conf: 0.95, rel: "aside", relP: 0.9}}
+	decide("g4", "looks good.", "")
+	if s, _ = env.State.Load("g4"); fj.calls() != n+1 || fj.last().Questions[jev.QRelation].Type != "choice" || s.Main.Tier != "low" || s.Work == nil || !s.Work.Done || s.Work.Tier != "xhigh" {
+		t.Fatalf("acknowledgement of a done work (%d calls): %+v, work %+v", fj.calls()-n, s.Main, s.Work)
+	}
+	fj.answers = []fa{{tier: "low", conf: 0.95, rel: "continue"}}
 	decide("g4", "vas-y", "")
-	if s, _ = env.State.Load("g4"); s.Main.Tier != "xhigh" || s.Work == nil || s.Work.Tier != "xhigh" {
-		t.Fatalf("older session: %+v, work %+v", s.Main, s.Work)
+	if s, _ = env.State.Load("g4"); s.Main.Tier != "xhigh" || s.Work.Done || s.Work.Tier != "xhigh" {
+		t.Fatalf("go-ahead reopening a done work: %+v, work %+v", s.Main, s.Work)
 	}
 	n = fj.calls()
 	// A go-ahead to a proposal is routed, without the relation question,
@@ -496,9 +518,8 @@ func TestRequestsInWords(t *testing.T) {
 	if s := decide("wu", "write the commit message, in low effort", fa{tier: "low", conf: 0.95, rel: "wrap_up", x: low(0.95)}); s.Main.Tier != "low" || s.Work.Tier != "xhigh" {
 		t.Fatalf("effort for a wrap-up: %s, work %s", s.Main.Tier, s.Work.Tier)
 	}
-	n := fj.calls()
-	if s := decide("wu", "ok, continue", fa{}); fj.calls() != n || s.Main.Tier != "xhigh" {
-		t.Errorf("go-ahead after the wrap-up: %s (%d calls)", s.Main.Tier, fj.calls()-n)
+	if s := decide("wu", "ok, continue", fa{tier: "low", conf: 0.95, rel: "continue"}); s.Main.Tier != "xhigh" || s.Work.Done {
+		t.Errorf("go-ahead after the wrap-up: %s, work %+v", s.Main.Tier, s.Work)
 	}
 	workSession(t, env, "sq", "xhigh", "ultracode", "xhigh")
 	s := decide("sq", "why did the retry fail there? answer at low effort", fa{tier: "low", conf: 0.95, ultra: 0.1, rel: "side_question", x: low(0.95)})
@@ -702,8 +723,17 @@ func TestAsideAndDoneWork(t *testing.T) {
 		t.Errorf("ledger of a reopening = %+v", d)
 	}
 	decide("w1", "write the commit message", fa{tier: "low", conf: 0.95, rel: "wrap_up"})
-	if s = decide("w1", "ok, go", fa{}); s.Main.Tier != "xhigh" || s.Work.Done {
+	if s = decide("w1", "ok, go", fa{tier: "low", conf: 0.95, rel: "continue"}); s.Main.Tier != "xhigh" || s.Work.Done {
 		t.Errorf("go-ahead after a wrap-up: %+v, work %+v", s.Main, s.Work)
+	}
+	all, _ = ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; d.Work != router.WorkReopened || d.Skipped {
+		t.Errorf("ledger of a go-ahead reopening a done work = %+v", d)
+	}
+	// An acknowledgement is not more work: its own level, the work done.
+	decide("w1", "write the commit message", fa{tier: "low", conf: 0.95, rel: "wrap_up"})
+	if s = decide("w1", "ok", fa{tier: "low", conf: 0.95, rel: "aside"}); s.Main.Tier != "low" || !s.Work.Done {
+		t.Errorf("ok after a wrap-up: %+v, work %+v", s.Main, s.Work)
 	}
 }
 

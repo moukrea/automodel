@@ -424,11 +424,15 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	top, _ := rd.relationTop()
 	// Separate new work (or a first prompt): its own level, mode and model.
 	fresh := work == nil || (hold == nil && top == catalog.RelationNewTask)
+	// A wrap-up, a side question or an aside is answered alone: without the
+	// work's mode, which stays the work's (Jev's mode answer reads the whole
+	// work: "open the draft PR" after a sweep still reads as the sweep).
+	alone := thisTurn(top) && !req.MidTurn && !req.Peer
 	// The mode a follow-up keeps on: the work's, and on a mid-turn prompt
 	// or a peer message the one the turn runs with (only that one once the
 	// work is done: the turn runs something else).
 	keepMode := ""
-	if hold != nil {
+	if hold != nil && !alone {
 		interjected := req.MidTurn || req.Peer
 		if !followed.Done || back || !interjected {
 			keepMode = followed.Mode
@@ -464,7 +468,10 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		}
 	}
 	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context) // within the repo's bounds
-	mode, tier := e.mode(req, rd, tier, rp, x, keepMode, fresh)
+	mode := ""
+	if !alone || x.on != "" {
+		mode, tier = e.mode(req, rd, tier, rp, x, keepMode, fresh)
+	}
 	if mode != "" {
 		// The tier the mode needs may be past the repo's bounds.
 		if t := policy.Constrain(c, req.Scope, tier, rp, req.Context); t.ID != tier.ID {
@@ -574,11 +581,11 @@ func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x ask
 	if v.Model != followed.Model {
 		same.Kind, same.Model = WorkSet, v.Model
 	}
-	switch thisTurn := top == catalog.RelationWrapUp || top == catalog.RelationSideQuestion || top == catalog.RelationAside; {
+	switch {
 	case hold == nil && top == catalog.RelationWrapUp && !followed.Done:
 		same.Kind, same.Done = WorkDone, true
 		return same
-	case thisTurn && (x.effort != nil || x.on != "" || x.off), hold == nil:
+	case thisTurn(top) && (x.effort != nil || x.on != "" || x.off), hold == nil:
 		if same.Kind == "" {
 			return nil
 		}
@@ -600,6 +607,12 @@ func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x ask
 		return nil
 	}
 	return u
+}
+
+// thisTurn reports a relation answered for that turn only: a wrap-up, a
+// side question or an aside.
+func thisTurn(relation string) bool {
+	return relation == catalog.RelationWrapUp || relation == catalog.RelationSideQuestion || relation == catalog.RelationAside
 }
 
 // inForceMode is the mode of the decision in force: the current one on a
@@ -832,12 +845,12 @@ func (e *Env) PinnedModel(sessionID, repoRoot, model, effort, mode, source strin
 // Carried is what a bare go-ahead does, without asking Jev (which rates
 // the bare word as trivial): it carries on the work in progress, or the
 // paused work when that needs more (the detour is over), at the tier, mode
-// and model it was decided at (a wrap-up since may have lowered the
-// decision in force), within the repo's bounds (rp) and the budget cap,
-// and reopens a work a wrap-up closed. On a warm cache it doesn't move to
-// another model: that rebuilds the whole context (the asked Haiku tier,
-// see asked). It returns the decision (a copy of req.Current when nothing
-// changes) and what becomes of the work.
+// and model it was decided at (a side question since may have lowered the
+// decision in force), within the repo's bounds (rp) and the budget cap. A
+// work a wrap-up closed is not carried (the hooks route the prompt). On a
+// warm cache it doesn't move to another model: that rebuilds the whole
+// context (the asked Haiku tier, see asked). It returns the decision (a
+// copy of req.Current when nothing changes) and what becomes of the work.
 func (e *Env) Carried(req Request, rp policy.RepoPolicy) (*state.Decision, *WorkUpdate) {
 	cur := req.Current
 	d := *cur
@@ -846,11 +859,8 @@ func (e *Env) Carried(req Request, rp policy.RepoPolicy) (*state.Decision, *Work
 		return &d, nil
 	}
 	var u *WorkUpdate
-	switch {
-	case resumed:
+	if resumed {
 		u = &WorkUpdate{Kind: WorkResumed, Tier: w.Tier, Mode: w.Mode, Model: w.Model}
-	case w.Done:
-		u = &WorkUpdate{Kind: WorkReopened, Tier: w.Tier, Mode: w.Mode, Model: w.Model}
 	}
 	if t := e.Catalog.Tier(catalog.ScopeMain, w.Tier); t != nil {
 		t, mode := e.bounded(req, t, w.Mode, rp)

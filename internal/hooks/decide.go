@@ -151,14 +151,17 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	}
 	// A bare go-ahead continues the work in progress, without asking Jev,
 	// which rates the bare word as trivial: the tier and mode the work was
-	// decided at come back (a wrap-up since may have lowered them), on a
-	// warm turn, after a compaction or after a pause; after a detour, the
-	// paused work when it needs more. A go-ahead to a proposal ("Want me
-	// to fix it?") starts that work, which may be bigger: it is routed, not
-	// below the work in progress (nor the paused work).
+	// decided at come back (a side question since may have lowered them),
+	// on a warm turn, after a compaction or after a pause; after a detour,
+	// the paused work when it needs more. A go-ahead to a proposal ("Want
+	// me to fix it?") starts that work, which may be bigger: it is routed,
+	// not below the work in progress (nor the paused work). Once a wrap-up
+	// closed the work, "ok" or "looks good" mostly acknowledges it: routed,
+	// Jev's relation says whether it reopens the work.
 	followUp := ""
-	back, _ := env.GoAheadWork(sess.Main, sess.WorkInProgress(), sess.PausedWork(now), false)
-	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) &&
+	wip := sess.WorkInProgress()
+	back, _ := env.GoAheadWork(sess.Main, wip, sess.PausedWork(now), false)
+	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) && (wip == nil || !wip.Done) &&
 		(trigger == "warm" || trigger == "compact" || trigger == "cold") &&
 		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) &&
 		(back == nil || !env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, back.Tier))) {
@@ -171,7 +174,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		default:
 			// Typed mid-turn, it lowers nothing.
 			if dec, work = env.Carry(router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger, RepoDir: in.Cwd,
-				Context: sess.ContextTokens, Current: sess.Main, Work: sess.WorkInProgress(), Paused: sess.PausedWork(now),
+				Context: sess.ContextTokens, Current: sess.Main, Work: wip, Paused: sess.PausedWork(now),
 				MidTurn: tr.MidTurnFor(in.Prompt)}); dec == nil {
 				trigger = "" // kept
 			} else {

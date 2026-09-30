@@ -385,3 +385,64 @@ func TestDoneWorkHolds(t *testing.T) {
 		t.Error("open work")
 	}
 }
+
+// The held-out cases of the first fresh run (2026-09-30) the router got
+// wrong, on the answers Jev gave then: a wrap-up or an aside in an
+// ultracode session ran with the mode (Jev's mode answer reads the whole
+// work); "looks good." on a done work was carried at its xhigh.
+func TestHeldOutRound3(t *testing.T) {
+	c := testCatalog(t)
+	env := &router.Env{Cfg: config.Default(), Catalog: c}
+	type answers struct {
+		level  string
+		rel    map[string]float64
+		ultra  float64
+		asks   map[string]float64
+		spread map[string]float64 // the level's probabilities, when not sure
+	}
+	judge := func(cs Case, a answers) Result {
+		t.Helper()
+		_, req := setup(c, cs)
+		ans, ids := levelAnswer(c, a.level)
+		if a.spread != nil {
+			for i, id := range ids {
+				ans[jev.QLevel].Probabilities[fmt.Sprint(i)] = a.spread[id]
+			}
+		}
+		if a.rel != nil {
+			ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: a.rel, Confidence: 0.9}
+		}
+		ans[jev.QModePfx+"ultracode"] = jev.Answer{Type: "noul", Noul: &a.ultra}
+		r := Result{Case: cs, ExplicitP: a.asks}
+		for k, p := range a.asks {
+			ans[jev.QExplicitPfx+k] = jev.Answer{Type: "noul", Noul: &p}
+		}
+		r.judge(env, req, ans, ids)
+		return r
+	}
+	sweep := map[string]any{"goal": "Migrate all 40 services from requests to httpx, as a workflow across the services", "level": "xhigh", "mode": "ultracode"}
+	st := func(task string) map[string]any {
+		return map[string]any{"phase": "warm", "task": task, "current": map[string]any{"tier": "xhigh", "mode": "ultracode"}, "work_in_progress": sweep}
+	}
+	for _, x := range []struct {
+		task, rel, want string
+	}{
+		{"small unrelated question: what's the Python equivalent of flatMap?", "aside", "low"},
+		{"commit wave 2, one commit per service, conventional commit messages", "wrap_up", "low"},
+		{"how many services are left?", "side_question", "xhigh"},
+	} {
+		r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: st(x.task)}, answers{level: "low", rel: map[string]float64{x.rel: 0.9, "extend": 0.1}, ultra: 0.93})
+		if r.Decision != x.want || r.Mode != "" {
+			t.Errorf("%s in an ultracode session: %s +%q (%s)", x.rel, r.Decision, r.Mode, r.Hold)
+		}
+	}
+
+	done := map[string]any{"phase": "warm", "task": "looks good.", "last_assistant": "CI is green on the PR.",
+		"current": map[string]any{"tier": "low"}, "work_in_progress": map[string]any{"goal": "Fix the SSRF in the image proxy", "level": "xhigh", "done": true}}
+	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: done}, answers{level: "low", rel: map[string]float64{"aside": 0.9, "continue": 0.1}}); r.Decision != "low" || r.Kept == "go-ahead" {
+		t.Errorf("acknowledgement of a done work: %+v", r)
+	}
+	if r := judge(Case{Scope: catalog.ScopeMain, Warm: true, State: done}, answers{level: "low", rel: map[string]float64{"continue": 0.9, "aside": 0.1}}); r.Decision != "xhigh" {
+		t.Errorf("go-ahead reopening a done work: %s (%s)", r.Decision, r.Hold)
+	}
+}
