@@ -140,6 +140,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	var signals *state.RepoSignals
 	var work *router.WorkUpdate // what the decision makes of the work in progress
 	var asked *router.Asked     // an effort or a model the prompt asked for in words
+	turnOnly := false           // answered alone, without the mode the work keeps
 	spawnTrigger := ""          // Jev timed out: decide again in the background
 	// A pin keeps the ultracode mode unless its effort is below the mode's.
 	if pin != "" && !synthetic {
@@ -230,7 +231,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if out.TimedOut && !late {
 			spawnTrigger = trigger
 		}
-		work, asked = out.Work, out.Asked
+		work, asked, turnOnly = out.Work, out.Asked, out.TurnOnly
 		if !out.Changed || (late && out.TimedOut) {
 			dec = nil
 		}
@@ -244,6 +245,11 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, nil
 	}
 	_, err = env.State.Update(in.SessionID, func(s *state.Session) bool {
+		// What a late decision could not say: said by this prompt's hook.
+		var pending *router.Asked
+		if !late && s.PendingAsked != nil {
+			pending, s.PendingAsked = &router.Asked{Effort: s.PendingAsked.Effort, Model: s.PendingAsked.Model}, nil
+		}
 		if late {
 			if s.LastPromptAt.UnixNano() != lateAt {
 				dec = nil // a newer prompt came in while Jev answered
@@ -298,17 +304,26 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				s.ResetEffortEpoch() // top-level effort change: the policy accepted the rebuild
 			}
 		}
+		if late && s.Main != nil && dec != nil && asked != nil && !asked.Turn {
+			s.PendingAsked = &state.Asked{Effort: asked.Effort, Model: asked.Model}
+		}
 		if s.Main == nil || late {
-			return true // a late decision can't inject the ultracode notice: the next prompt does
+			return true // a late decision can't inject a notice: the next prompt does
 		}
 		switch want := s.Main.Workflows; {
 		case want && (!s.UltracodeOn || s.UltracodeEpoch != s.Main.Epoch):
 			notice, s.UltracodeOn, s.UltracodeEpoch = UltracodeOn, true, s.Main.Epoch
 		case !want && s.UltracodeOn:
+			// Off for this turn only when the router answers this prompt
+			// alone and the work keeps the mode; a pin or the budget cap
+			// keeps it off.
 			notice, s.UltracodeOn = UltracodeOff, false
-			if w := s.Work; w != nil && env.Catalog.Modes[w.Mode] != nil && env.Catalog.Modes[w.Mode].Workflows {
+			if turnOnly {
 				notice = UltracodeOffTurn
 			}
+		}
+		if asked == nil {
+			asked = pending
 		}
 		if n := askedNotice(env.Catalog, asked, s.Main); n != "" {
 			notice = strings.TrimSpace(notice + "\n\n" + n)

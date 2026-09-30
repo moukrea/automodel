@@ -84,6 +84,12 @@ func (s *Session) WorkInProgress() *Work {
 	return &Work{Tier: s.Main.Tier, Mode: s.Main.Mode}
 }
 
+// Asked is an effort or a model (catalog key) the user asked for in words.
+type Asked struct {
+	Effort string `json:"effort,omitempty"`
+	Model  string `json:"model,omitempty"`
+}
+
 // PendingAgent is registered by the agent hook and bound by the proxy to the
 // X-Claude-Code-Agent-Id of the subagent whose first message contains Prompt.
 type PendingAgent struct {
@@ -127,6 +133,12 @@ type Session struct {
 	// UltracodeEpoch the decision epoch that notice belonged to.
 	UltracodeOn    bool `json:"ultracode_on,omitempty"`
 	UltracodeEpoch int  `json:"ultracode_epoch,omitempty"`
+
+	// PendingAsked is the effort or the model the user asked for in words
+	// that a late decision applied (Jev answered after the hook's timeout,
+	// when the hook could no longer tell Claude): the next prompt's hook
+	// says so if the decision in force still runs it.
+	PendingAsked *Asked `json:"pending_asked,omitempty"`
 
 	Repo *RepoSignals `json:"repo,omitempty"`
 

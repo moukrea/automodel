@@ -142,6 +142,10 @@ type Outcome struct {
 	// Asked is the effort or the model the prompt asked for in words that
 	// the decision takes (nil: none).
 	Asked *Asked
+	// TurnOnly: the prompt is answered alone (a wrap-up, a side question,
+	// an aside) without the workflow mode the work in progress keeps for
+	// its next follow-up; not when the budget cap would keep the mode off.
+	TurnOnly bool
 }
 
 // Asked is an effort or a model (catalog key) a prompt asked for in words
@@ -336,16 +340,17 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	if cur := req.Current; v.Keep == "" && v.Model != "" && req.Warm && cur != nil && dec.Model == cur.Model && dec.Effort == cur.Effort && dec.Mode == cur.Mode {
 		v.Keep = "same model and effort"
 	}
+	turnOnly := v.TurnOnly != "" && !e.capsMode(req, v.TurnOnly)
 	if v.Keep != "" {
 		d, out := keep(v.Keep)
-		out.Work, out.Asked = v.Work, v.Asked
+		out.Work, out.Asked, out.TurnOnly = v.Work, v.Asked, turnOnly
 		return d, out
 	}
 	rec.Chosen, rec.Model, rec.Effort, rec.Mode = dec.Tier, dec.APIID, dec.Effort, dec.Mode
 	if err := e.Ledger.Append(rec); err != nil {
 		log.Printf("ledger: %v", err)
 	}
-	return dec, Outcome{Changed: true, Work: v.Work, Asked: v.Asked}
+	return dec, Outcome{Changed: true, Work: v.Work, Asked: v.Asked, TurnOnly: turnOnly}
 }
 
 // noteJev records on the session why Jev couldn't answer (shown by the
@@ -404,6 +409,9 @@ type Verdict struct {
 	Model string
 	// Asked is the effort or the model the prompt asked for in words.
 	Asked *Asked
+	// TurnOnly is the workflow mode the work in progress keeps while this
+	// prompt, answered alone, runs without it ("": none).
+	TurnOnly string
 }
 
 // Judge applies the policy to a reading, in this order: an effort the
@@ -540,6 +548,11 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		}
 	}
 	v.Tier, v.Mode, v.Hold = tier, mode, strings.Join(why, "; ")
+	if alone && mode == "" && followed != nil {
+		if m := c.Modes[followed.Mode]; m != nil && m.Workflows {
+			v.TurnOnly = followed.Mode
+		}
+	}
 	// The model the work runs on: the gate below only keeps this turn on
 	// the model in force.
 	workModel := v.Model

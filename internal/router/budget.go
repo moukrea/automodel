@@ -62,6 +62,17 @@ func (e *Env) capBudget(req Request, v Verdict, cur *catalog.Tier) (Verdict, str
 	return v, from
 }
 
+// capsMode reports a budget cap below the tier a mode needs: the mode
+// stays off until the cap lifts.
+func (e *Env) capsMode(req Request, mode string) bool {
+	lim, m := e.BudgetCap(req.SessionID, req.Scope), e.Catalog.Modes[mode]
+	if lim == nil || m == nil {
+		return false
+	}
+	min := e.Catalog.Tier(req.Scope, m.MinTier)
+	return min != nil && lim.Rank < min.Rank
+}
+
 // capTier is capBudget for a tier alone (fallbacks).
 func (e *Env) capTier(req Request, t *catalog.Tier) *catalog.Tier {
 	if lim := e.BudgetCap(req.SessionID, req.Scope); lim != nil && t.Rank > lim.Rank {

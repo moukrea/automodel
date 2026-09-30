@@ -964,6 +964,63 @@ func TestLateDecisionKeepsItsWork(t *testing.T) {
 	}
 }
 
+// An effort asked in words that a late decision applies (Jev answered
+// after the hook's timeout) is told by the next prompt's hook, if the
+// decision in force still runs it: the hook that timed out could not.
+func TestLateAskedNotice(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	var got struct {
+		trigger string
+		at      time.Time
+	}
+	spawnLate = func(in *Input, trigger string, at time.Time) { got.trigger, got.at = trigger, at }
+	t.Cleanup(func() { spawnLate = func(*Input, string, time.Time) {} })
+	env.Cfg.Features.WarmTimeout.Duration = 50 * time.Millisecond
+	cwd := t.TempDir()
+	notice := func(out *Output) string {
+		if out == nil {
+			return ""
+		}
+		return out.HookSpecificOutput.AdditionalContext
+	}
+	late := func(sid, prompt string, a fa) {
+		t.Helper()
+		workSession(t, env, sid, "xhigh", "", "xhigh")
+		in := map[string]any{"session_id": sid, "prompt": prompt, "cwd": cwd}
+		fj.delay, fj.answers = 300*time.Millisecond, []fa{a}
+		if n := notice(run(t, env, "decide", in)); n != "" {
+			t.Errorf("timed out: notice %q", n)
+		}
+		fj.delay = 0
+		t.Setenv(LateEnv, fmt.Sprintf("%s:%d", got.trigger, got.at.UnixNano()))
+		run(t, env, "decide", in)
+		t.Setenv(LateEnv, "")
+	}
+	want := "automodel: this work now runs at low effort, as the user asked (the automatic router already applied it)."
+	late("la1", "passe en low pour la suite, c'est mécanique", fa{tier: "medium", conf: 0.9, rel: "extend", x: map[string]float64{"effort_low": 0.95}})
+	if s, _ := env.State.Load("la1"); s.Main.Effort != "low" || s.PendingAsked == nil || s.PendingAsked.Effort != "low" {
+		t.Fatalf("late decision: %+v, pending %+v", s.Main, s.PendingAsked)
+	}
+	fj.answers = []fa{{tier: "low", conf: 0.9, rel: "extend"}}
+	if n := notice(run(t, env, "decide", map[string]any{"session_id": "la1", "prompt": "and the same in the second loader", "cwd": cwd})); n != want {
+		t.Errorf("next prompt: notice %q, want %q", n, want)
+	}
+	if s, _ := env.State.Load("la1"); s.PendingAsked != nil {
+		t.Errorf("pending notice kept: %+v", s.PendingAsked)
+	}
+	// Said once: the prompt after that gets nothing.
+	if n := notice(run(t, env, "decide", map[string]any{"session_id": "la1", "prompt": "and the third one", "cwd": cwd})); n != "" {
+		t.Errorf("second prompt: notice %q", n)
+	}
+	// Not when the next prompt runs something else (a new task at xhigh).
+	late("la2", "passe en low pour la suite, c'est mécanique", fa{tier: "medium", conf: 0.9, rel: "extend", x: map[string]float64{"effort_low": 0.95}})
+	fj.answers = []fa{{tier: "xhigh", conf: 0.9, rel: "new_task"}}
+	if n := notice(run(t, env, "decide", map[string]any{"session_id": "la2", "prompt": "next: find why refunds are counted twice under load", "cwd": cwd})); n != "" {
+		t.Errorf("new task after the late decision: notice %q", n)
+	}
+}
+
 // Decisions made without Jev (a fallback, a go-ahead) stay within the
 // budget cap and the repo's disable_modes, and drop a mode the capped tier
 // can't run.
@@ -1140,4 +1197,22 @@ func TestNoticesSayWhatRuns(t *testing.T) {
 	if got := decide("u1", "no need for ultracode here, just fix the error message", fa{tier: "low", conf: 0.9, ultra: 0.1, rel: "extend", x: x("mode_off", 0.95)}); got != UltracodeOff {
 		t.Errorf("ultracode refused: %q", got)
 	}
+
+	// The turn-only notice only when the router answers the prompt alone:
+	// a pin lasts ([effort:low] keeps the mode off until it is released),
+	// and so does the budget cap, whatever the prompt.
+	workSession(t, env, "u2", "xhigh", "ultracode", "xhigh")
+	if got := decide("u2", "[effort:low] rename the helper to parseLease", fa{}); got != UltracodeOff {
+		t.Errorf("[effort:low] in an ultracode session: %q", got)
+	}
+	if s, _ := env.State.Load("u2"); s.Pin != "low" || s.Main.Mode != "" || s.UltracodeOn {
+		t.Errorf("pinned: %+v, pin %q", s.Main, s.Pin)
+	}
+	env.Cfg.Budget.USDPerSession, env.Cfg.Budget.MaxTierWhenOver = 1, "medium"
+	workSession(t, env, "u3", "xhigh", "ultracode", "xhigh")
+	env.State.Update("u3", func(s *state.Session) bool { s.TotalUSD = 5; return true })
+	if got := decide("u3", "small unrelated question: what's the Python equivalent of flatMap?", fa{tier: "low", conf: 0.9, ultra: 0.95, rel: "aside"}); got != UltracodeOff {
+		t.Errorf("aside over the budget cap: %q", got)
+	}
+	env.Cfg.Budget.USDPerSession = 0
 }
