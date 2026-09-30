@@ -678,6 +678,15 @@ func TestAsideAndDoneWork(t *testing.T) {
 	if s = decide("w1", "FYI the release is tomorrow", fa{tier: "low", conf: 0.95, rel: "inform"}); s.Main.Tier != "low" || !s.Work.Done {
 		t.Errorf("fact after a wrap-up: %+v, work %+v", s.Main, s.Work)
 	}
+	// A remark typed while Claude commits a done ultracode work: held at
+	// the turn's level, without bringing the work's mode back.
+	workSession(t, env, "w3", "xhigh", "ultracode", "xhigh")
+	decide("w3", "write the commit message", fa{tier: "low", conf: 0.95, ultra: 0.1, rel: "wrap_up"})
+	fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.1, rel: "extend"}}
+	run(t, env, "decide", map[string]any{"session_id": "w3", "prompt": "oh and mention the ticket number", "cwd": cwd, "transcript_path": busyTranscript(t)})
+	if s, _ = env.State.Load("w3"); s.Main.Tier != "low" || s.Main.Mode != "" || !s.Work.Done {
+		t.Errorf("mid-turn remark on a done work: %+v, work %+v", s.Main, s.Work)
+	}
 	// A new task below a done work pauses nothing.
 	workSession(t, env, "w2", "xhigh", "", "xhigh")
 	decide("w2", "write the commit message", fa{tier: "low", conf: 0.95, rel: "wrap_up"})

@@ -425,11 +425,15 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	// Separate new work (or a first prompt): its own level, mode and model.
 	fresh := work == nil || (hold == nil && top == catalog.RelationNewTask)
 	// The mode a follow-up keeps on: the work's, and on a mid-turn prompt
-	// or a peer message the one the turn runs with.
+	// or a peer message the one the turn runs with (only that one once the
+	// work is done: the turn runs something else).
 	keepMode := ""
 	if hold != nil {
-		keepMode = followed.Mode
-		if keepMode == "" && (req.MidTurn || req.Peer) && req.Warm && req.Current != nil {
+		interjected := req.MidTurn || req.Peer
+		if !followed.Done || back || !interjected {
+			keepMode = followed.Mode
+		}
+		if keepMode == "" && interjected && req.Warm && req.Current != nil {
 			keepMode = req.Current.Mode
 		}
 	}
@@ -523,7 +527,10 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		}
 	}
 	if req.Scope == catalog.ScopeMain {
-		reopen := followed != nil && followed.Done && hold != nil && (top == catalog.RelationContinue || top == catalog.RelationExtend || req.FollowUp == FollowUpProposal)
+		// More work on a done work reopens it (not a prompt typed while
+		// Claude runs something else, nor another session's message).
+		reopen := followed != nil && followed.Done && hold != nil && !req.MidTurn && !req.Peer &&
+			(top == catalog.RelationContinue || top == catalog.RelationExtend || req.FollowUp == FollowUpProposal)
 		v.Work = workUpdate(v, followed, work, hold, x, top, fresh, back, reopen)
 		// New work below the paused work: a longer detour, the paused work
 		// waits on (unless the work it replaces needs more and waits instead).
