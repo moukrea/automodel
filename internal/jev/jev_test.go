@@ -73,6 +73,13 @@ func TestQuestions(t *testing.T) {
 	if o := qs2[QRelation].Criteria.(map[string]*catalog.Option)[catalog.RelationResume]; o == nil || !strings.Contains(o.What, "`paused_work.goal`") {
 		t.Errorf("resume option = %+v", o)
 	}
+	// "yes" to the offer to get back to the paused work is a resume, not a
+	// continue of the detour; "yes" to a wrap-up step of the detour is a
+	// wrap-up (round 4: both went through without Jev and resumed).
+	o2 := qs2[QRelation].Criteria.(map[string]*catalog.Option)
+	if !strings.Contains(o2["resume"].What, "offer to get back") || !strings.Contains(o2["continue"].NotFor, "`paused_work.goal`") || !strings.Contains(o2["wrap_up"].What, "paused") {
+		t.Errorf("detour proposals: resume %+v, continue %+v, wrap_up %+v", o2["resume"], o2["continue"], o2["wrap_up"])
+	}
 	for _, path := range []string{"`task`", "`work_in_progress.goal`", "`recent_prompts`", "`last_assistant`"} {
 		if !strings.Contains(rel.Instructions, path) {
 			t.Errorf("relation question doesn't name %s", path)
@@ -80,7 +87,7 @@ func TestQuestions(t *testing.T) {
 	}
 	for id, want := range map[string]string{
 		"explicit_effort_xhigh":            "ask the assistant itself to use the xhigh reasoning effort for its own work (this prompt, or the rest of the work in progress)?",
-		"explicit_effort_more":             "to use more thinking than so far",
+		"explicit_effort_more":             "to use more thinking than usual or than so far",
 		"explicit_mode_off":                "not to use the ultracode mode (several agents working in parallel",
 		"explicit_model_claude-sonnet-5-5": "ask the assistant to run on the Sonnet 5.5 model itself for its own work (this prompt",
 	} {
