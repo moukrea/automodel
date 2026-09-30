@@ -216,3 +216,39 @@ func TestPreviewKeepsAgentline(t *testing.T) {
 		}
 	}
 }
+
+// A script that runs the automodel status line itself (jaunt's rich view
+// wraps it this way) is left in place: never replaced, never chained.
+func TestWrapperStatusline(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{Exe: "/u/bin/automodel", ConfigPath: "/u/.config/automodel/config.toml", SettingsPath: filepath.Join(dir, "settings.json")}
+	wrap := filepath.Join(dir, "jaunt statusline")
+	os.WriteFile(wrap, []byte("#!/bin/sh\noriginal='"+o.statuslineCmd()+"'\nexec /bin/sh -c \"$original\"\n"), 0o755)
+	other := filepath.Join(dir, "mine.sh")
+	os.WriteFile(other, []byte("#!/bin/sh\necho hello\n"), 0o755)
+	for cmd, want := range map[string]bool{
+		`"` + wrap + `"`:           true,
+		"sh '" + wrap + "' --x":    true,
+		other:                      false,
+		"bash " + other:            false,
+		"/no/such/file statusline": false,
+	} {
+		if got := delegating(cmd); got != want {
+			t.Errorf("delegating(%q) = %v, want %v", cmd, got, want)
+		}
+	}
+	s := withStatusline(t, "x")
+	s.Obj("statusLine").Set("command", `"`+wrap+`"`)
+	if c := chainable(s); c != "" {
+		t.Errorf("a wrapper was chained: %q", c)
+	}
+	merge(s, o, config.Default())
+	if c := statuslineCommand(s); c != `"`+wrap+`"` {
+		t.Errorf("merge replaced the wrapper with %q", c)
+	}
+	b, _ := json.Marshal(s)
+	os.WriteFile(o.SettingsPath, b, 0o600)
+	if r, err := InspectSettings(o, config.Default()); err != nil || r.StatuslineBy != "wrapper" || !r.Statusline {
+		t.Errorf("inspect: %+v %v", r, err)
+	}
+}
