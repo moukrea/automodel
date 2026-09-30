@@ -239,22 +239,72 @@ func merge(s *Object, o Options, cfg *config.Config) {
 		sl.Set("type", "command")
 		sl.Set("command", o.statuslineCmd())
 	}
+	// Hooks are updated where they stand: removing and appending them again
+	// would move them behind other tools' hooks (jaunt's) and rewrite
+	// settings.json, with a backup, on every update.
 	hooks := s.Obj("hooks")
-	removeOwnedHooks(hooks)
+	keep := map[*Object]bool{}
 	for _, h := range hookEvents {
-		groups, _ := hooks.Get(h.event)
-		list, _ := groups.([]any)
-		g := NewObject()
-		if h.matcher != "" {
-			g.Set("matcher", h.matcher)
+		cmd := ownedHook(hooks, h.event, h.matcher, h.name, keep)
+		if cmd == nil {
+			groups, _ := hooks.Get(h.event)
+			list, _ := groups.([]any)
+			g := NewObject()
+			if h.matcher != "" {
+				g.Set("matcher", h.matcher)
+			}
+			cmd = NewObject()
+			g.Set("hooks", []any{cmd})
+			hooks.Set(h.event, append(list, g))
 		}
-		cmd := NewObject()
 		cmd.Set("type", "command")
 		cmd.Set("command", o.hookCmd(h.name))
 		cmd.Set("timeout", 15)
-		g.Set("hooks", []any{cmd})
-		hooks.Set(h.event, append(list, g))
+		keep[cmd] = true
 	}
+	removeHooks(hooks, func(ho *Object) bool {
+		c, _ := ho.Get("command")
+		return owned(fmt.Sprint(c)) && !keep[ho]
+	})
+}
+
+// ownedHook finds an automodel hook of that name in a group of the event with
+// that matcher, skipping hooks already taken.
+func ownedHook(hooks *Object, event, matcher, name string, taken map[*Object]bool) *Object {
+	groups, _ := hooks.Get(event)
+	list, _ := groups.([]any)
+	for _, g := range list {
+		gobj, ok := g.(*Object)
+		if !ok {
+			continue
+		}
+		m, _ := gobj.Get("matcher")
+		if gm, _ := m.(string); gm != matcher {
+			continue
+		}
+		hs, _ := gobj.Get("hooks")
+		hl, _ := hs.([]any)
+		for _, h := range hl {
+			ho, ok := h.(*Object)
+			if !ok || taken[ho] {
+				continue
+			}
+			c, _ := ho.Get("command")
+			if cmd := fmt.Sprint(c); owned(cmd) && hookName(cmd) == name {
+				return ho
+			}
+		}
+	}
+	return nil
+}
+
+// hookName is the hook an owned command runs: the word after "hook".
+func hookName(cmd string) string {
+	i := strings.LastIndex(cmd, " hook ")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(cmd[i+len(" hook "):])
 }
 
 // SettingsReport compares settings.json with what Apply merges.
@@ -396,6 +446,15 @@ func Remove(o Options) error {
 }
 
 func removeOwnedHooks(hooks *Object) {
+	removeHooks(hooks, func(ho *Object) bool {
+		c, _ := ho.Get("command")
+		return owned(fmt.Sprint(c))
+	})
+}
+
+// removeHooks drops the hooks drop matches, then the groups and events left
+// empty.
+func removeHooks(hooks *Object, drop func(*Object) bool) {
 	for _, ev := range append([]string{}, hooks.keys...) {
 		groups, _ := hooks.Get(ev)
 		list, ok := groups.([]any)
@@ -413,10 +472,8 @@ func removeOwnedHooks(hooks *Object) {
 			hl, _ := hs.([]any)
 			var keepH []any
 			for _, h := range hl {
-				if ho, ok := h.(*Object); ok {
-					if c, _ := ho.Get("command"); owned(fmt.Sprint(c)) {
-						continue
-					}
+				if ho, ok := h.(*Object); ok && drop(ho) {
+					continue
 				}
 				keepH = append(keepH, h)
 			}
