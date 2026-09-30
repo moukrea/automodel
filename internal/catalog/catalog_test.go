@@ -73,6 +73,12 @@ func TestInvalidCatalog(t *testing.T) {
 		"tier subagent.sub: model a needs an alias",
 		"tier main.one: model a has a 1000-token window; main tiers need at least 1000000",
 		"model d: context 400000 above 200000 needs long_context",
+		"meta.relation_separate_threshold must be between 0 and 1",
+		"questions.relation: question is required",
+		"questions.relation: unknown option detour",
+		"questions.relation.options.extend: what is required",
+		"questions.relation: option new_task is missing",
+		"questions.explicit.question must contain {x}",
 	}
 	errs := is.Errors()
 	for _, w := range want {
@@ -101,6 +107,8 @@ func TestWarnings(t *testing.T) {
 		"measurement a@low: measured_at 2026-01-01 is older than 60 days",
 		"meta.last_refresh 2026-01-01 is older than 60 days",
 		"tier subagent.sub3 ranks above sub2 but costs less (2.00 vs 3.00)",
+		"meta.continues_threshold: deprecated, ignored (the relation question replaced it)",
+		"questions.informs: deprecated, ignored (the relation question replaced it)",
 	}
 	for _, w := range want {
 		found := false

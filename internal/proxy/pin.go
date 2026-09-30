@@ -90,7 +90,11 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 		s.Pin, s.PinSource = effort, "/effort"
 		if s.Main.Tier != t.ID {
 			d := *s.Main
-			d.Tier, d.Model, d.Effort, d.Trigger, d.Cause, d.Mode, d.Workflows = t.ID, t.Model, t.Effort, "pinned", "/effort", "", false
+			d.Tier, d.Model, d.Effort, d.Trigger, d.Cause = t.ID, t.Model, t.Effort, "pinned", "/effort"
+			// The mode stays on unless the pinned effort is below its own.
+			if !cat.KeepsMode(d.Mode, t.Effort) {
+				d.Mode, d.Workflows = "", false
+			}
 			if m := cat.Model(t.Model); m != nil {
 				d.APIID = m.APIID
 			}
@@ -110,7 +114,7 @@ func (p *Proxy) observeClientEffort(cat *catalog.Catalog, sessionID, effort stri
 	}
 	if pinned != nil {
 		rec := ledger.Decision{TS: pinned.DecidedAt, Kind: "decision", SessionID: sessionID, Scope: catalog.ScopeMain,
-			Trigger: "pinned", Cause: "/effort", Chosen: pinned.Tier, Model: pinned.APIID, Effort: pinned.Effort, Confidence: 1}
+			Trigger: "pinned", Cause: "/effort", Chosen: pinned.Tier, Model: pinned.APIID, Effort: pinned.Effort, Mode: pinned.Mode, Confidence: 1}
 		if err := p.Ledger.Append(rec); err != nil {
 			log.Printf("ledger: %v", err)
 		}

@@ -1,5 +1,5 @@
-// Package jev calls the OpenRouter Decisions API (TypeSafe Jev) with a choice
-// question generated from the catalog tiers of one scope.
+// Package jev calls the OpenRouter Decisions API (TypeSafe Jev) with the
+// routing questions generated from the catalog.
 package jev
 
 import (
@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/moukrea/automodel/internal/catalog"
 )
@@ -81,11 +82,11 @@ func TierQuestion(c *catalog.Catalog, scope string) Question {
 
 // Question IDs of a routing request.
 const (
-	QLevel     = "level"
-	QContinues = "continues"
-	QInforms   = "informs"
-	QTierPfx   = "tier_"
-	QModePfx   = "mode_"
+	QLevel       = "level"
+	QRelation    = "relation"
+	QExplicitPfx = "explicit_"
+	QTierPfx     = "tier_"
+	QModePfx     = "mode_"
 )
 
 // DefaultLevel is the Score question's built-in instructions, per scope
@@ -95,12 +96,42 @@ var DefaultLevel = map[string]string{
 	catalog.ScopeSubagent: "How much capability and reasoning does this subagent task need?",
 }
 
+// Ask says which of the optional questions a request carries.
+type Ask struct {
+	// Relation: how the prompt relates to the work in progress (main
+	// session, once there is work in progress).
+	Relation bool
+	// Explicit: the requests a regex found in the prompt's words, a yes/no
+	// each (Jev tells a request from a mention).
+	Explicit []Explicit
+}
+
+// Explicit is a request a prompt's words may make: an effort ("more": more
+// thinking), a mode ("off": the mode refused), a model.
+type Explicit struct {
+	Kind  string // effort | mode | model
+	Value string // low..max or more; the mode's ID or off; the model's catalog key
+	Label string // what the question calls it: the effort, the mode's ID, the model's label
+}
+
+// Kinds and special values of explicit requests.
+const (
+	ExplicitEffort = "effort"
+	ExplicitMode   = "mode"
+	ExplicitModel  = "model"
+	ExplicitMore   = "more"
+	ExplicitOff    = "off"
+)
+
+// ID is the request's question ID: explicit_effort_xhigh, explicit_mode_off...
+func (x Explicit) ID() string { return QExplicitPfx + x.Kind + "_" + x.Value }
+
 // Questions builds the routing questions of a scope: a Score over the tiers
 // (they are ordered, so a Score fits better than a Choice), one Noul per
-// mode, and on warm turns a Noul on whether the prompt continues the work in
-// progress, and, in the main session, one on whether it only informs that
-// work (no new work asked). It returns the tier IDs in level order.
-func Questions(c *catalog.Catalog, scope string, warm bool) (map[string]Question, []string) {
+// mode and per asked tier, and what a asks for: a Choice on the prompt's
+// relation to the work in progress, a Noul per explicit request found in
+// the prompt. It returns the tier IDs in level order.
+func Questions(c *catalog.Catalog, scope string, a Ask) (map[string]Question, []string) {
 	var levels, ids []string
 	for _, t := range c.ScoredTiers(scope) {
 		levels, ids = append(levels, t.Criteria), append(ids, t.ID)
@@ -118,33 +149,111 @@ func Questions(c *catalog.Catalog, scope string, warm bool) (map[string]Question
 	for _, m := range c.ModesFor(scope) {
 		qs[QModePfx+m.ID] = Question{Type: "noul", Instructions: m.Question, Criteria: map[string]string{"true": m.Yes, "false": m.No}}
 	}
-	noul := func(q *catalog.Noul, def catalog.Noul) Question {
-		if q == nil {
-			q = &def
-		}
-		return Question{Type: "noul", Instructions: q.Question, Criteria: map[string]string{"true": q.Yes, "false": q.No}}
+	if a.Relation && scope == catalog.ScopeMain {
+		qs[QRelation] = RelationQuestion(c)
 	}
-	if warm {
-		qs[QContinues] = noul(c.Questions.Continues, DefaultContinues)
-		if scope == catalog.ScopeMain {
-			qs[QInforms] = noul(c.Questions.Informs, DefaultInforms)
-		}
+	for _, x := range a.Explicit {
+		qs[x.ID()] = ExplicitQuestion(c, x)
 	}
 	return qs, ids
 }
 
-// DefaultContinues and DefaultInforms are the built-in warm-turn questions
-// (the catalog's questions.continues and questions.informs override them).
-var (
-	DefaultContinues = catalog.Noul{
-		Question: "Does the new prompt keep the assistant on the work already in progress, at the same depth?",
-		Yes:      "Go-ahead or continuation of the ongoing task: 'yes, do it', 'continue', answering the assistant's question, adding a constraint or a fix to what is being built.",
-		No:       "A separate or smaller step: a new question or feature, a summary, a commit message or PR description, an explanation of what was done.",
+// RelationQuestion is the Choice on how the prompt relates to the work in
+// progress: the catalog's wording (questions.relation) over the built-in
+// one, each option an object {what, not_for, examples}.
+func RelationQuestion(c *catalog.Catalog) Question {
+	q, opts := DefaultRelation.Question, map[string]*catalog.Option{}
+	r := c.Questions.Relation
+	if r != nil && r.Question != "" {
+		q = r.Question
 	}
-	DefaultInforms = catalog.Noul{
-		Question: "Does the new prompt only give information for the work already in progress, without asking for any new work?",
-		Yes:      "Context, a preference, a correction or an answer for the ongoing task, which then goes on as it was: 'FYI it only happens with more than 8 workers', 'env vars win' or 'camelCase' (answering the assistant's question), 'prefer plain SQL for that query', 'don't touch that table', 'the endpoint is /v2/books'.",
-		No:       "Asks for something to be done, even small or related: a new task or question, a fix, a test, a change, a review, a summary or a commit message, or a go-ahead ('yes, do it', 'continue') that starts the proposed work.",
+	for _, id := range catalog.Relations {
+		opts[id] = DefaultRelation.Options[id]
+		if r != nil && r.Options[id] != nil && r.Options[id].What != "" {
+			opts[id] = r.Options[id]
+		}
+	}
+	return Question{Type: "choice", Instructions: q, Criteria: opts}
+}
+
+// ExplicitQuestion is the yes/no that confirms one explicit request.
+func ExplicitQuestion(c *catalog.Catalog, x Explicit) Question {
+	w := DefaultExplicit
+	if o := c.Questions.Explicit; o != nil {
+		for _, f := range []struct {
+			dst *string
+			v   string
+		}{
+			{&w.Question, o.Question}, {&w.Yes, o.Yes}, {&w.No, o.No},
+			{&w.OffQuestion, o.OffQuestion}, {&w.OffYes, o.OffYes}, {&w.OffNo, o.OffNo},
+			{&w.Effort, o.Effort}, {&w.More, o.More}, {&w.Mode, o.Mode}, {&w.Model, o.Model},
+		} {
+			if f.v != "" {
+				*f.dst = f.v
+			}
+		}
+	}
+	name := map[string]string{ExplicitEffort: w.Effort, ExplicitMode: w.Mode, ExplicitModel: w.Model}[x.Kind]
+	if x.Kind == ExplicitEffort && x.Value == ExplicitMore {
+		name = w.More
+	}
+	name = strings.ReplaceAll(name, "{v}", x.Label)
+	q, yes, no := w.Question, w.Yes, w.No
+	if x.Kind == ExplicitMode && x.Value == ExplicitOff {
+		q, yes, no = w.OffQuestion, w.OffYes, w.OffNo
+	}
+	return Question{Type: "noul", Instructions: strings.ReplaceAll(q, "{x}", name), Criteria: map[string]string{"true": yes, "false": no}}
+}
+
+// DefaultRelation and DefaultExplicit are the built-in wordings (the
+// catalog's questions.relation and questions.explicit override them).
+var (
+	DefaultRelation = catalog.Relation{
+		Question: "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`)?",
+		Options: map[string]*catalog.Option{
+			catalog.RelationContinue: {
+				What:     "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, and asks for nothing more.",
+				NotFor:   "A go-ahead that also adds or changes something (extend).",
+				Examples: []string{"yes", "go", "continue", "ok ship it", "resume, the limits are reset", "vas-y", "oui, continue", "c'est bon, on y va"},
+			},
+			catalog.RelationExtend: {
+				What:     "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case to handle, a test for it, a requirement, a different approach.",
+				NotFor:   "Work that stands on its own, without the work in progress (new_task).",
+				Examples: []string{"also add a test for that", "and make it configurable", "but keep the old flag working", "no, use a channel instead", "ajoute aussi un log quand ça échoue", "mais garde l'ancienne API", "non, fais plutôt une migration"},
+			},
+			catalog.RelationInform: {
+				What:     "Only gives a fact, a preference or an answer the work in progress needs, and asks for no new work.",
+				NotFor:   "A message that also asks for a change or a check (extend).",
+				Examples: []string{"FYI it only fails on ARM", "env vars win", "camelCase", "c'est la v2 de l'API", "la clé est dans le .env"},
+			},
+			catalog.RelationSideQuestion: {
+				What:     "Asks a question or a quick check aside (progress, status, why something was done) while the work in progress stays pending.",
+				NotFor:   "A question that opens an investigation of its own (new_task).",
+				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi ce choix de lib ?"},
+			},
+			catalog.RelationWrapUp: {
+				What:     "Wraps up work that is done: a summary, a commit message, a PR description, a push, a changelog entry.",
+				NotFor:   "Finishing or fixing the work itself (extend).",
+				Examples: []string{"write the commit message", "summarize what you changed", "open the PR", "push it", "résume ce que tu as fait", "fais le commit et pousse"},
+			},
+			catalog.RelationNewTask: {
+				What:     "Starts a separate piece of work, unrelated to the work in progress or independent of it.",
+				NotFor:   "More work on the work in progress (extend), or a question about it (side_question).",
+				Examples: []string{"now rename the config loader", "next: design how to shard the job queue", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"},
+			},
+		},
+	}
+	DefaultExplicit = catalog.Explicit{
+		Question:    "Does the new prompt `task` explicitly ask the assistant to use {x} for this work?",
+		Yes:         "It asks for it, as an instruction or a wish, in any language: 'do this at xhigh', 'use ultracode for the audit', 'switch to Sonnet', 'think harder about it', 'passe en low', 'fais-le en ultracode', 'réfléchis à fond'.",
+		No:          "It only mentions, quotes, discusses or questions it, or refuses it: 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'.",
+		OffQuestion: "Does the new prompt `task` explicitly ask the assistant to stop using {x}, or not to use it, for this work?",
+		OffYes:      "It asks to stop it or to do without it, in any language: 'no ultracode for this', 'without workflows', 'stop the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'.",
+		OffNo:       "It asks for it, only mentions it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'ultracode était lent hier'.",
+		Effort:      "the {v} reasoning effort",
+		More:        "more thinking than so far (thinking harder, longer or more carefully)",
+		Mode:        "{v}, several agents working in parallel (workflow orchestration)",
+		Model:       "the {v} model",
 	}
 )
 
@@ -171,8 +280,8 @@ func (cl *Client) Ask(ctx context.Context, model, sessionID string, state any, q
 		if q.Type == "noul" && a.Noul == nil {
 			return nil, r, fmt.Errorf("jev: %q: noul answer without a value", id)
 		}
-		if q.Type == "score" && len(a.Probabilities) == 0 {
-			return nil, r, fmt.Errorf("jev: %q: score answer without probabilities", id)
+		if (q.Type == "score" || q.Type == "choice") && len(a.Probabilities) == 0 {
+			return nil, r, fmt.Errorf("jev: %q: %s answer without probabilities", id, q.Type)
 		}
 	}
 	return r.Answers, r, nil

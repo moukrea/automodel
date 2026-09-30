@@ -240,8 +240,8 @@ func tuningTemplate() ([]byte, error) {
 
 `)
 	m := c.Meta
-	fmt.Fprintf(&b, "# The policy: working below the right tier costs this many times the cost\n# gap; the yes-thresholds of the warm-turn questions.\n# [meta]\n# underprovision_penalty = %v\n# continues_threshold = %v\n# informs_threshold = %v\n\n",
-		m.UnderprovisionPenalty, m.ContinuesThreshold(), m.InformsThreshold())
+	fmt.Fprintf(&b, "# The policy: working below the right tier costs this many times the cost\n# gap; how likely a prompt must be separate work (a new task, a wrap-up)\n# to go below the work in progress; how sure Jev must be that a prompt\n# asks for an effort, a mode or a model in words.\n# [meta]\n# underprovision_penalty = %v\n# relation_separate_threshold = %v\n# explicit_threshold = %v\n\n",
+		m.UnderprovisionPenalty, m.RelationSeparateThreshold(), m.ExplicitThreshold())
 	for _, t := range c.ScoredTiers(catalog.ScopeMain) {
 		fmt.Fprintf(&b, "# What Jev reads for the main %s tier:\n# [tiers.main.%s]\n# criteria = %s\n\n", t.ID, t.ID, q(t.Criteria))
 		break
@@ -256,8 +256,11 @@ func tuningTemplate() ([]byte, error) {
 	}
 	lv := c.Questions.Level[catalog.ScopeMain]
 	fmt.Fprintf(&b, "# The questions Jev answers:\n# [questions.level]\n# main = %s\n", q(lv))
-	if in := c.Questions.Informs; in != nil {
-		fmt.Fprintf(&b, "# [questions.informs]\n# question = %s\n# yes = %s\n# no = %s\n", q(in.Question), q(in.Yes), q(in.No))
+	if r := c.Questions.Relation; r != nil {
+		fmt.Fprintf(&b, "# [questions.relation]\n# question = %s\n", q(r.Question))
+		if o := r.Options[catalog.RelationSideQuestion]; o != nil {
+			fmt.Fprintf(&b, "# [questions.relation.options.%s]\n# what = %s\n", catalog.RelationSideQuestion, q(o.What))
+		}
 	}
 	fmt.Fprintf(&b, "\n# What Jev sees of the conversation:\n# [state]\n# recent_prompts = %d\n# last_assistant_tokens = %d\n", c.State.RecentPromptsN(), c.State.LastAssistantN())
 	return []byte(b.String()), nil

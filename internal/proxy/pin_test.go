@@ -61,6 +61,26 @@ func TestClientEffortPins(t *testing.T) {
 	}
 }
 
+// /effort keeps the ultracode mode unless the effort is below the mode's.
+func TestClientEffortPinKeepsTheMode(t *testing.T) {
+	p, _, _ := setup(t)
+	cat, _ := p.Catalog.Get()
+	p.State.Update("u", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh", Mode: "ultracode", Workflows: true}
+		return true
+	})
+	get := func() *state.Decision { s, _ := p.State.Load("u"); return s.Main }
+	p.observeClientEffort(cat, "u", "medium") // Claude Code's default
+	p.observeClientEffort(cat, "u", "max")
+	if d := get(); d.Tier != "max" || d.Mode != "ultracode" || !d.Workflows {
+		t.Fatalf("/effort max: %+v", d)
+	}
+	p.observeClientEffort(cat, "u", "high")
+	if d := get(); d.Tier != "high" || d.Mode != "" || d.Workflows {
+		t.Fatalf("/effort high: %+v", d)
+	}
+}
+
 func ledgerDecisions(p *Proxy) ([]ledger.Decision, error) { return ledger.Decisions(p.Ledger.Path) }
 
 func TestPinnedModelRewrite(t *testing.T) {

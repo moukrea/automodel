@@ -24,8 +24,12 @@ type ScopeStats struct {
 	// MAE is the mean absolute rank distance between the label and Jev's
 	// top level (MAEDecision: the router's decision). Under/Over count
 	// decisions below/above the label.
-	MAE, MAEDecision   float64
-	Under, Over        int
+	MAE, MAEDecision float64
+	Under, Over      int
+	// FollowUnder counts the decisions below the label on cases labeled
+	// as a follow-up of the work in progress (continue, extend, inform,
+	// side_question): the lowering the owner rejects.
+	FollowUnder        int
 	MeanPWant, MeanTop float64
 	// ECE is the expected calibration error of Jev's top probability
 	// against exact correctness (10 equal-width bins).
@@ -121,6 +125,9 @@ func ScopeMetrics(cat *catalog.Catalog, scope string, rs []Result) *ScopeStats {
 			switch {
 			case d < 0:
 				s.Under++
+				if FollowUp(r.Relation) {
+					s.FollowUnder++
+				}
 			case d > 0:
 				s.Over++
 			}
@@ -193,6 +200,9 @@ type Gate struct {
 	MinLabels   int
 	MaxShareGap float64 // |decision share − label share| of any tier
 	MaxMAE      float64 // router decision mean absolute rank error
+	// MaxFollowUnder is how many decisions may fall below the label on
+	// cases labeled as a follow-up of the work in progress (none).
+	MaxFollowUnder int
 }
 
 // DefaultGate is set from the 2026-09 routing-quality work: the fixed
@@ -210,6 +220,9 @@ func (s *ScopeStats) Check(g Gate) []string {
 	}
 	if s.MAEDecision > g.MaxMAE {
 		out = append(out, fmt.Sprintf("%s: decision rank error %.2f > %.2f", s.Scope, s.MAEDecision, g.MaxMAE))
+	}
+	if s.FollowUnder > g.MaxFollowUnder {
+		out = append(out, fmt.Sprintf("%s: %d decisions below the label on follow-ups of the work in progress", s.Scope, s.FollowUnder))
 	}
 	for _, t := range s.Tiers {
 		c := s.Class[t]
@@ -246,7 +259,7 @@ func PrintScope(w io.Writer, s *ScopeStats) {
 	fmt.Fprintf(w, "| | Jev top | router decision |\n|---|---:|---:|\n")
 	fmt.Fprintf(w, "| exact | %.0f%% | %.0f%% |\n| acceptable | %.0f%% | %.0f%% |\n", 100*s.Exact, 100*s.DecisionExact, 100*s.Acceptable, 100*s.DecisionOK)
 	fmt.Fprintf(w, "| mean abs rank error | %.2f | %.2f |\n", s.MAE, s.MAEDecision)
-	fmt.Fprintf(w, "\ndecisions below the label %d, above %d; mean p(label) %.2f, mean top p %.2f, ECE %.2f", s.Under, s.Over, s.MeanPWant, s.MeanTop, s.ECE)
+	fmt.Fprintf(w, "\ndecisions below the label %d (on follow-ups %d), above %d; mean p(label) %.2f, mean top p %.2f, ECE %.2f", s.Under, s.FollowUnder, s.Over, s.MeanPWant, s.MeanTop, s.ECE)
 	if s.Unstable > 0 {
 		fmt.Fprintf(w, "; top changed across runs on %.0f%% of cases", 100*s.Unstable)
 	}

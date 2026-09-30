@@ -108,6 +108,87 @@ func TestGate(t *testing.T) {
 	}
 }
 
+func TestRelationAndExplicitMetrics(t *testing.T) {
+	c := testCatalog(t)
+	rel := func(top string, p float64) map[string]float64 {
+		m := map[string]float64{}
+		for _, r := range catalog.Relations {
+			m[r] = (1 - p) / 5
+		}
+		m[top] = p
+		return m
+	}
+	main := catalog.ScopeMain
+	rs := []Result{
+		{Case: Case{ID: "a", Scope: main, Want: "xhigh", Relation: "extend"}, Got: "medium", Decision: "xhigh", WorkTier: "xhigh", RelP: rel("extend", 0.9)},
+		// A side question read as a wrap-up, and lowered: the gate fails.
+		{Case: Case{ID: "b", Scope: main, Want: "xhigh", Relation: "side_question"}, Got: "low", Decision: "low", WorkTier: "xhigh", RelP: rel("wrap_up", 0.7)},
+		{Case: Case{ID: "c", Scope: main, Want: "low", Relation: "wrap_up", Explicit: &Explicit{Effort: "low"}}, Got: "low", Decision: "low", WorkTier: "xhigh",
+			RelP: rel("wrap_up", 0.95), ExplicitP: map[string]float64{"effort_low": 0.9}},
+		// Ultracode asked but not confirmed, Sonnet asked but not found, max only mentioned but confirmed.
+		{Case: Case{ID: "d", Scope: main, Want: "high", Explicit: &Explicit{Mode: "ultracode", Model: "sonnet"}, Modes: map[string]bool{"ultracode": true}},
+			Got: "high", Decision: "high", ExplicitP: map[string]float64{"mode_ultracode": 0.5, "effort_max": 0.85}},
+	}
+	for i := range rs {
+		rs[i].Accept, rs[i].Probs = []string{rs[i].Want}, map[string]float64{rs[i].Got: 1}
+	}
+	s := Summarize(c, rs)
+	near := func(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
+	if r := s.Relation; r.N != 3 || r.Right != 2 || r.Confusion["side_question"]["wrap_up"] != 1 || !near(r.ECE, (2*0.075+0.7)/3) {
+		t.Errorf("relation %+v", r)
+	}
+	if e := s.Explicit; e.TP != 1 || e.FP != 1 || e.FN != 2 || !near(e.Precision(), 0.5) || !near(e.Recall(), 1.0/3) {
+		t.Errorf("explicit %+v", e)
+	}
+	if f := s.Follow; f.N != 2 || f.Right != 1 {
+		t.Errorf("follow-ups %+v", f)
+	}
+	if m := s.ModeDecision["ultracode"]; m == nil || m.N != 1 || m.Right != 0 {
+		t.Errorf("mode decisions %+v", m)
+	}
+	st := s.Scopes[main]
+	if st.FollowUnder != 1 {
+		t.Errorf("below the label on follow-ups: %d", st.FollowUnder)
+	}
+	if fails := strings.Join(st.Check(DefaultGate), "; "); !strings.Contains(fails, "1 decisions below the label on follow-ups") {
+		t.Errorf("gate: %s", fails)
+	}
+	var b strings.Builder
+	PrintSummary(&b, s)
+	for _, want := range []string{"relation: 2/3 right (67%)", "| side_question | 0 | 0 | 0 | 0 | 1 | 0 |", "explicit requests: precision 50%, recall 33%",
+		"1/2 decisions below the work in progress", "mode ultracode on/off (router decision): 0/1 right"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, b.String())
+		}
+	}
+}
+
+// A case is judged as the hooks would: the work in progress from the case
+// (else its decision in force), the prompt's requests, the mid-turn flag
+// (never sent to Jev).
+func TestCaseSetup(t *testing.T) {
+	c := testCatalog(t)
+	st, req := setup(c, Case{Scope: catalog.ScopeMain, Warm: true, State: map[string]any{
+		"phase": "warm", "task": "passe en low pour la suite", "current": map[string]any{"tier": "xhigh", "mode": "ultracode"}, "mid_turn": true}})
+	if _, ok := st["mid_turn"]; ok {
+		t.Error("mid_turn sent to Jev")
+	}
+	if wip, _ := st["work_in_progress"].(map[string]any); wip["level"] != "xhigh" {
+		t.Errorf("state = %v", st)
+	}
+	if w := req.Work; w == nil || w.Tier != "xhigh" || w.Mode != "ultracode" || !req.MidTurn || req.Current == nil || len(req.Explicit) != 1 || req.Explicit[0].Tier != "low" {
+		t.Errorf("request = %+v", req)
+	}
+	st, req = setup(c, Case{Scope: catalog.ScopeMain, State: map[string]any{
+		"phase": "resumed", "task": "on reprend", "current": map[string]any{"tier": "low"}, "work_in_progress": map[string]any{"goal": "Fix the race", "level": "high"}}})
+	if w := req.Work; w == nil || w.Tier != "high" || w.Goal != "Fix the race" || req.Current != nil || req.MidTurn {
+		t.Errorf("labeled work in progress: %+v", req)
+	}
+	if _, req = setup(c, Case{Scope: catalog.ScopeMain, State: map[string]any{"phase": "initial", "task": "ultrathink: design the sharding"}}); req.Work != nil || req.MinTier != "xhigh" {
+		t.Errorf("initial: %+v", req)
+	}
+}
+
 func TestFilter(t *testing.T) {
 	cs := []Case{{ID: "a"}, {ID: "b", Split: "test"}, {ID: "c", Split: "train"}}
 	if got := Filter(cs, "train"); len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" {

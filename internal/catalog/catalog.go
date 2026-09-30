@@ -38,7 +38,14 @@ type Catalog struct {
 type Questions struct {
 	// Level is the Score question's instructions, per scope.
 	Level map[string]string `toml:"level" json:"level,omitempty"`
-	// Continues (warm turns) and Informs (warm main turns) are yes/no questions.
+	// Relation is the Choice on how a main-session prompt relates to the
+	// work in progress (asked once there is one).
+	Relation *Relation `toml:"relation" json:"relation,omitempty"`
+	// Explicit words the yes/no asked for each request a prompt's words may
+	// make (an effort, more thinking, a mode, a model).
+	Explicit *Explicit `toml:"explicit" json:"explicit,omitempty"`
+	// Continues and Informs are the warm-turn yes/no questions the relation
+	// question replaced: still parsed (older custom tunings), never asked.
 	Continues *Noul `toml:"continues" json:"continues,omitempty"`
 	Informs   *Noul `toml:"informs" json:"informs,omitempty"`
 }
@@ -48,6 +55,56 @@ type Noul struct {
 	Question string `toml:"question" json:"question"`
 	Yes      string `toml:"yes" json:"yes"`
 	No       string `toml:"no" json:"no"`
+}
+
+// Relations are the options of the relation question. new_task and
+// wrap_up are separate from the work in progress (the prompt gets its own
+// level); the others follow it up (they keep at least its level).
+var Relations = []string{RelationContinue, RelationExtend, RelationInform, RelationSideQuestion, RelationWrapUp, RelationNewTask}
+
+const (
+	RelationContinue     = "continue"
+	RelationExtend       = "extend"
+	RelationInform       = "inform"
+	RelationSideQuestion = "side_question"
+	RelationWrapUp       = "wrap_up"
+	RelationNewTask      = "new_task"
+)
+
+// Separate reports whether a relation is separate from the work in progress.
+func Separate(relation string) bool {
+	return relation == RelationWrapUp || relation == RelationNewTask
+}
+
+// Relation is the relation question: its instructions and one option per
+// relation.
+type Relation struct {
+	Question string             `toml:"question" json:"question"`
+	Options  map[string]*Option `toml:"options" json:"options"`
+}
+
+// Option is one option of a Choice in TypeSafe's advanced structure: what
+// it is for, what it is not for, and examples that look like real inputs.
+type Option struct {
+	What     string   `toml:"what" json:"what"`
+	NotFor   string   `toml:"not_for" json:"not_for,omitempty"`
+	Examples []string `toml:"examples" json:"examples,omitempty"`
+}
+
+// Explicit words the explicit-request questions. {x} in a question names
+// what the prompt may ask for, built from the names ({v}: the effort, the
+// mode or the model). Anything left empty uses the built-in wording.
+type Explicit struct {
+	Question    string `toml:"question" json:"question,omitempty"`
+	Yes         string `toml:"yes" json:"yes,omitempty"`
+	No          string `toml:"no" json:"no,omitempty"`
+	OffQuestion string `toml:"off_question" json:"off_question,omitempty"` // a mode the prompt may refuse
+	OffYes      string `toml:"off_yes" json:"off_yes,omitempty"`
+	OffNo       string `toml:"off_no" json:"off_no,omitempty"`
+	Effort      string `toml:"effort" json:"effort,omitempty"`
+	More        string `toml:"more" json:"more,omitempty"`
+	Mode        string `toml:"mode" json:"mode,omitempty"`
+	Model       string `toml:"model" json:"model,omitempty"`
 }
 
 // StateTuning sizes what the main session's state shows Jev.
@@ -91,12 +148,18 @@ type Meta struct {
 	// working above it: too little effort costs this many times the cost
 	// gap (rework, wrong answers), too much effort costs the gap once.
 	UnderprovisionPenalty float64 `toml:"underprovision_penalty" json:"underprovision_penalty,omitempty"`
-	// ContinuesThresholdP is the yes-probability from which a warm prompt
-	// counts as continuing the work in progress (no downgrade, mode kept).
+	// RelationSeparateP is the probability of the separate relations
+	// (new_task + wrap_up) from which a prompt gets its own level, below the
+	// work in progress if that is its level; under it the prompt follows the
+	// work up and keeps at least its level.
+	RelationSeparateP float64 `toml:"relation_separate_threshold" json:"relation_separate_threshold,omitempty"`
+	// ExplicitP is the yes-probability from which a request in the prompt's
+	// words (an effort, more thinking, a mode, a model) counts.
+	ExplicitP float64 `toml:"explicit_threshold" json:"explicit_threshold,omitempty"`
+	// ContinuesThresholdP and InformsThresholdP belonged to the questions
+	// the relation question replaced: parsed, ignored.
 	ContinuesThresholdP float64 `toml:"continues_threshold" json:"continues_threshold,omitempty"`
-	// InformsThresholdP is the yes-probability from which a warm main prompt
-	// only informs the work in progress: the decision in force is kept.
-	InformsThresholdP float64 `toml:"informs_threshold" json:"informs_threshold,omitempty"`
+	InformsThresholdP   float64 `toml:"informs_threshold" json:"informs_threshold,omitempty"`
 	// PerTurnEffortBeta is the anthropic-beta value for per-turn effort.
 	PerTurnEffortBeta string `toml:"per_turn_effort_beta" json:"per_turn_effort_beta,omitempty"`
 }
@@ -107,22 +170,23 @@ const StandardContext = 200_000
 // DefaultMainMinContext applies when meta.main_min_context is unset.
 const DefaultMainMinContext = 1_000_000
 
-// ContinuesThreshold returns meta.continues_threshold or 0.7.
-func (m Meta) ContinuesThreshold() float64 {
-	if m.ContinuesThresholdP > 0 {
-		return m.ContinuesThresholdP
-	}
-	return 0.7
-}
-
-// InformsThreshold returns meta.informs_threshold or 0.6 (from `automodel
-// eval`, train split: informational cases >= 0.83, requests <= 0.28; held
-// out, questions about the work in progress reach 0.54).
-func (m Meta) InformsThreshold() float64 {
-	if m.InformsThresholdP > 0 {
-		return m.InformsThresholdP
+// RelationSeparateThreshold returns meta.relation_separate_threshold or
+// 0.6 (TypeSafe's top-probability gate for a Choice: 99% agreement with
+// the labels above it in their self-consistency cookbook).
+func (m Meta) RelationSeparateThreshold() float64 {
+	if m.RelationSeparateP > 0 {
+		return m.RelationSeparateP
 	}
 	return 0.6
+}
+
+// ExplicitThreshold returns meta.explicit_threshold or 0.8 (probe on jev-1.13:
+// requests 0.95, mentions 0.06, refusals 0.03).
+func (m Meta) ExplicitThreshold() float64 {
+	if m.ExplicitP > 0 {
+		return m.ExplicitP
+	}
+	return 0.8
 }
 
 // MinMainContext returns meta.main_min_context or its default.
@@ -402,6 +466,13 @@ func (c *Catalog) Resolve(t *Tier, modeID string) (model, effort string, workflo
 		}
 	}
 	return model, effort, workflows
+}
+
+// KeepsMode reports whether a mode can stay on at an effort the user chose:
+// not below the mode's own effort, which the mode would raise it to.
+func (c *Catalog) KeepsMode(modeID, effort string) bool {
+	md := c.Modes[modeID]
+	return md != nil && (md.Effort == "" || EffortRank(effort) >= EffortRank(md.Effort))
 }
 
 // TierFor returns the scope's tier running model at effort, if any.

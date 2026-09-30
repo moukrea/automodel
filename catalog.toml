@@ -5,7 +5,7 @@
 
 [meta]
 schema = 1
-last_refresh = "2026-09-29"
+last_refresh = "2026-09-30"
 benchmark = "artificial-analysis-intelligence-index"
 benchmark_version = "v4.3.2"
 jev_model = "typesafe/jev-1.13"
@@ -26,11 +26,20 @@ per_turn_effort_beta = "per-turn-control-2026-07-01"
 # Jev's top level and the lowest realized cost loss; 3.0 pushed medium work
 # to high and high to xhigh (held-out exact 85% vs 93%).
 underprovision_penalty = 1.5
-# Warm turns: a prompt continuing the work in progress (Jev yes-probability
-# at or above this) keeps the mode, and is not downgraded by a switch that
-# costs something. Set from `automodel eval` on the train split: yes-cases
-# >= 0.78, no-cases spread up to 0.94; 0.8 gives 3/39 false no, 16/81 false yes.
-continues_threshold = 0.8
+# The work in progress: a prompt gets its own level, below the work's if
+# that is its level, only when Jev's relation answer puts at least this on
+# the separate relations (new_task + wrap_up) and it didn't come in
+# mid-turn or from another session; any other prompt follows the work up
+# and keeps at least its level. 0.6 is TypeSafe's top-probability gate for
+# a Choice (self-consistency cookbook: 99% agreement above it). Probe on
+# jev-1.13 (15 invented warm prompts, 2 runs): clear prompts put 0.93-1.00
+# on the right relation, mixed ones about 0.5. Tune on the train split
+# once the cases carry relation labels.
+relation_separate_threshold = 0.6
+# A request in the prompt's words (an effort, more thinking, ultracode or
+# its refusal, a model) counts from this yes-probability. Probe: requests
+# 0.95, mentions 0.06, refusals 0.03, a bare "ultrathink:" question 0.19.
+explicit_threshold = 0.8
 
 # ---------------------------------------------------------------- models
 
@@ -1210,24 +1219,79 @@ criteria = "Open-ended hardest problems needing the deepest reasoning, where cos
 
 # ------------------------------------------------------------- questions
 # What Jev is asked besides the tier criteria and the modes' and asked
-# tiers' own questions: the Score question's instructions per scope, and
-# the two warm-turn yes/no questions. A wording change is kept only if it
-# wins on the train split and holds on the held-out split
-# (.claude/skills/refresh-model-catalog/references/routing-eval.md).
+# tiers' own questions: the Score question's instructions per scope, the
+# relation of a main-session prompt to the work in progress, and the
+# yes/no that confirms each request a prompt's words may make. A wording
+# change is kept only if it wins on the train split and holds on the
+# held-out split (.claude/skills/refresh-model-catalog/references/routing-eval.md).
+# [questions.continues] and [questions.informs], the warm-turn questions
+# the relation question replaced, are still read and ignored.
 
 [questions.level]
 main = "How much reasoning does the work that the new prompt starts need, judging by what that work actually involves (a short prompt can approve a large job)? When the prompt hands work to subagents, judge only what this session does itself (launching them, then relaying or merging their reports): each subagent gets its own level."
 subagent = "How much capability and reasoning does this subagent task need?"
 
-[questions.continues]
-question = "Does the new prompt keep the assistant on the work already in progress, at the same depth?"
-yes = "Go-ahead or continuation of the ongoing task: 'yes, do it', 'continue', answering the assistant's question, adding a constraint or a fix to what is being built."
-no = "A separate or smaller step: a new question or feature, a summary, a commit message or PR description, an explanation of what was done."
+# The level question rates the new prompt's own words; the effort runs the
+# whole turn, which carries the pending work on. This Choice (asked once
+# there is work in progress, with its goal and level in the state) says
+# whether the prompt follows that work up (continue, extend, inform,
+# side_question: at least the work's level) or is separate from it
+# (wrap_up, new_task: its own level). One Choice, not two yes/no: the
+# probabilities of a Choice add up, and one question per judgment. Options
+# in TypeSafe's advanced structure (what, not_for, examples), English with
+# French examples (Jev reads English best; the prompts are often French).
+[questions.relation]
+question = "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`)?"
 
-[questions.informs]
-question = "Does the new prompt only give information for the work already in progress, without asking for any new work?"
-yes = "Context, a preference, a correction or an answer for the ongoing task, which then goes on as it was: 'FYI it only happens with more than 8 workers', 'env vars win' or 'camelCase' (answering the assistant's question), 'prefer plain SQL for that query', 'don't touch that table', 'the endpoint is /v2/books'."
-no = "Asks for something to be done, even small or related: a new task or question, a fix, a test, a change, a review, a summary or a commit message, or a go-ahead ('yes, do it', 'continue') that starts the proposed work."
+[questions.relation.options.continue]
+what = "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, and asks for nothing more."
+not_for = "A go-ahead that also adds or changes something (extend)."
+examples = ["yes", "go", "continue", "ok ship it", "resume, the limits are reset", "vas-y", "oui, continue", "c'est bon, on y va"]
+
+[questions.relation.options.extend]
+what = "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case to handle, a test for it, a requirement, a different approach."
+not_for = "Work that stands on its own, without the work in progress (new_task)."
+examples = ["also add a test for that", "and make it configurable", "but keep the old flag working", "no, use a channel instead", "ajoute aussi un log quand ça échoue", "mais garde l'ancienne API", "non, fais plutôt une migration"]
+
+[questions.relation.options.inform]
+what = "Only gives a fact, a preference or an answer the work in progress needs, and asks for no new work."
+not_for = "A message that also asks for a change or a check (extend)."
+examples = ["FYI it only fails on ARM", "env vars win", "camelCase", "c'est la v2 de l'API", "la clé est dans le .env"]
+
+[questions.relation.options.side_question]
+what = "Asks a question or a quick check aside (progress, status, why something was done) while the work in progress stays pending."
+not_for = "A question that opens an investigation of its own (new_task)."
+examples = ["is CI green yet?", "why did you pick a mutex there?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi ce choix de lib ?"]
+
+[questions.relation.options.wrap_up]
+what = "Wraps up work that is done: a summary, a commit message, a PR description, a push, a changelog entry."
+not_for = "Finishing or fixing the work itself (extend)."
+examples = ["write the commit message", "summarize what you changed", "open the PR", "push it", "résume ce que tu as fait", "fais le commit et pousse"]
+
+[questions.relation.options.new_task]
+what = "Starts a separate piece of work, unrelated to the work in progress or independent of it."
+not_for = "More work on the work in progress (extend), or a question about it (side_question)."
+examples = ["now rename the config loader", "next: design how to shard the job queue", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"]
+
+# Requests in prose ("passe en xhigh", "fais ça en ultracode", "think
+# harder"). A regex finds the words that may make one (an effort name, the
+# think-harder family, ultracode or workflows and their refusal, a model
+# name); only then is this yes/no asked, once per request, {x} naming it
+# (from effort/more/mode/model, {v} the effort, the mode or the model).
+# It asks about the action, not the subject: effort names are often only
+# talked about ("why did it stay at xhigh?"). The ultrathink keyword needs
+# no question (a floor at xhigh).
+[questions.explicit]
+question = "Does the new prompt `task` explicitly ask the assistant to use {x} for this work?"
+yes = "It asks for it, as an instruction or a wish, in any language: 'do this at xhigh', 'use ultracode for the audit', 'switch to Sonnet', 'think harder about it', 'passe en low', 'fais-le en ultracode', 'réfléchis à fond'."
+no = "It only mentions, quotes, discusses or questions it, or refuses it: 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'."
+off_question = "Does the new prompt `task` explicitly ask the assistant to stop using {x}, or not to use it, for this work?"
+off_yes = "It asks to stop it or to do without it, in any language: 'no ultracode for this', 'without workflows', 'stop the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'."
+off_no = "It asks for it, only mentions it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'ultracode était lent hier'."
+effort = "the {v} reasoning effort"
+more = "more thinking than so far (thinking harder, longer or more carefully)"
+mode = "{v}, several agents working in parallel (workflow orchestration)"
+model = "the {v} model"
 
 # ----------------------------------------------------------------- state
 # How much of the conversation the main session's state shows Jev (within
