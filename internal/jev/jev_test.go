@@ -58,6 +58,13 @@ func TestQuestions(t *testing.T) {
 	if rel.Type != "choice" || len(opts) != len(catalog.Relations)-1 || opts["side_question"].What == "" || len(opts["extend"].Examples) == 0 {
 		t.Fatalf("relation = %s", b)
 	}
+	// A question about automodel's routing is an aside, not a side question
+	// (held-out run 1 held "why did automodel keep this session at xhigh?"
+	// at the work's xhigh); a go-ahead on a done work may only acknowledge it.
+	if !strings.Contains(opts["aside"].What, "automodel's routing") || strings.Contains(opts["side_question"].What, "effort") ||
+		!strings.Contains(opts["side_question"].NotFor, "automodel's routing") || !strings.Contains(opts["continue"].NotFor, "`work_in_progress.done`") {
+		t.Errorf("routing questions and acknowledgements: %s", b)
+	}
 	// Going back to paused work is only an option once there is some.
 	if _, ok := opts[catalog.RelationResume]; ok {
 		t.Errorf("resume offered without paused work: %s", b)

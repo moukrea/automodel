@@ -36,7 +36,10 @@ underprovision_penalty = 1.5
 # decisions (exact 91%, rank error 0.10 to 0.11, no follow-up below its
 # work); 0.4 lowers two or three follow-ups, 0.6 and up hold separate
 # prompts at the work. Resumes put 0.75 or more on resume. 0.55: the top
-# of that plateau, on the holding side.
+# of that plateau, on the holding side. Round 3 (held-out run 1 merged
+# into train, round 3 wording): 0.45 to 0.55 still keep every follow-up
+# at its work and differ by one to three answers on wrap-ups and asides;
+# 0.4 lowers "just curious, carry on" after a routing question.
 relation_separate_threshold = 0.55
 # A request in the prompt's words (an effort, more thinking, ultracode or
 # its refusal) counts from this yes-probability; an effort below the work
@@ -47,7 +50,11 @@ relation_separate_threshold = 0.55
 # parallel agents asked or refused without naming it 0.61 to 0.80;
 # mentions, efforts set for subagents, workflow stages, tenant configs or
 # tuning files, quoted prompts and refusals at most 0.22. Precision
-# first: 0.8.
+# first: 0.8. Round 3, with lowerings and caps in the yes wording: lower
+# efforts asked with their reason 0.93 to 0.96 ("switch to medium for the
+# remaining test rewrites" was 0.86 to 0.88), "mets le paquet" 0.94 (was
+# 0.45), "effort élevé, pas plus" 0.63 to 0.67, raises 0.82 and up;
+# mentions and refusals at most 0.16 (efforts), 0.23 (modes).
 explicit_threshold = 0.8
 # A model asked for in words (only another model than the session's; the
 # work in progress runs on it until a separate new task) counts from this
@@ -55,7 +62,10 @@ explicit_threshold = 0.8
 # runs the whole work, and models are talked about far more than asked for.
 # Train split (two runs of 3): requests 0.83 to 0.93; mentions (news,
 # comparisons, benchmarks, routing questions, a subagent's, a catalog's or
-# a config's model) and refusals at most 0.21.
+# a config's model) and refusals at most 0.21. Round 3: the same, besides
+# two requests of held-out run 1 left below it ("Run this on Sonnet, it's
+# simple" 0.66 to 0.71, "switch this to Opus for the tricky test" 0.76
+# to 0.80).
 explicit_model_threshold = 0.85
 
 # ---------------------------------------------------------------- models
@@ -1167,7 +1177,13 @@ scopes = ["main"]
 workflows = true
 effort = "xhigh"
 min_tier = "high"
-threshold = 0.75  # from `automodel eval`: yes-cases >= 0.85, no-cases <= 0.68
+# From `automodel eval` (train split, two runs of 3, 2026-09-30): Jev turns
+# it on for new work at 0.86 and up on the cases labeled on; on the cases
+# labeled off it reads 0.73 to 0.78 for a Terraform migration resumed across
+# six environments and a remark typed during a form migration (0.82 for a
+# Moment.js removal), which 0.75 turned on. A wrap-up, a side question or
+# an aside never runs with it (router.Judge).
+threshold = 0.8
 question = "Would this work be done better by several agents working in parallel (workflow orchestration) than by one assistant working alone?"
 yes = "Broad work that splits into many independent parts: auditing or reviewing a whole codebase, sweeping migrations across many files or services, multi-angle research or plans cross-checked by independent reviewers."
 no = "Work one assistant does well alone: a single feature, bug, question, or refactor of one area, and anything small or sequential."
@@ -1254,8 +1270,11 @@ subagent = "How much capability and reasoning does this subagent task need?"
 # whether the prompt follows that work up (continue, extend, inform,
 # side_question: at least the work's level) or is separate from it
 # (wrap_up, new_task: its own level; aside, a question unrelated to the
-# work: its own level for that turn, the work unchanged). Once a wrap-up
-# marked the work done, only more work on it (continue, extend) holds. One Choice, not two yes/no: the
+# work or about automodel's routing: its own level for that turn, the work
+# unchanged). A wrap-up, a side question or an aside runs without the
+# work's mode. Once a wrap-up marked the work done, only more work on it
+# (continue, extend) holds, and a go-ahead is asked here too: "looks good"
+# mostly acknowledges finished work. One Choice, not two yes/no: the
 # probabilities of a Choice add up, and one question per judgment. Options
 # in TypeSafe's advanced structure (what, not_for, examples), English with
 # French examples (Jev reads English best; the prompts are often French).
@@ -1263,14 +1282,14 @@ subagent = "How much capability and reasoning does this subagent task need?"
 question = "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`; `work_in_progress.done` once it was wrapped up)?"
 
 [questions.relation.options.continue]
-what = "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, possibly at another effort, on another model or without the parallel agents, or to carry out what it just proposed or offered for that work (possibly picking one of its options), and asks for nothing more."
-not_for = "A go-ahead that also adds or changes something (extend)."
-examples = ["yes", "go", "continue", "ok ship it", "ok, do what you proposed", "go with option 2", "resume, the limits are reset", "vas-y", "oui, continue", "oui, fais ce que tu proposes", "c'est bon, on y va"]
+what = "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, possibly at another effort, on another model or without the parallel agents, or to carry out what it just proposed or offered for that work (possibly picking one of its options), and asks for nothing more. A question or a remark that comes with the go-ahead, even an unrelated one, doesn't change that: the work goes on."
+not_for = "A go-ahead that also adds or changes something (extend); an acknowledgement once the work is done (`work_in_progress.done`) and nothing is left to go on with, such as 'looks good', 'ok, thanks' or 'merci' (aside)."
+examples = ["yes", "go", "continue", "ok ship it", "ok, do what you proposed", "go with option 2", "resume, the limits are reset", "out of curiosity, why is the status line orange? anyway, carry on", "vas-y", "oui, continue", "oui, fais ce que tu proposes", "c'est bon, on y va"]
 
 [questions.relation.options.extend]
-what = "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case or input to handle, a test for it, an option or a flag for what it built, a requirement, a different approach."
+what = "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case or input to handle, a test for it, an option or a flag for what it built, a requirement, a different approach, or a step it calls for, such as repairing what the problem it fixes left behind (the data, the orders or the charges it got wrong)."
 not_for = "Work that stands on its own without the work in progress, including the same change repeated on another target (new_task)."
-examples = ["also add a test for that", "and make it configurable", "but keep the old flag working", "no, use a channel instead", "ajoute aussi un log quand ça échoue", "mais garde l'ancienne API", "non, fais plutôt une migration"]
+examples = ["also add a test for that", "and make it configurable", "but keep the old flag working", "no, use a channel instead", "and write the script that fixes the rows it corrupted", "ajoute aussi un log quand ça échoue", "mais garde l'ancienne API", "non, fais plutôt une migration"]
 
 [questions.relation.options.inform]
 what = "Only gives a fact, a preference or an answer the work in progress needs, and asks for no new work."
@@ -1278,16 +1297,19 @@ not_for = "A message that also asks for a change or a check (extend)."
 examples = ["FYI it only fails on ARM", "env vars win", "camelCase", "c'est la v2 de l'API", "la clé est dans le .env"]
 
 [questions.relation.options.side_question]
-what = "Asks a question or a quick check about the work in progress while it is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: its progress or status, a detail, a choice it made, a doubt, a check of its result, or how this session runs it (why the effort, the model or the mode changed)."
-not_for = "A question unrelated to the work in progress (aside); a question that starts real work of its own, such as an investigation or a change (new_task); a question about work that is finished, which only recalls or explains it (wrap_up)."
-examples = ["is CI green yet?", "why did you pick a mutex there?", "does that cover the retry path too?", "which Go version do we target again?", "why did the effort go up just now?", "t'en es où ?", "le build passe ?", "pourquoi un mutex et pas un channel ?"]
+what = "Asks a question or a quick check about the work in progress itself while it is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: its progress or status, a detail of its code, a choice it made, a doubt, a check of its result, or which model or mode would suit it."
+not_for = "A question about automodel's routing, such as why this session or a subagent got, kept or changed its effort, its model or its mode (aside), unless routing is what the work in progress builds or tunes; a question unrelated to the work in progress (aside); a question that also tells the assistant to carry on with the work, such as 'just curious, keep going' (continue); a question that starts real work of its own, such as an investigation or a change (new_task); a question about work that is finished, which only recalls or explains it (wrap_up)."
+examples = ["is CI green yet?", "why did you pick a mutex there?", "does that cover the retry path too?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi un mutex et pas un channel ?"]
 
-# A question unrelated to the work in progress: its own level for that turn,
-# the work in progress (and any paused work) unchanged.
+# A question unrelated to the work in progress, or about automodel's
+# routing ("why did it keep this session at xhigh?"): its own level for
+# that turn, the work in progress (and any paused work) unchanged. Routing
+# questions were side questions until round 3, which held a question about
+# the router at the work's xhigh (held-out run 1).
 [questions.relation.options.aside]
-what = "A question or a remark unrelated to the work in progress that starts no work of its own: general knowledge, a command or a flag, another topic, news, a comment in passing."
-not_for = "A question about the work in progress, its code, its result or how this session runs it (side_question); a prompt that also tells the assistant to go on with the work (continue) or how to do it, such as an effort, a model or a mode for it (continue, extend); something that starts real work, even small (new_task)."
-examples = ["unrelated: how do I list open ports on macOS?", "what does HTTP 409 mean again?", "Fable 5.1 is out, have you seen the benchmarks?", "au fait, c'est quoi la différence entre rebase et merge ?", "ça veut dire quoi idempotent, déjà ?", "haha, nice"]
+what = "A question or a remark that is not about the work in progress itself and starts no work of its own: general knowledge, a command or a flag, another topic, news, a comment in passing or a thank-you, or a question about automodel's routing (why this session or a subagent got, kept or changed its effort, its model or its mode)."
+not_for = "A question about the work in progress, its code, its choices or its result, including which model or mode would suit it (side_question), and routing questions when routing is what the work in progress builds or tunes; a prompt that also tells the assistant to go on with the work, even after a question ('just curious, carry on'), or asks for an effort, a model or a mode for it (continue, extend); a fact or a constraint for the work, even about a subagent or a config (inform, extend); something that starts real work, even small (new_task)."
+examples = ["unrelated: how do I list open ports on macOS?", "what does HTTP 409 mean again?", "Fable 5.1 is out, have you seen the benchmarks?", "why did the effort go up just now?", "au fait, c'est quoi la différence entre rebase et merge ?", "ça veut dire quoi idempotent, déjà ?", "pourquoi cette session tourne sur Opus ?", "haha, nice", "merci !"]
 
 # Only offered when a detour paused earlier work (paused_work in the state).
 [questions.relation.options.resume]
@@ -1319,7 +1341,7 @@ examples = ["now rename the config loader", "next: design how to shard the job q
 # compared, released and benchmarked far more often than asked for.
 [questions.explicit]
 question = "Does the new prompt `task` explicitly ask the assistant itself to use {x} for its own work (this prompt, or the rest of the work in progress)?"
-yes = "It tells the assistant to work that way itself, as an instruction or a wish, in any language, up or down: 'do this at xhigh', 'set your effort to medium for the rest', 'use ultracode for the audit', 'run it with several agents in parallel', 'think harder about it', 'passe en low', 'mets l'effort à high pour la suite', 'effort élevé pour ça' (élevé is high, moyen medium, faible low), 'fais-le en ultracode', 'réfléchis à fond'."
+yes = "It tells the assistant to work that way itself, as an instruction or a wish, in any language, up or down: 'do this at xhigh', 'set your effort to medium for the rest', 'use ultracode for the audit', 'run it with several agents in parallel', 'think harder about it', 'passe en low', 'mets l'effort à high pour la suite', 'effort élevé pour ça' (élevé is high, moyen medium, faible low), 'fais-le en ultracode', 'réfléchis à fond', 'mets le paquet'. A lower effort for easier work, or a cap on it, is asked just as much, usually with the reason: 'drop to medium for what's left, it's boilerplate', 'low is enough for the changelog', 'high, no more: it's routine', 'repasse en medium pour la suite, c'est mécanique', 'faible suffit pour ça'."
 no = "It is about something else, or only talks about it: setting it for subagents, workflow agents or a workflow stage, in a config, a tuning or catalog entry or automodel's routing; quoting or testing a prompt or a string that contains it; a question, a mention, news, a refusal: 'give the review agents low effort', 'effort = \"medium\" in the stage config', 'a test that the prompt \"fais-le en max\" pins nothing', 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'."
 off_question = "Does the new prompt `task` explicitly ask the assistant itself not to use {x}, or to stop using it, for its own work (this prompt, or the rest of the work in progress)?"
 off_yes = "It asks the assistant to do this work without it, or to stop it, in any language: 'no ultracode for this', 'skip the workflow, just fix it', 'do the rest alone, without the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle'."
@@ -1328,7 +1350,7 @@ model_question = "Does the new prompt `task` ask the assistant to run on {x} its
 model_yes = "It tells the assistant to switch to that model, to go back to it, or to do this work (or the rest of it) with it, as an instruction or a wish: 'switch to Sonnet for this', 'do the rest with Fable', 'use Opus for this part', 'back to Opus for the rest of it', 'passe sur Sonnet pour la suite', 'fais ça avec Fable'."
 model_no = "It only talks about the model, sets it for something else or refuses it: a mention, a comparison, release news, prices or benchmarks, a question about models or about how automodel routes and why it picked one; a subagent, workflow agents or a workflow stage, a config, a tuning or catalog entry set to it; a quoted prompt or test string; a refusal: 'Sonnet 5.5 is out', 'is Sonnet cheaper than Opus?', 'why did it pick Opus?', 'Fable tops the index now', 'make the review agent use sonnet', 'pas besoin d'Opus', 'Opus a mis 3 minutes'."
 effort = "the {v} reasoning effort"
-more = "more thinking than so far (thinking harder, longer or more carefully)"
+more = "more thinking than so far (thinking harder, longer or more carefully, going all out)"
 mode = "the {v} mode (several agents working in parallel, orchestrated as a workflow)"
 model = "the {v} model"
 
