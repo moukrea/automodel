@@ -102,7 +102,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   is a resume ("yes" to "Shall I get back to the migration?"), a wrap-up
   step of the detour a wrap-up at its own level ("yes" to "Committed.
   Want me to push it?"), more of the detour a continue at the detour's
-  level, also when a remark follows the offer. A go-ahead to a closing
+  level, also when a remark follows the offer. An acknowledgement ("ok",
+  "perfect", "lgtm", "nickel", "parfait") right after such an offer
+  accepts it, labelled the same. A go-ahead to a closing
   question that offers nothing of the detour ("Done. Anything else?",
   "Shall I carry on?", "Ça te va ?") goes back to the paused work, as a
   bare go-ahead does: a resume at that work's level.
@@ -336,11 +338,18 @@ work needs more, the go-ahead goes back to it unless the offer question
 (`[questions.offer]`) says the assistant offered one more thing for the
 detour, from `meta.detour_offer_threshold` (tune it in the gap the eval
 prints as "detour offer": offers of the detour against closing questions
-and offers to go back); a go-ahead that stays on the detour is not below
-it unless it is a wrap-up step or an aside. Or the work is done and
+and offers to go back); a go-ahead that stays on the detour runs at the
+detour's level at most (Jev's level of the bare words leans on the paused
+work) and not below it unless it is a wrap-up step or an aside Jev is
+sure of on its own (`relation_separate_threshold`), or the detour is
+done. Going back by default (the offer question under its bar), an open
+detour waits in turn (`Kept`): the next wrap-up closes it, not the work.
+Or the work is done and
 no paused work needs more (`router.Acknowledges`): then it is routed like
 any prompt, and Jev's relation says whether it reopens the work or only
-acknowledges it. The eval mirrors these
+acknowledges it; a go-ahead to a proposal there holds the work's level
+(and never starts a work named "yes") unless it is a wrap-up step or an
+aside. The eval mirrors these
 rules (`internal/eval` `setup`, `router.Judge`, and the hooks' own
 go-ahead path `router.Carried`); keep it in sync with
 `internal/hooks/decide.go`.

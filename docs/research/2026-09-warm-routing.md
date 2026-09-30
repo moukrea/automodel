@@ -951,3 +951,80 @@ for lowerings, ultracode 0.8, Haiku 0.92. `eval.DefaultGate` is unchanged.
 - English plain-word requests for parallel agents (F8); model requests
   without a reason ("Run this on Sonnet") under the 0.85 bar.
 - Live sessions for detour offers with the offer question.
+
+## 12. Round 4 second review: the fixes (2026-10-01)
+
+A second adversarial review of the round-4 fixes (unit tests, 70 live Jev
+calls) and a live run in three real Claude Code sessions (17 prompts)
+found three major issues and smaller ones. The go-back / stay choice was
+right in every live session; the level and the state were not always.
+
+### What they found, and the fixes
+
+| id | finding | fix |
+|---|---|---|
+| R4B-1 (major, live) | a bare "yes" or "ok" that stays on a detour ran at Jev's level of the bare word, split between the detour's and the paused work's (low 0.46 / xhigh 0.54): the push ran at xhigh, and a non-wrap-up reading raised the detour to xhigh | when the paused work needs more, a go-ahead that stays on the detour runs at the detour's level at most, without a mode Jev reads from the paused work; the detour is never raised by it. A wrap-up step or an aside takes the lower of Jev's level and the detour's |
+| R4B-2 (major, live) | the raised detour then took the paused slot from the migration when the next small detour came (a tie in level, no mode), and "oui" to "On reprend la migration ?" resumed the README detour's goal | on a tie, the work paused first stays paused: a detour never evicts the work it detoured from |
+| R5-1 (major) | answered with an acknowledgement ("ok", "perfect", "lgtm", "super", "nickel"), five of fourteen fresh offers of more of the detour read under 0.5 on the offer question (0.27-0.44): the go-ahead went back to the xhigh ultracode work, dropped the detour, and the next "commite ça" closed the migration | the offer wording says a bare acknowledgement right after an offer accepts it, and that the message decides whatever the go-ahead's words; 16 invented train cases (`r6-`); `detour_offer_threshold` 0.35, the middle of the new train gap. Going back by default, an open detour now waits (`Kept`): the next wrap-up closes it, not the work it went back to, and going back to it pauses that work again |
+| R5-2 (major) | "looks good" to one more fix of an open medium detour read wrap_up 0.45-0.49 and aside 0.28-0.33 (0.77 separate in all): it ran at low and closed the detour | a go-ahead to a proposal is a wrap-up step or an aside, answered alone, only when Jev is sure of that relation on its own (`relation_separate_threshold`) or the work is done; otherwise it holds the work and leaves it open |
+| R5-3 | a Jev timeout on this path resumed the paused work for good: the late decision could not stay on the detour | on a timeout the turn runs at the paused work's level and the work is left to the late decision; on other errors it goes back, and the open detour waits |
+| R5-4 | `Proposes` missed a question followed by a list and a remark, a question followed by a longer remark, "si tu le veux", "si besoin", "tu me dis si", and "?" before a no-break space | the end of a message is its last paragraph with up to two paragraphs before it while what follows is lists or at most 300 characters of remark; those offers (and "if needed") are added; U+00A0 and U+202F count as spaces. No train case changed its path |
+| R5-5 | after a finished work with no paused work, "yes" to a proposal could start a work named "yes" below the work's level | such a go-ahead is routed with the relation question as after a detour: it holds the work's level and reopens it, unless it is a wrap-up step or an aside |
+| R5-6 | the widened lowering pre-filter makes candidates of ordinary phrasings ("turn the thermostat down to low at night"); informal lowerings were still lost ("drop to low tbh", "baisse à medium histoire d'économiser") | accepted as designed: Jev said no to every new candidate (0.03-0.10), at one question each. tbh, imo, lol, though, cause, cuz, bc, histoire, genre join the function words; no train case changed its candidates |
+| R5-7 | a go-ahead typed mid-turn during a detour paid for an offer question that can't change the outcome and skipped the cost gate; the fallback's ledger claimed "back to the paused work" when it stayed, and left the work field empty on a cold failure | the offer question and the back-first path need a prompt not typed mid-turn; the fallback records what `Carried` did (resumed, and whether the detour waits) |
+| R5-8, R4B-4 | a comment named `meta.detour_stay_threshold`, which doesn't exist | reworded to the offer question and `meta.detour_offer_threshold` |
+| R4B-3 | live offers read lower than train (0.69-0.87) | no change for it; the bar moved to the no side (0.35), not up |
+
+A probe on the live replay after "nickel": "commite ça" read wrap_up
+0.93-0.97 whichever work was in progress (the resumed migration, or the
+detour), so keeping the detour paused alone could not stop the commit
+from closing the migration; closing the waiting detour instead does.
+
+### The benchmark
+
+16 new invented train cases (`r6-`), English and French, in three new
+contexts: acknowledgements ("perfect", "lgtm", "ok", "great", "sounds
+good", "nickel", "super", "parfait", "top", "c'est bon") to offers of more
+of an open or committed detour or of a wrap-up step, also with a remark
+after the offer or without a question mark (12), and to closing questions
+or an offer to go back (4). 683 train cases (646 main), 210 test
+(unchanged, not run).
+
+On the offer subset (49 cases, 3 answers each): with round 4's wording
+the new offers read 0.43-0.89 (one under 0.5 in all three answers); with
+the new wording 0.50-0.84, and the closers and offers to go back 0.04-0.20.
+
+### Results (train split, two runs of 3)
+
+| main scope | round 4 fixed (630 cases) | second review (646 cases) |
+|---|---:|---:|
+| router decision exact / acceptable | 93% / 98% | 93.0% and 92.7% / 98% |
+| rank error | 0.09 | 0.082 and 0.086 |
+| decisions below / above the label | 24-25 / 114-117 | 24 and 21 / 112 |
+| follow-ups below their work | 0 of 984 | 0 of 1020 and 0 of 943 |
+| detour offer | 99/99 at 0.5 | 147/147 and 114/114 at 0.35 (offers 0.51 and up, closers at most 0.20) |
+| relation right | 85% | 84% |
+| explicit precision / recall | 100% / 88% (0 false) | 100% / 89% (0 false) |
+| ultracode on/off | 1874-1875 of 1887 | 1923 of 1935 and 1818 of 1830 |
+| gate | passes | passes (both runs) |
+
+The second run lost 106 of its 2049 answers to OpenRouter's "insufficient
+credits" at its end (the third answer of some cases); its figures are on
+the 1943 that came back. The 16 new cases scored 100% in both runs
+(in-sample: the wording names acknowledgements). On the round-4 fixer's
+saved answers, the new rules change no decision (same exact, rank error,
+below/above and follow-ups).
+
+### Thresholds
+
+`detour_offer_threshold` 0.5 → 0.35, the middle of the 0.20-0.51 train
+gap. The others are unchanged (relation 0.55, explicit 0.8, model 0.85,
+the 0.9 bar for lowerings, ultracode 0.8, Haiku 0.92).
+`eval.DefaultGate` is unchanged.
+
+### Still open
+
+- The reviewer's probes and a live session with the new wording: not
+  run, OpenRouter credits ran out during the second train run.
+- A fresh held-out set (held-out 3 was used once, on round 4's fixes).
+- The repo's test split (not run this round).

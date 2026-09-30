@@ -224,3 +224,21 @@
   - The third fresh held-out set, run once with `--check`.
   - Live sessions for detour offers with the offer question.
   - Model requests without a reason and English plain-word requests for parallel agents, both under their bars.
+
+## 2026-10-01 — Warm routing round 4, second review: acknowledgements accept a detour offer
+- Trigger: a second adversarial review of the round-4 fixes and a live run in three Claude Code sessions (a go-ahead that stayed on a detour ran at xhigh and raised it; "nickel" or "lgtm" to an offer of more of the detour read as no and went back to the paused work).
+- Changes:
+  - `[questions.offer]`: the yes wording says a bare acknowledgement ("ok", "perfect", "lgtm", "super", "top", "nickel", "parfait") right after an offer accepts it; the no wording adds "Can I go on?" to the closing questions and says the message decides, whatever the go-ahead's words.
+  - `meta.detour_offer_threshold` 0.5 → 0.35, the middle of the new train gap. Other thresholds unchanged (relation 0.55, explicit 0.8, model 0.85, lowering bar 0.9, ultracode 0.8, Haiku 0.92).
+  - Outside the catalog: a go-ahead that stays on a detour while bigger work waits runs at the detour's level at most and never raises it; a go-ahead to a proposal is a wrap-up step or an aside only when Jev is sure of that relation alone or the work is done; going back by default keeps an open detour waiting, and the next wrap-up closes it rather than the work; on a tie a new detour keeps the work paused first; a Jev timeout leaves the work to the late decision; after a done work, "yes" to a proposal holds the work's level and never becomes a work named "yes"; `Proposes` reads a question followed by a list or a longer remark, "si tu le veux", "si besoin", "tu me dis si", "if needed", and "?" before a no-break space; the lowering pre-filter accepts tbh, imo, lol, though, cause, cuz, bc, histoire, genre after the effort; no offer question on a prompt typed mid-turn.
+  - Benchmark: 16 new invented train cases (`r6-`, acknowledgements to offers and to closing questions after a detour). 683 train, 210 test (unchanged, not run).
+- Reasons (`automodel eval --split train`, 646 main cases, two runs of 3; round-4 fixes on 630 cases in brackets):
+  - Decision exact 93.0% and 92.7% [93%], acceptable 98% [98%], rank error 0.082 and 0.086 [0.09]; below / above the label 24 and 21 / 112 [24-25 / 114-117].
+  - Follow-ups below their work 0 of 1020 and 0 of 943 [0 of 984]; detour offer at 0.35: 147/147 and 114/114 right, offers 0.51 and up, closing questions and offers to go back at most 0.20.
+  - Explicit requests: precision 100% (0 false), recall 89% [88%]. Ultracode on/off 1923 of 1935 and 1818 of 1830. Regression gate on train: pass (both runs).
+  - The second run lost 106 of 2049 answers to OpenRouter's "insufficient credits"; its figures are on the 1943 answers that came back.
+  - On the round-4 fixes' saved answers, the new rules change no decision.
+- Sources: docs/research/2026-09-warm-routing.md (§12).
+- Still to verify:
+  - The reviewer's probes and a live session with the new wording (OpenRouter credits ran out).
+  - A fresh held-out set; the repo's test split.
