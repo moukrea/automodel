@@ -188,9 +188,10 @@ line instead. Skip the call when `AUTOMODEL_CHAINED=1`.
 | `warm` | any other prompt (`features.warm_decisions`) | see below |
 
 **The work in progress.** A session keeps its work in progress: the tier
-and mode it was decided at, and the prompt that started it. The first
-prompt sets it, and so does a prompt that starts separate work or an effort
-or mode you ask for in words. Jev's level question rates the new prompt's
+and mode it was decided at, the model it runs on when you asked for one in
+words, and the prompt that started it. The first prompt sets it, and so
+does a prompt that starts separate work or an effort, a mode or a model you
+ask for in words. Jev's level question rates the new prompt's
 own words, but the effort runs the whole turn, which carries the pending
 work on: "also add a test for that" after a race fix reads as medium work.
 So every later prompt also gets Jev's answer on how it relates to that work
@@ -201,14 +202,16 @@ So every later prompt also gets Jev's answer on how it relates to that work
 | `continue` | "yes", "vas-y", "resume, the limits are reset" | at least the work's |
 | `extend` | "also add a test for that", "mais garde l'ancienne API" | at least the work's |
 | `inform` | "FYI it only fails on ARM", "env vars win" | at least the work's |
-| `side_question` | "is CI green yet?", "t'en es où ?" | at least the work's |
-| `wrap_up` | "write the commit message", "push it" | its own; the work stays |
-| `new_task` | "now rename the config loader" | its own; it becomes the work |
+| `side_question` | "is CI green yet?", "t'en es où ?", even an unrelated question while the work is pending | at least the work's |
+| `resume` | "back to the migration", "reprends le refacto" (only offered when a detour paused some work) | the paused work's; it becomes the work again |
+| `wrap_up` | "write the commit message", "push it", a recap of finished work | its own; the work stays |
+| `new_task` | "now rename the config loader", the same change on another page | its own; it becomes the work |
 
 A prompt gets its own level, lower if that is its level, only when Jev puts
-at least `meta.relation_separate_threshold` (0.6) on `wrap_up` and
-`new_task` together. Any other prompt keeps at least the work's tier and
-mode, and raises the work when it needs more. Upgrades are never held back:
+at least `meta.relation_separate_threshold` (0.5) on `wrap_up` and
+`new_task` together (from the eval: follow-ups top out at 0.42 on the
+train split). Any other prompt keeps at
+least the work's tier and mode, and raises the work when it needs more. Upgrades are never held back:
 a low session given a hard new task goes up at once, since the floor is the
 work in progress, never the tier of the last prompt. Two kinds of prompt
 never lower the tier or drop the mode, whatever Jev says:
@@ -217,6 +220,15 @@ call and no turn end since), and a message from another Claude session
 (`<cross-session-message>`). A compaction keeps the work in progress: the
 decision on its summary can't go below it, and the next prompts still show
 Jev its goal (recent prompts restart at the compaction).
+
+**A detour pauses the work.** A new task below the work in progress ("quick
+one: fix the typo in the README" in the middle of a migration) doesn't make
+the migration forgotten: it is kept, paused, with its tier, mode, model and
+goal. While it waits, Jev sees it (`paused_work`: goal and level) and the
+relation question offers `resume`; a prompt that goes back to it ("ok, back
+to the migration", "continue l'audit") brings its tier, mode and model back,
+and it is the work in progress again. Another new task, or two hours, drop
+it.
 
 **Warm turns.** Changing the model rebuilds the whole prompt cache, and so
 does changing the top-level effort. Models with `per_turn_effort` (Opus 5.5)
@@ -299,6 +311,8 @@ still win.
   prompt pins it the same way; **`[effort:auto]`** hands control back to Jev.
   A pin keeps ultracode on unless its effort is below ultracode's own
   (`xhigh`), and it keeps the work in progress for when routing resumes.
+  On a model a work runs on because you asked in words, it pins that model
+  at that effort (so does `/effort`).
 - **`[model:sonnet]`** (any catalog model by alias, with a 1M window) pins
   the model too, at the effort of `[effort:X]` or the current one;
   `[model:auto]` releases it. Switching model rewrites the prompt cache.
@@ -309,13 +323,24 @@ still win.
   model, up or down, and the work in progress with it. "Fais ça en
   ultracode" or "use parallel agents for the audit" turns ultracode on;
   "pas besoin d'ultracode" or "no workflows for this" turns it off.
-  "Utilise sonnet pour ça" pins the model like `[model:sonnet]`. A regex
+  "Passe sur Sonnet pour la suite" runs the work in progress on Sonnet,
+  not the session: routing goes on (Jev is still asked), follow-ups and
+  wrap-ups run on Sonnet at the effort picked (its default when Sonnet
+  lacks it), and a separate new task, or asking for Opus again, goes back
+  to the tiers. Only `[model:sonnet]` pins a model for good. A regex
   finds the words that may make a request: effort names (`low`, `medium`
   and `high` only next to "effort", "en", "in", "at", "passe", "switch",
   "use"…), "ultracode", "workflows", "en parallèle", "plusieurs agents",
-  "parallel agents", model names. Jev then confirms each one is a request
+  "parallel agents", the names of models other than the session's (Haiku,
+  the asked tier, is never one). Jev then confirms each one is a request
   and not a mention like "why did it stay at xhigh?", from
-  `meta.explicit_threshold` (0.8).
+  `meta.explicit_threshold` (0.6). A model has its own question, about the
+  model the assistant itself should run on: model news, comparisons,
+  benchmarks, "why did it pick Opus?", a subagent or a config set to a
+  model and refusals are all no, and it needs
+  `meta.explicit_model_threshold` (0.75). On the eval, requests score 0.72
+  and up (0.81 and up for a model), mentions and refusals 0.10 at most:
+  none was ever confirmed.
 - **"ultrathink"**: at least `xhigh` for that prompt, without asking Jev.
   **"think harder"**, "take your time", "réfléchis à fond", "en profondeur",
   "mets le paquet"… (confirmed by Jev): one tier above the work in progress,
@@ -441,6 +466,7 @@ automodel catalog check [--json]    # validation of the catalog in use (non-zero
 automodel why [--session id] [-n 5] [--scope main] [--follow]  # what Jev answered for the last decisions, and why
 automodel report [--since 7d] [--json] [--baseline xhigh]
 automodel eval [--catalog path] [--format score|choice]    # Jev on labeled cases: accuracy, confidence, calibration
+automodel eval --catalog path --answers run.json   # the same answers (a saved --json run) under another policy, without Jev
 automodel flag [--session id] [--n 1] --want xhigh [--note "..."]  # that pick was wrong
 ```
 
@@ -455,8 +481,9 @@ to 2 MB per session, metadata only under `privacy = "metadata"`);
 `why` shows each decision like the demo's popup: every level with its
 probability, the pick, the previous tier, and the reasons: the prompt's
 relation to the work in progress and why the tier was held at the work's
-level or left to the prompt's own, requests made in words, switch cost and
-expected gain, pin, go-ahead, your signals, Jev failures.
+level or left to the prompt's own, work paused by a detour and resumed,
+requests made in words, switch cost and expected gain, pin, go-ahead, your
+signals, Jev failures.
 `report` lists **suggestions** drawn from your habits, each with its
 evidence, only after 5 events or more: a repo where you often pin an effort
 above Jev's pick (or ask to think harder, or interrupt turns picked below

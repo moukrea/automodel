@@ -183,7 +183,10 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      `automodel eval --catalog catalog.proposed.toml --split test --repeat 3 --summary --check`
      must print "regression gate: pass" (decision exact ≥ 88%, recall ≥ 80%
      per tier, each tier's decision share within 6 points of its label
-     share, rank error ≤ 0.12). A proposal that fails is not proposed. If
+     share, rank error ≤ 0.12, no follow-up decided below its label or
+     below the work it holds, and no effort, mode or model request
+     confirmed on a prompt that doesn't make one; run the train split with
+     `--check` too for the last two). A proposal that fails is not proposed. If
      a new Jev version or tier set makes a gate unreachable, report it with
      the tables; changing `eval.DefaultGate` needs the user's approval.
    - Tune on `--split train` only. The `test` cases are held out: look at
@@ -191,11 +194,15 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      the gate stops meaning anything. New cases go to train unless you add a
      batch big enough to split (alternate train/test within each label).
    - Thresholds come from the eval, never from intuition: a mode's
-     `threshold`, an asked tier's `threshold` and `meta.explicit_threshold`
-     (default 0.8) sit in the gap between the yes-cases' and no-cases'
-     probabilities on the train split (print them with `--json`); if there
-     is no gap, pick the value with the fewest false no's and rewrite the
-     yes/no criteria. `meta.relation_separate_threshold` (default 0.6) is
+     `threshold`, an asked tier's `threshold`, `meta.explicit_threshold`
+     (effort and mode requests) and `meta.explicit_model_threshold` (model
+     requests, stricter: a mention must never become the model in use) sit
+     in the gap between the yes-cases' and no-cases' probabilities on the
+     train split (print them with `--json`); if there is no gap, pick the
+     value with the fewest false no's and rewrite the yes/no criteria.
+     Compare thresholds and rules on the same answers with `automodel eval
+     --catalog <variant> --answers <saved --json run>` (no Jev call, no
+     noise); wording changes need live runs of 3 repeats. `meta.relation_separate_threshold` (default 0.6) is
      where P(new_task) + P(wrap_up) separates the separate cases from the
      follow-ups (no follow-up below the label: the gate checks it).
      `features.warm_min_confidence`
@@ -264,6 +271,7 @@ proposed copy. In a scheduled/unattended run, stop at the report.
    3. run `automodel eval` on both versions (`--repeat 3`, train and test,
       `--check`); recalibrate mode thresholds,
       `relation_separate_threshold`, `explicit_threshold`,
+      `explicit_model_threshold`,
       `features.warm_min_confidence`, `underprovision_penalty` and (v1
       policy) `theta_act` / `theta_low` for the new version;
    4. switch `meta.jev_model`, clear `jev_shadow_model`, log it in the history.
