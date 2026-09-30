@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/moukrea/automodel/internal/policy"
 	"log"
 	"os"
@@ -26,6 +27,11 @@ import (
 const UltracodeOn = `Ultracode is on for this session. The user enabled automatic routing, and the router turned on the ultracode mode for this work: this is the user's standing opt-in to workflow orchestration, equivalent to launching with --effort ultracode. Author and run a workflow (Workflow tool) for every substantive task by default, following the ultracode guidance of the workflow-authoring reference: decompose and cover in parallel, adversarially verify findings, and prefer several scoped workflows in sequence for multi-phase work. Work solo only on conversational turns or trivial mechanical edits. This stays in force until a reminder says ultracode is off.`
 
 const UltracodeOff = `Ultracode is now off for this session (the automatic router moved back to single-thread work). Revert to the opt-in rule in the Workflow tool description.`
+
+// UltracodeOffTurn is injected instead of UltracodeOff when the prompt is
+// answered alone (a wrap-up, a side question, an aside) and the work in
+// progress keeps the mode for its next follow-up.
+const UltracodeOffTurn = `Ultracode is off for this turn only (the automatic router answers this prompt single-thread; the work in progress keeps ultracode, and a reminder will say when it is back on). For this answer, revert to the opt-in rule in the Workflow tool description.`
 
 // Decide is the UserPromptSubmit hook. It decides the main-session tier at
 // the moments the prompt cache is already lost (first prompt, compaction,
@@ -133,6 +139,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	var dec *state.Decision
 	var signals *state.RepoSignals
 	var work *router.WorkUpdate // what the decision makes of the work in progress
+	var asked *router.Asked     // an effort or a model the prompt asked for in words
 	spawnTrigger := ""          // Jev timed out: decide again in the background
 	// A pin keeps the ultracode mode unless its effort is below the mode's.
 	if pin != "" && !synthetic {
@@ -218,7 +225,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if out.TimedOut && !late {
 			spawnTrigger = trigger
 		}
-		work = out.Work
+		work, asked = out.Work, out.Asked
 		if !out.Changed || (late && out.TimedOut) {
 			dec = nil
 		}
@@ -294,6 +301,12 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			notice, s.UltracodeOn, s.UltracodeEpoch = UltracodeOn, true, s.Main.Epoch
 		case !want && s.UltracodeOn:
 			notice, s.UltracodeOn = UltracodeOff, false
+			if w := s.Work; w != nil && env.Catalog.Modes[w.Mode] != nil && env.Catalog.Modes[w.Mode].Workflows {
+				notice = UltracodeOffTurn
+			}
+		}
+		if n := askedNotice(env.Catalog, asked, s.Main); n != "" {
+			notice = strings.TrimSpace(notice + "\n\n" + n)
 		}
 		return true
 	})
@@ -310,6 +323,38 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, nil
 	}
 	return &Output{HookSpecificOutput: &Specific{HookEventName: "UserPromptSubmit", AdditionalContext: notice}}, nil
+}
+
+// askedNotice tells Claude that the effort or the model the user asked
+// for in words runs (d: the decision in force): without it Claude answers
+// that it can't change its own effort, or hands the work to a subagent on
+// the model asked. "" when nothing was asked, or the decision doesn't run
+// it (the budget cap, the repo's bounds).
+func askedNotice(c *catalog.Catalog, a *router.Asked, d *state.Decision) string {
+	if a == nil || d == nil {
+		return ""
+	}
+	var on []string
+	after := "(the automatic router already applied it)"
+	if a.Model != "" {
+		m := c.Model(a.Model)
+		if m == nil || d.Model != a.Model {
+			return ""
+		}
+		on = append(on, "on "+m.Label)
+		after = "(the automatic router already switched the model: no subagent is needed for that)"
+	}
+	if a.Effort != "" {
+		if d.Effort != a.Effort {
+			return ""
+		}
+		on = append(on, "at "+a.Effort+" effort")
+	}
+	what := "this work now runs"
+	if a.Turn {
+		what = "this answer runs"
+	}
+	return fmt.Sprintf("automodel: %s %s, as the user asked %s.", what, strings.Join(on, " "), after)
 }
 
 // modelEffort is the effort a model pin runs at: the first of efforts the

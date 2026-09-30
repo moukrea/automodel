@@ -139,6 +139,17 @@ type Outcome struct {
 	TimedOut bool
 	// Work is what becomes of the session's work in progress (nil: nothing).
 	Work *WorkUpdate
+	// Asked is the effort or the model the prompt asked for in words that
+	// the decision takes (nil: none).
+	Asked *Asked
+}
+
+// Asked is an effort or a model (catalog key) a prompt asked for in words
+// and Jev confirmed. Turn: for that answer only (a wrap-up, a side
+// question, an aside), not for the work.
+type Asked struct {
+	Effort, Model string
+	Turn          bool
 }
 
 // Decide asks Jev (and the shadow model, if configured) and applies the
@@ -327,14 +338,14 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	if v.Keep != "" {
 		d, out := keep(v.Keep)
-		out.Work = v.Work
+		out.Work, out.Asked = v.Work, v.Asked
 		return d, out
 	}
 	rec.Chosen, rec.Model, rec.Effort, rec.Mode = dec.Tier, dec.APIID, dec.Effort, dec.Mode
 	if err := e.Ledger.Append(rec); err != nil {
 		log.Printf("ledger: %v", err)
 	}
-	return dec, Outcome{Changed: true, Work: v.Work}
+	return dec, Outcome{Changed: true, Work: v.Work, Asked: v.Asked}
 }
 
 // noteJev records on the session why Jev couldn't answer (shown by the
@@ -391,6 +402,8 @@ type Verdict struct {
 	// one the prompt asked for in words, else the one the work it follows
 	// up runs on ("": the tier's).
 	Model string
+	// Asked is the effort or the model the prompt asked for in words.
+	Asked *Asked
 }
 
 // Judge applies the policy to a reading, in this order: an effort the
@@ -512,6 +525,12 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	if x.model != "" {
 		v.Model = e.offTiers(x.model)
 		why = append(why, "explicit model "+x.model)
+	}
+	if x.effort != nil || x.model != "" {
+		v.Asked = &Asked{Model: x.model, Turn: !fresh && (thisTurn(top) || hold == nil)}
+		if x.effort != nil {
+			v.Asked.Effort = x.effort.Effort
+		}
 	}
 	v.Tier, v.Mode, v.Hold = tier, mode, strings.Join(why, "; ")
 	// The model the work runs on: the gate below only keeps this turn on

@@ -1048,3 +1048,66 @@ func TestWorkModelGoneFromTheCatalog(t *testing.T) {
 		t.Errorf("prompt not handled: last prompt %v → %v, pin %q", before.LastPromptAt, s.LastPromptAt, s.Pin)
 	}
 }
+
+// Claude is told when an effort or a model asked for in words runs (live,
+// without it Claude answered that it couldn't change its own effort, and
+// handed a CSS task to a Sonnet subagent on top of the Sonnet turn): for
+// the work, or for that answer only; nothing on a mention, nor when the
+// budget cap keeps the decision below what was asked. Turned off for an
+// answer alone, ultracode is off for that turn, not the session.
+func TestNoticesSayWhatRuns(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	decide := func(sid, p string, a fa) string {
+		t.Helper()
+		fj.answers = []fa{a}
+		out := run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd})
+		if out == nil {
+			return ""
+		}
+		return out.HookSpecificOutput.AdditionalContext
+	}
+	x := func(id string, p float64) map[string]float64 { return map[string]float64{id: p} }
+	for i, c := range []struct {
+		tier, prompt string
+		jev          fa
+		want         string
+	}{
+		{"xhigh", "passe en low pour la suite, c'est mécanique", fa{tier: "medium", conf: 0.9, rel: "extend", x: x("effort_low", 0.95)},
+			"automodel: this work now runs at low effort, as the user asked (the automatic router already applied it)."},
+		{"low", "passe en low pour la suite, c'est mécanique", fa{tier: "low", conf: 0.9, rel: "extend", x: x("effort_low", 0.95)},
+			"automodel: this work now runs at low effort, as the user asked (the automatic router already applied it)."},
+		{"xhigh", "write the commit message, in low effort", fa{tier: "low", conf: 0.95, rel: "wrap_up", x: x("effort_low", 0.95)},
+			"automodel: this answer runs at low effort, as the user asked (the automatic router already applied it)."},
+		{"low", "fais le prochain avec Sonnet, c'est du CSS simple : crée static/style.css", fa{tier: "low", conf: 0.9, rel: "new_task", x: x("model_claude-sonnet-5-5", 0.95)},
+			"automodel: this work now runs on Sonnet 5.5, as the user asked (the automatic router already switched the model: no subagent is needed for that)."},
+		{"high", "passe sur sonnet en xhigh pour la suite", fa{tier: "high", conf: 0.9, rel: "extend", x: map[string]float64{"model_claude-sonnet-5-5": 0.95, "effort_xhigh": 0.95}},
+			"automodel: this work now runs on Sonnet 5.5 at xhigh effort, as the user asked (the automatic router already switched the model: no subagent is needed for that)."},
+		{"high", "pourquoi c'est resté en xhigh tout à l'heure ?", fa{tier: "low", conf: 0.9, rel: "aside", x: x("effort_xhigh", 0.04)}, ""},
+	} {
+		sid := fmt.Sprint("n", i)
+		workSession(t, env, sid, c.tier, "", c.tier)
+		if got := decide(sid, c.prompt, c.jev); got != c.want {
+			t.Errorf("%q: notice %q, want %q", c.prompt, got, c.want)
+		}
+	}
+	env.Cfg.Budget.USDPerSession = 1
+	workSession(t, env, "cap", "medium", "", "medium")
+	env.State.Update("cap", func(s *state.Session) bool { s.TotalUSD = 5; return true })
+	if got := decide("cap", "fais la suite en xhigh", fa{tier: "medium", conf: 0.9, rel: "extend", x: x("effort_xhigh", 0.95)}); got != "" {
+		t.Errorf("effort over the budget cap: notice %q", got)
+	}
+	env.Cfg.Budget.USDPerSession = 0
+
+	workSession(t, env, "u1", "xhigh", "ultracode", "xhigh")
+	if got := decide("u1", "small unrelated question: what's the Python equivalent of flatMap?", fa{tier: "low", conf: 0.9, ultra: 0.95, rel: "aside"}); got != UltracodeOffTurn {
+		t.Errorf("aside in an ultracode session: %q", got)
+	}
+	if got := decide("u1", "ok, go", fa{}); !strings.HasPrefix(got, "Ultracode is on") {
+		t.Errorf("go-ahead after the aside: %q", got)
+	}
+	if got := decide("u1", "no need for ultracode here, just fix the error message", fa{tier: "low", conf: 0.9, ultra: 0.1, rel: "extend", x: x("mode_off", 0.95)}); got != UltracodeOff {
+		t.Errorf("ultracode refused: %q", got)
+	}
+}
