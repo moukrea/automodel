@@ -194,18 +194,25 @@ func Apply(o Options) error {
 	if err := startService(o, cfg); err != nil {
 		return err
 	}
-	if raw != nil {
-		backup := fmt.Sprintf("%s.automodel-backup-%s", o.SettingsPath, time.Now().Format("20060102-150405"))
-		if err := os.WriteFile(backup, raw, 0o600); err != nil {
+	before, _ := json.Marshal(settings)
+	merge(settings, o, cfg)
+	after, _ := json.Marshal(settings)
+	switch {
+	case raw != nil && bytes.Equal(before, after):
+		o.Log("settings already up to date: %s", o.SettingsPath)
+	default:
+		if raw != nil {
+			backup := fmt.Sprintf("%s.automodel-backup-%s", o.SettingsPath, time.Now().Format("20060102-150405"))
+			if err := os.WriteFile(backup, raw, 0o600); err != nil {
+				return err
+			}
+			o.Log("settings backup: %s", backup)
+		}
+		if err := writeSettings(o.SettingsPath, settings); err != nil {
 			return err
 		}
-		o.Log("settings backup: %s", backup)
+		o.Log("settings updated: %s", o.SettingsPath)
 	}
-	merge(settings, o, cfg)
-	if err := writeSettings(o.SettingsPath, settings); err != nil {
-		return err
-	}
-	o.Log("settings updated: %s", o.SettingsPath)
 	return installCommands(o)
 }
 
