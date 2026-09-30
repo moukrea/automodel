@@ -10,8 +10,10 @@ runs use `typesafe/jev-1.13`, 3 calls per case. Sections 1 to 6 describe
 the first round; section 7 the review that followed, its fixes and the
 retune, and it corrects §4: the first round's test split was not held out.
 Section 8 is round 3: the first fresh held-out run (79% exact), what it
-found and the fixes. Every prompt quoted here is an invented paraphrase;
-no real prompt is reproduced.
+found and the fixes. Section 9 is the final review, the second held-out
+run and the repo's test split, and the fixes before the release. Every
+prompt quoted here is an invented paraphrase; no real prompt is
+reproduced.
 
 ## 1. The problem
 
@@ -574,3 +576,127 @@ held-out number.
   ("set the effort to medium for the rest", aside 0.43–0.54 in some
   answers) is applied to that turn only, not to the work.
 - Live sessions for the turn-only mode and the done-work go-ahead.
+
+## 9. Final review and held-out run 2 (2026-09-30)
+
+Round 3's code (19150d5) went through three final reviews (robustness,
+routing, and a second live run in real Claude Code sessions on an
+isolated proxy), and was measured on two sets it had never seen.
+
+### Held-out run 2
+
+A second fresh set: 136 invented main-scope cases (28 conversations, a set
+of first prompts and a cold session), written apart from the tuning
+material and run once on 19150d5, two runs of 3. The released v0.15.1,
+on the same set, for comparison:
+
+| main scope | v0.15.1 | 19150d5 (two runs) |
+|---|---:|---:|
+| router decision exact | 62% | 89% |
+| acceptable | 67% | 94% |
+| rank error | 0.61 | 0.15–0.16 |
+| decisions below the label | 120 | 7–11 (6–8 on follow-ups) |
+
+Precision held: no effort, mode or model request was confirmed on a
+prompt that makes none (recall 83–87%). Relation 79% right; ultracode
+on/off 406–408 of 408; the model the work runs on 12 of 12–13.
+
+The gate failed: rank error 0.15–0.16 (> 0.12), 6–8 decisions below the
+label on follow-ups, and 6 decisions below the work they follow up, where
+the owner's rule is 0. Two stable relation misreads account for those 6,
+in every answer:
+
+- a fact about the work's resources ("the cluster has N nodes free until
+  6pm" on xhigh work) read as an aside (0.67–0.71), which gets its own
+  level: high;
+- "also … can you check that too?" after a quoted "think harder" read as
+  a new task (0.93): medium.
+
+The set was analysed case by case for this, so it is used up, like the
+first one.
+
+### The repo's test split
+
+The benchmark's own test split (210 cases, re-split by conversation in
+round 2 and never run since) was run once on the same build: main 86–87%
+exact, 92–93% acceptable, rank error 0.19–0.20, 11 decisions below the
+label on follow-ups and 11 below their work, low recall 76–77% (medium 78%
+in one run); precision 100% (33 confirmed, 0 false, 6 missed); subagent
+88–91% exact, 100% acceptable. The gate fails there too (exact 86–87% <
+88%, rank error, follow-ups, low recall). Its cases were not read: the
+split stays held out.
+
+### The owner's decision
+
+`eval.DefaultGate` is unchanged and still fails on both held-out sets,
+while every run on train passes it. On held-out run 2 the branch is far
+ahead of the released version (89% exact against 62%, 7 decisions below
+the label against 120). The owner decided to release it and keep
+iterating, starting with the fixes below.
+
+### What the reviews found, and the fixes
+
+| item | finding | fix |
+|---|---|---|
+| R1 | round 3 routed every go-ahead on a done work; after a detour that was committed ("commit that"), "vas-y" reopened the typo fix at low and left the xhigh ultracode migration paused (live: 20 of 27 answers) | the fast path and the go-ahead to a proposal are kept when the paused work needs more than the done work (`router.Acknowledges`), in the hooks and the eval |
+| R9 | a go-ahead typed while the detour still runs switched the turn to the paused work | typed mid-turn, it goes on with the turn's tier and mode |
+| R3 | "think harder" on an extension Jev rates higher got one rank up, less than the same prompt without the words (medium work, level max at 0.9: high) | the exact rank up applies when the extra can only come from the words (not an extension, or a level below `warm_min_confidence`); otherwise the higher pick stands |
+| R4 | "yes" to "Want me to push the branch and open the PR?" on done work read as continue (9 of 9 live answers): reopened at xhigh | `continue`'s `not_for` and `wrap_up`'s `what` say a go-ahead to a proposed wrap-up step is a wrap-up |
+| R2 | facts about the work's resources read as asides (held-out run 2, and 0.67–0.87 in live probes); an instruction to set an effort in a tuning file read as an aside (0.53) and lowered xhigh work to low | `inform` names facts about the work's environment, resources, schedule or people (EN/FR examples); `aside`'s `not_for` sends them to inform and says an instruction is never an aside |
+| R5 | a shell command run with `!` wrote user entries that started a turn: the next prompt counted as mid-turn (a wrap-up held at xhigh with the mode) | `<bash-input>`, `<bash-stdout>`, `<bash-stderr>` are synthetic |
+| R6 | a model asked for a wrap-up, a side question or an aside became the work's; "ultrathink" on a side question, or one Jev rates above the work, raised the work for good | a turn-only prompt changes nothing of the work (a wrap-up still marks it done) |
+| R7 | the confidence gate that keeps a turn on a model asked in words wrote that model into the new task it started, and into its sure follow-ups | the new work gets the verdict's model from before the gate |
+| R8 | on a cold turn or after a compaction, a done ultracode work's mode stayed in force (turning it off needs a clear no) | a done work's mode is not in force, and a compaction after a wrap-up holds nothing |
+| R10 | lowerings the effort question's yes side lists ("drop to medium for what's left", "low suffit") were never put to Jev: the regex missed them | a pattern for lowerings and caps: drop / down to / (re)descends à, is enough, suffit, c'est assez |
+| R11 | live, Claude answered "I can't change my own effort" after "passe en low", and started a Sonnet subagent after a Sonnet request the turn already ran on | one injected line when an effort or a model asked in words runs ("automodel: this work now runs at low effort, as the user asked…") |
+| R12 | on an aside in an ultracode session the notice said the mode was off "for this session" | it says off for this turn only when the work keeps the mode |
+| R13 | the hold reason named the likeliest relation even when it was a separate one ("follow-up of the work in progress (new_task 0.45)") | it names the likeliest relation that follows the work up |
+
+Each fix has unit tests (hooks, router, transcript, eval), and 19 train
+cases were added (invented text): the go-ahead after a committed detour
+(4, EN/FR, bare and to a proposal), facts about the work's surroundings (4)
+and a standalone config instruction, go-aheads to a wrap-up step on done
+work (3), lowerings the wider regex finds (4) and mentions it now puts to
+Jev (3).
+
+### Results (train split, 3 runs each)
+
+| main scope | round 3 final | after the fixes (two runs) |
+|---|---:|---:|
+| cases | 406 | 425 (19 new) |
+| router decision exact / acceptable | 92.0–92.1% / 97.7–97.8% | 92.1–92.3% / 97.6% |
+| the same, on round 3's 406 cases | | 92.0–92.2% / 97.7–97.8% |
+| rank error | 0.09 | 0.09 |
+| decisions below / above the label | 15 / 81–83 | 15 / 83–86 |
+| recall low / medium / high / xhigh / max | 91 / 88 / 87 / 98 / 100% | 91 / 88–89 / 87 / 99 / 100% |
+| follow-ups below the label / their work | 0 / 0 of 585 | 0 / 0 of 615 |
+| relation right (ECE) | 86.2–86.6% (0.02–0.03) | 87.2% (0.03) |
+| explicit: right / false / missed | 109–110 / 0 / 19–20 | 119–120 / 0 / 21–22 |
+| ultracode on/off | 1204–1205/1215 | 1262–1263/1272 |
+
+No case of round 3 lost more than two answers in six. The one that lost
+two is a request for parallel agents without the word ultracode ("do sms
+and push in parallel with several agents") that Jev confirmed at 0.80
+this time (0.76–0.79 before): ultracode turned on as labelled, at the
+xhigh it runs, where the label says high. The 19 new cases are right in
+54 of 57 answers in each run: the four facts about the work's
+surroundings read as inform (0.66–1.00), the config instruction as a new
+task (0.81–0.85), the three go-aheads to a wrap-up step as wrap-ups
+(0.82–0.98), the go-aheads after a committed detour resume the migration
+with ultracode (24 of 24 answers, two of them through the proposal path),
+and the three mentions the wider regex finds are no requests (0.02–0.04).
+The lowering "low suffit pour la suite" reads 0.86–0.89, under the 0.9
+bar, and stays at the work's high in all six answers.
+
+`eval.DefaultGate` (unchanged) passes on train in both runs. Neither
+held-out set was run again: holdout 2 is used up, and the repo's test
+split waits for the next release candidate.
+
+### Still open
+
+- A third fresh held-out set, run once with `--check`, and the repo's
+  test split again, without reading its cases.
+- The 11 follow-ups below their work on the repo's test split, unread.
+- Lowerings Jev is less sure of stay under the 0.9 bar ("low suffit pour
+  la suite" 0.86–0.90).
+- Live sessions for the notices and the done detour.
