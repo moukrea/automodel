@@ -219,10 +219,13 @@ func userText(raw json.RawMessage) string {
 }
 
 // IsSynthetic reports prompts injected by Claude Code rather than typed by
-// the user: subagent hand-backs, slash-command wrappers, task notifications.
+// the user: subagent hand-backs, slash-command wrappers, task notifications,
+// and the entries of a shell command run with "!" (its input and output:
+// no turn starts, and the next prompt is not typed mid-turn).
 func IsSynthetic(text string) bool {
 	t := strings.TrimSpace(text)
-	for _, p := range []string{"<agent-message", "<command-", "<local-command", "<task-notification", "<system-reminder", "[SYSTEM NOTIFICATION"} {
+	for _, p := range []string{"<agent-message", "<command-", "<local-command", "<task-notification", "<system-reminder", "[SYSTEM NOTIFICATION",
+		"<bash-input", "<bash-stdout", "<bash-stderr"} {
 		if strings.HasPrefix(t, p) {
 			return true
 		}
