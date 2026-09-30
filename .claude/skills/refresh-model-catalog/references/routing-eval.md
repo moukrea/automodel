@@ -182,9 +182,10 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
 
 ## Running it
 
-Use a dev build and an isolated config: `automodel eval` loads the catalog
-through the store, which saves it as the last-good copy in the config's
-state dir.
+Use a dev build and an isolated config: without `--catalog`, `automodel
+eval` loads the configured catalog through the store, which saves it as the
+last-good copy in the config's state dir. A `--catalog` candidate is never
+saved (builds before v0.17 saved it too).
 
 ```sh
 go build -o /tmp/am ./cmd/automodel

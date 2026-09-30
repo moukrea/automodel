@@ -43,3 +43,25 @@ func TestCustomTuning(t *testing.T) {
 		t.Error("tuning = custom: not custom")
 	}
 }
+
+// A catalog evaluated with eval --catalog is a candidate: it never becomes
+// the hooks' last valid catalog in the state dir.
+func TestCandidateCatalogNotLastGood(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.StateDir, cfg.Catalog, cfg.CatalogExact = dir, "../../catalog.toml", true
+	cfg.NoLastGood = true
+	if _, err := NewStore(cfg).Get(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cfg.LastGoodCatalog()); !os.IsNotExist(err) {
+		t.Fatalf("candidate saved as last good: %v", err)
+	}
+	cfg.NoLastGood = false
+	if _, err := NewStore(cfg).Get(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(cfg.LastGoodCatalog()); err != nil {
+		t.Fatalf("routing catalog not saved as last good: %v", err)
+	}
+}

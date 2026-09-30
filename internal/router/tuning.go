@@ -15,8 +15,12 @@ import (
 // NewStore is the catalog store for a config: the default catalog, or the
 // user's custom tuning layered over it.
 func NewStore(cfg *config.Config) *catalog.Store {
-	return &catalog.Store{Path: cfg.Catalog, Custom: CustomTuning(cfg), Exact: cfg.CatalogExact,
+	s := &catalog.Store{Path: cfg.Catalog, Custom: CustomTuning(cfg), Exact: cfg.CatalogExact,
 		LastGood: cfg.LastGoodCatalog(), StaleDays: cfg.StaleDays}
+	if cfg.NoLastGood {
+		s.LastGood = ""
+	}
+	return s
 }
 
 // LoadCatalog returns the catalog a config routes with, and its issues.

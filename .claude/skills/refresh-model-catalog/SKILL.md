@@ -167,8 +167,9 @@ proposed copy. In a scheduled/unattended run, stop at the report.
    (`underprovision_penalty`, gates) or the Jev version change, and at every
    periodic refresh. Details and pitfalls: `references/routing-eval.md`.
    - Build a dev binary and run the eval with an isolated config (never the
-     real `~/.config/automodel`: the eval saves the evaluated catalog as the
-     last-good copy of its state dir):
+     real `~/.config/automodel`: an eval without `--catalog` saves the
+     configured catalog as the last-good copy of its state dir; builds before
+     v0.17 did it with `--catalog` too):
      `automodel eval --catalog catalog.proposed.toml --split train --repeat 3
      --summary`, and the same for the current `catalog.toml`. Jev varies a
      little between calls: compare runs of 3 repeats, never single runs.
