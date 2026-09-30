@@ -191,11 +191,14 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      the gate stops meaning anything. New cases go to train unless you add a
      batch big enough to split (alternate train/test within each label).
    - Thresholds come from the eval, never from intuition: a mode's
-     `threshold`, an asked tier's `threshold`, `meta.continues_threshold` and
-     `meta.informs_threshold` (default 0.6) sit in the gap between the
-     yes-cases' and no-cases' probabilities on the train split (print them
-     with `--json`); if there is no gap, pick the value with the fewest
-     false no's and rewrite the yes/no criteria. `features.warm_min_confidence`
+     `threshold`, an asked tier's `threshold` and `meta.explicit_threshold`
+     (default 0.8) sit in the gap between the yes-cases' and no-cases'
+     probabilities on the train split (print them with `--json`); if there
+     is no gap, pick the value with the fewest false no's and rewrite the
+     yes/no criteria. `meta.relation_separate_threshold` (default 0.6) is
+     where P(new_task) + P(wrap_up) separates the separate cases from the
+     follow-ups (no follow-up below the label: the gate checks it).
+     `features.warm_min_confidence`
      (costly switches only) sits where exact accuracy by confidence bucket
      jumps (0.8 for jev-1.13: 39–46% below, 83%+ above).
    - `meta.underprovision_penalty`: compare the cost-aware rule at several
@@ -206,8 +209,8 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      high; 1.5 was the measured optimum for jev-1.13. Cross-check with the
      ledger: warm switches up right after a switch down argue for more.
    - Add cases to `testdata/eval/routing.jsonl` for every misroute found in
-     the ledger (state, want, accept, note, modes, continues). Invent the
-     text: never copy real prompts (the repository is public). Before
+     the ledger (state, want, accept, note, modes, relation, explicit).
+     Invent the text: never copy real prompts (the repository is public). Before
      trusting ledger shares, drop demo and test sessions (sessions whose
      transcript lives in a demo project): in 2026-09, 77 of 98 decisions
      came from scripted demos built on extreme prompts.
@@ -259,7 +262,8 @@ proposed copy. In a scheduled/unattended run, stop at the report.
    2. after enough decisions, compare with `automodel report --json`
       (`shadow.agree_rate`, `shadow.disagreements`, confidence buckets);
    3. run `automodel eval` on both versions (`--repeat 3`, train and test,
-      `--check`); recalibrate mode thresholds, `continues_threshold`,
+      `--check`); recalibrate mode thresholds,
+      `relation_separate_threshold`, `explicit_threshold`,
       `features.warm_min_confidence`, `underprovision_penalty` and (v1
       policy) `theta_act` / `theta_low` for the new version;
    4. switch `meta.jev_model`, clear `jev_shadow_model`, log it in the history.

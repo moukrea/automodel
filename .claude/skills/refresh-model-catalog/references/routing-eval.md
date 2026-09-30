@@ -9,11 +9,12 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
 `testdata/eval/routing.jsonl`, one case per line:
 
 ```json
-{"id": "l-med-tsv", "scope": "main", "warm": true,
- "state": {"phase": "warm", "task": "...", "recent_prompts": ["..."], "last_assistant": "...",
-           "current": {"tier": "high", "effort": "high"}, "session": {...}, "repo": {...}},
- "want": "medium", "accept": ["low", "medium"], "continues": true,
- "note": "Small extension of finished work.", "split": "test", "modes": {"ultracode": false}}
+{"id": "w-extend-test", "scope": "main", "warm": true,
+ "state": {"phase": "warm", "task": "...", "work_in_progress": {"goal": "...", "level": "xhigh"},
+           "recent_prompts": ["..."], "last_assistant": "...",
+           "current": {"tier": "xhigh", "effort": "xhigh"}, "session": {...}, "repo": {...}},
+ "want": "xhigh", "accept": ["xhigh"], "relation": "extend",
+ "note": "A test for the race just fixed: part of that work.", "split": "test", "modes": {"ultracode": false}}
 ```
 
 - `state` has the shape the hooks send (`internal/hooks/decide.go`
@@ -36,8 +37,37 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   - **xhigh**: a subtle mistake is expensive (concurrency, security, money
     or data integrity, intermittent bugs of unknown cause, architecture);
   - **max**: defeated repeated expert attempts, research-grade, proofs.
-  A follow-up does not inherit the difficulty of the earlier work (a commit
-  message after a race fix is low); a go-ahead takes on the work it approves.
+  A follow-up that continues, extends, informs or asks about the work in
+  progress keeps that work's level, or more if it adds harder work: the
+  effort runs the whole turn, which carries the pending work on ("yes, and
+  add a test for that" after an xhigh race fix is xhigh; so is "is CI green
+  yet?" while that fix is pending). A wrap-up (commit message, summary, PR
+  description, push) or a separate new task gets its own level (a commit
+  message after a race fix is low). A go-ahead takes on the work it
+  approves. A prompt typed while Claude works or sent by another session is
+  labeled like a follow-up: it never lowers the work. An effort asked for
+  in words ("passe en low") is the label, up or down.
+- `relation` labels how a warm, resumed or post-compaction prompt relates
+  to the work in progress: `continue` (go-ahead, keep going, resume),
+  `extend` (adds to, constrains or corrects it), `inform` (a fact, a
+  preference or an answer, no new work), `side_question` (a question or a
+  check aside while the work stays pending), `wrap_up` (summary, commit,
+  PR, push, changelog of finished work) or `new_task` (separate work).
+  Label the relation from the conversation, not from the tier: the same
+  words can be a side question while work is pending and a new task once
+  it is done. `want` follows from it with the rubric above.
+- `explicit` labels what the prompt asks for in words: `{"effort": "xhigh"}`
+  (or `"more"` for "think harder" and its family), `{"mode": "ultracode"}`
+  (or `"off"`), `{"model": "sonnet"}`. A case without it asks for nothing,
+  so a mention ("why did it stay at xhigh?", "max retries is 3") has no
+  `explicit` and counts against precision if Jev confirms it. Include
+  mentions and refusals, in French and in English: they are what the
+  explicit questions must reject.
+- `state.work_in_progress` (`{goal, level}`, the level an effort name) is
+  the work in progress as the hooks send it; without it the eval takes
+  `state.current`. `state.mid_turn: true` marks a prompt typed while Claude
+  was working (the eval applies the mid-turn rule; it is not sent to Jev).
+  A message from another session starts with `<cross-session-message`.
 - `split`: `train` (tune on it) or `test` (held out). Keep labels balanced
   within each split.
 - Never copy real prompts or transcripts: invent the text.
@@ -58,9 +88,9 @@ export OPENROUTER_API_KEY="$(sed -n 's/^openrouter_api_key *= *"\(.*\)"/\1/p' ~/
 ```
 
 A full run (271 cases × 3) costs about $0.03. `--json` gives every answer
-(probabilities, confidence, continues and mode probabilities) for offline
-analysis: decision rules, thresholds and penalties can be compared on saved
-answers without asking Jev again.
+(probabilities, confidence, relation, explicit-request and mode
+probabilities) for offline analysis: decision rules, thresholds and
+penalties can be compared on saved answers without asking Jev again.
 
 ## What to read
 
@@ -77,17 +107,28 @@ Per scope, for Jev's top level and for the router's decision:
 | ECE of the top probability | whether confidence thresholds mean anything |
 | cases whose top changed across runs | noise floor; compare variants above it |
 
+And across scopes:
+
+| metric | why |
+|---|---|
+| relation accuracy, confusion, ECE of the top probability | whether follow-ups and separate work are told apart, and whether `relation_separate_threshold` means anything |
+| follow-ups below the work in progress | the owner's complaint: a continuation or an addition that lowered the effort (asked efforts excluded) |
+| explicit requests: precision, recall | a mention read as a request changes the effort for nothing; a missed request is ignored |
+| mode on/off (router decision) | ultracode kept, turned on or off where the labels say |
+
 The gap between Jev's top and the router's decision is the policy's doing
-(penalty, warm gates, go-ahead handling), not Jev's.
+(penalty, the work in progress, requests in words, go-ahead handling), not
+Jev's.
 
 ## Regression gate
 
 `--check` fails unless, on the main scope, decision exact ≥ 88%, recall ≥
 80% for every tier with 20+ answers, each tier's decision share within 6
-points of its label share, and rank error ≤ 0.12 (`eval.DefaultGate`). Run
-it on `--split test --repeat 3`. The 2026-09 router passes with 91% / 0.09;
-the collapsed one scored 79% / 0.24 and the same code with the old penalty
-fails on five counts.
+points of its label share, rank error ≤ 0.12, and no decision below the
+label on a case whose relation is `continue`, `extend`, `inform` or
+`side_question` (`eval.DefaultGate`). Run it on `--split test --repeat 3`.
+The 2026-09 router passes with 91% / 0.09; the collapsed one scored 79% /
+0.24 and the same code with the old penalty fails on five counts.
 
 ## Writing criteria and questions (TypeSafe Score)
 
@@ -126,12 +167,26 @@ jev-1.13: κ = 3 cost 7 points of exact accuracy on held-out and gave xhigh
 the lowest loss at every κ. Expected-level cutpoints fitted on train
 overfit (90.6% → 89.0%, below argmax).
 
-## Warm gates
+## The work in progress and warm gates
 
-The confidence gate (`features.warm_min_confidence`) and the no-downgrade
-gate (`continues_threshold`) only guard switches that cost something (a
-cache rebuild). On free per-turn effort changes they froze sessions (warm
-cases 69% exact with the gates, 91% without). A bare go-ahead keeps the
-tier without asking Jev (also after compaction or a pause), unless it
-answers a proposal ("Want me to fix it?"), which is routed. The eval
-mirrors these rules; keep it in sync with `internal/hooks/decide.go`.
+A prompt gets its own level (below the work in progress if that is its
+level) only when Jev's relation answer puts at least
+`meta.relation_separate_threshold` on `new_task` + `wrap_up` and it didn't
+arrive mid-turn or from another session; anything else keeps at least the
+work's tier and mode. The floor is the work in progress, set when separate
+work starts, never the last prompt's tier, so upgrades stay free: holding
+the *current* tier froze sessions (warm cases 69% exact with the old gates,
+91% without), and a low session given a hard new task must still go up.
+Keep a regression case for it. Tune `relation_separate_threshold` on the
+train split: the right relation's probability sits at 0.9+ on clear
+prompts and near 0.5 on mixed ones; don't carry over a threshold tuned on
+a Noul (TypeSafe: a Choice's probabilities are relative). Tune
+`explicit_threshold` in the gap between requests and mentions.
+
+The confidence gate (`features.warm_min_confidence`) only guards
+downgrades that cost something (a cache rebuild). A bare go-ahead brings
+back the work in progress's tier and mode without asking Jev (also after a
+compaction or a pause), unless it answers a proposal ("Want me to fix
+it?"), which is routed with the work as a floor. The eval mirrors these
+rules (`internal/eval` `setup`, `router.Judge`); keep it in sync with
+`internal/hooks/decide.go`.
