@@ -74,7 +74,7 @@ func TestQuestions(t *testing.T) {
 	for id, want := range map[string]string{
 		"explicit_effort_xhigh":            "to use the xhigh reasoning effort for this work?",
 		"explicit_effort_more":             "to use more thinking than so far",
-		"explicit_mode_off":                "to stop using ultracode, several agents working in parallel",
+		"explicit_mode_off":                "to stop using the ultracode mode (several agents working in parallel",
 		"explicit_model_claude-sonnet-5-5": "ask the assistant to run on the Sonnet 5.5 model itself for this work",
 	} {
 		q := qs[id]

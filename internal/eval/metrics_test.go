@@ -113,6 +113,7 @@ func TestGate(t *testing.T) {
 
 func TestRelationAndExplicitMetrics(t *testing.T) {
 	c := testCatalog(t)
+	c.Meta.ExplicitP, c.Meta.ExplicitModelP = 0.8, 0.9
 	rel := func(top string, p float64) map[string]float64 {
 		m := map[string]float64{}
 		for _, r := range catalog.Relations {
@@ -233,6 +234,7 @@ func TestCaseSetup(t *testing.T) {
 // the same answers, another threshold, another decision.
 func TestRejudge(t *testing.T) {
 	c := testCatalog(t)
+	c.Meta.RelationSeparateP = 0.6
 	env := &router.Env{Cfg: config.Default(), Catalog: c}
 	rel := map[string]float64{"new_task": 0.55, "extend": 0.45}
 	rs := []Result{{Case: Case{ID: "a", Scope: catalog.ScopeMain, Warm: true, Want: "xhigh", Relation: "extend",

@@ -221,13 +221,13 @@ var (
 		Question: "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`)?",
 		Options: map[string]*catalog.Option{
 			catalog.RelationContinue: {
-				What:     "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, and asks for nothing more.",
+				What:     "Tells the assistant to go ahead with, keep going on or resume the work in progress as it stands, or to carry out what it just proposed or offered for that work (possibly picking one of its options), and asks for nothing more.",
 				NotFor:   "A go-ahead that also adds or changes something (extend).",
-				Examples: []string{"yes", "go", "continue", "ok ship it", "resume, the limits are reset", "vas-y", "oui, continue", "c'est bon, on y va"},
+				Examples: []string{"yes", "go", "continue", "ok ship it", "ok, do what you proposed", "go with option 2", "resume, the limits are reset", "vas-y", "oui, continue", "oui, fais ce que tu proposes", "c'est bon, on y va"},
 			},
 			catalog.RelationExtend: {
-				What:     "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case to handle, a test for it, a requirement, a different approach.",
-				NotFor:   "Work that stands on its own, without the work in progress (new_task).",
+				What:     "Adds to, constrains or corrects the work in progress, which stays the same piece of work: another case or input to handle, a test for it, a requirement, a different approach.",
+				NotFor:   "Work that stands on its own without the work in progress, including the same change repeated on another target (new_task).",
 				Examples: []string{"also add a test for that", "and make it configurable", "but keep the old flag working", "no, use a channel instead", "ajoute aussi un log quand ça échoue", "mais garde l'ancienne API", "non, fais plutôt une migration"},
 			},
 			catalog.RelationInform: {
@@ -236,9 +236,9 @@ var (
 				Examples: []string{"FYI it only fails on ARM", "env vars win", "camelCase", "c'est la v2 de l'API", "la clé est dans le .env"},
 			},
 			catalog.RelationSideQuestion: {
-				What:     "Asks a question or a quick check aside (progress, status, why something was done) while the work in progress stays pending.",
-				NotFor:   "A question that opens an investigation of its own (new_task).",
-				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "which Go version do we target again?", "t'en es où ?", "le build passe ?", "pourquoi ce choix de lib ?"},
+				What:     "Asks a question or a quick check aside while the work in progress is still pending (steps remain, it is running, or a proposal awaits an answer), and only needs an answer: about that work (progress, status, a detail, a doubt) or about anything else (a command, a fact, a comparison).",
+				NotFor:   "A question that starts real work of its own, such as an investigation or a change (new_task); a question about work that is finished, which only recalls or explains it (wrap_up).",
+				Examples: []string{"is CI green yet?", "why did you pick a mutex there?", "which Go version do we target again?", "unrelated: how do I list open ports on macOS?", "t'en es où ?", "le build passe ?", "au fait, c'est quoi la différence entre rebase et merge ?"},
 			},
 			catalog.RelationResume: {
 				What:     "Goes back to the paused work (`paused_work.goal`), which a detour set aside, now that the detour is done or dropped.",
@@ -246,14 +246,14 @@ var (
 				Examples: []string{"back to the migration", "ok, now let's get back to the refactor", "continue the audit", "reprends le refacto", "on revient à la migration", "bon, on reprend l'audit"},
 			},
 			catalog.RelationWrapUp: {
-				What:     "Wraps up work that is done: a summary, a commit message, a PR description, a push, a changelog entry.",
-				NotFor:   "Finishing or fixing the work itself (extend).",
-				Examples: []string{"write the commit message", "summarize what you changed", "open the PR", "push it", "résume ce que tu as fait", "fais le commit et pousse"},
+				What:     "Wraps up work that is finished: a summary or a recap, a commit message, a PR description, a push, a changelog entry, or a question that only recalls or explains the finished work (what changed, how it works, why it was done that way).",
+				NotFor:   "Finishing or fixing the work itself (extend); a question while the work is still pending (side_question).",
+				Examples: []string{"write the commit message", "summarize what you changed", "open the PR", "push it", "how does the new retry work, in two sentences?", "résume ce que tu as fait", "c'était quoi le problème, finalement ?", "fais le commit et pousse"},
 			},
 			catalog.RelationNewTask: {
-				What:     "Starts a separate piece of work, unrelated to the work in progress or independent of it.",
-				NotFor:   "More work on the work in progress (extend), or a question about it (side_question).",
-				Examples: []string{"now rename the config loader", "next: design how to shard the job queue", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"},
+				What:     "Starts a separate piece of work (a change, a fix, a feature, an investigation) that the work in progress doesn't include, even one that repeats its pattern on another target (another endpoint, page or module).",
+				NotFor:   "More work on the work in progress itself (extend); carrying out what the assistant just proposed for it (continue); a question that only needs an answer while that work is pending (side_question).",
+				Examples: []string{"now rename the config loader", "next: design how to shard the job queue", "now the same retry logic for the email sender", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"},
 			},
 		},
 	}
@@ -269,7 +269,7 @@ var (
 		ModelNo:       "It only talks about the model or refuses it: a mention, a comparison, release news, prices or benchmarks, a question about models or about how automodel routes and why it picked one, a subagent, a config or a catalog entry set to it, a refusal: 'Sonnet 5.5 is out', 'is Sonnet cheaper than Opus?', 'why did it pick Opus?', 'Fable tops the index now', 'make the review agent use sonnet', 'pas besoin d'Opus', 'Opus a mis 3 minutes'.",
 		Effort:        "the {v} reasoning effort",
 		More:          "more thinking than so far (thinking harder, longer or more carefully)",
-		Mode:          "{v}, several agents working in parallel (workflow orchestration)",
+		Mode:          "the {v} mode (several agents working in parallel, orchestrated as a workflow)",
 		Model:         "the {v} model",
 	}
 )

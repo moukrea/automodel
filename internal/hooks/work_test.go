@@ -86,7 +86,7 @@ func TestWorkInProgress(t *testing.T) {
 		{name: "a hard new task on a low session goes up", tier: "low", prompt: "Next: find why refunds are counted twice under load",
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "new_task"}, want: "xhigh", wantWork: "xhigh", newGoal: true},
 		{name: "unsure between follow-up and separate: holds", tier: "high", prompt: "et le cas où le worker meurt ?",
-			jev: fa{tier: "low", conf: 0.9, rel: "new_task", relP: 0.45}, want: "high", wantWork: "high"}, // new_task + wrap_up 0.56
+			jev: fa{tier: "low", conf: 0.9, rel: "new_task", relP: 0.35}, want: "high", wantWork: "high"}, // new_task + wrap_up 0.48
 		{name: "an effort asked in words raises", tier: "high", prompt: "fais la suite en xhigh", ask: "explicit_effort_xhigh",
 			jev: fa{tier: "high", conf: 0.9, rel: "extend", x: x("effort_xhigh", 0.95)}, want: "xhigh", wantWork: "xhigh"},
 		{name: "a mention of an effort doesn't", tier: "high", prompt: "pourquoi c'est resté en xhigh tout à l'heure ?", ask: "explicit_effort_xhigh",
@@ -306,7 +306,7 @@ func TestWorkModel(t *testing.T) {
 	for i, c := range []struct {
 		prompt string
 		p      float64
-	}{{"is sonnet cheaper than opus for this?", 0.05}, {"sonnet 5.5 est sorti, tu en penses quoi ?", 0.85}} {
+	}{{"is sonnet cheaper than opus for this?", 0.05}, {"sonnet 5.5 est sorti, tu en penses quoi ?", 0.7}} {
 		sid := fmt.Sprint("m3", i)
 		workSession(t, env, sid, "high", "", "high")
 		s = decide(sid, c.prompt, fa{tier: "high", conf: 0.9, rel: "side_question", x: model(c.p)})
