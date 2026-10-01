@@ -391,7 +391,7 @@ func TestEvalGoAhead(t *testing.T) {
 		_, req := setup(c, cs)
 		ans, ids := levelAnswer(c, "low")
 		ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: map[string]float64{tc.rel: 0.9, "resume": 0.05, "new_task": 0.05}, Confidence: 0.9}
-		offer := 0.3
+		offer := 0.2
 		ans[jev.QOffer] = jev.Answer{Type: "noul", Noul: &offer}
 		r := Result{Case: cs}
 		r.judge(env, req, ans, ids)

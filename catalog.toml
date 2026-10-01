@@ -58,8 +58,14 @@ relation_separate_threshold = 0.55
 # offers read 0.27 to 0.44 and went back to the paused work. With
 # acknowledgements in the yes wording and 16 new train cases (two runs of
 # 3): offers 0.51 and up, closing questions and offers to go back at most
-# 0.20. 0.35: the middle of that gap.
-detour_offer_threshold = 0.35
+# 0.20. 0.35: the middle of that gap. Round 5 review: French
+# acknowledgements to French offers read at that bar (0.33-0.39 on probes).
+# With 7 new train cases of them (3 runs): offers 0.34 and up, but for
+# "ok" to "Dis-moi si j'applique la même attente aux tests..." after a
+# commit (0.12-0.14, among the closers: it goes back, the safe side);
+# closing questions and offers to go back still at most 0.20. 0.27: the
+# middle of the 0.20-0.34 gap.
+detour_offer_threshold = 0.27
 # A request in the prompt's words (an effort, more thinking, ultracode or
 # its refusal) counts from this yes-probability; an effort below the work
 # in progress needs 0.9 (router.LowerEffortP). Train split (two runs of

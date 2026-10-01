@@ -1473,18 +1473,18 @@ func TestGoAheadToMoreOfAnOpenDetourHolds(t *testing.T) {
 }
 
 // Back to the paused work by default (the offer question under its bar:
-// live, acknowledgements such as "nickel" to "je fais pareil ?" read
-// 0.27-0.44), an open detour waits in turn: the next wrap-up closes it,
-// not the work it went back to, and going back to it pauses that work
-// again.
+// "ok" to "Dis-moi si j'applique la même attente aux tests..." read
+// 0.12-0.14 in train, among the closing questions), an open detour waits
+// in turn: the next wrap-up closes it, not the work it went back to, and
+// going back to it in words is new work that pauses that work again.
 func TestBackByDefaultKeepsTheDetour(t *testing.T) {
 	fj, decide, detour, last := detourHarness(t)
 	offerMore := "C'est corrigé : la spec attend la réponse au lieu d'un sleep. Les specs du panier et des commandes dorment pareil : je leur mets la même attente ?"
 	detour("bk", "medium", false)
 	last(offerMore)
-	s := decide("bk", "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.33})
+	s := decide("bk", "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.14})
 	if s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Work.Goal != workGoal || s.Paused == nil || !s.Paused.Kept || s.Paused.Tier != "medium" || s.Paused.Goal == workGoal {
-		t.Fatalf("nickel, offer 0.33: main %s/%s, work %+v, paused %+v", s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
+		t.Fatalf("nickel, offer 0.14: main %s/%s, work %+v, paused %+v", s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
 	}
 	last("C'est fait : les specs du panier et des commandes attendent aussi la réponse.")
 	s = decide("bk", "commite ça", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.95})
@@ -1497,7 +1497,7 @@ func TestBackByDefaultKeepsTheDetour(t *testing.T) {
 	// to it in words is new work, a detour that pauses the work again.
 	detour("bk2", "medium", false)
 	last(offerMore)
-	decide("bk2", "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.33})
+	decide("bk2", "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.14})
 	last("C'est fait : les specs du panier et des commandes attendent aussi la réponse. On reprend la migration ?")
 	for _, a := range []fa{{tier: "high", conf: 0.6, ultra: 0.1, rel: "continue", relP: 0.9}, {tier: "high", conf: 0.6, ultra: 0.1, rel: "resume", relP: 0.87}} {
 		s = decide("bk2", "oui", a)
@@ -1720,7 +1720,7 @@ func TestKeptDetourNeverTakesTheWorksPlace(t *testing.T) {
 		sid := fmt.Sprint("kw", i)
 		detour(sid, "medium", false)
 		last("C'est corrigé : la spec attend la réponse au lieu d'un sleep. Les specs du panier et des commandes dorment pareil : je leur mets la même attente ?")
-		decide(sid, "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.33})
+		decide(sid, "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.14})
 		last("OK, je reprends la migration.")
 		s := decide(sid, "passe en low pour la suite, c'est mécanique", fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "extend", relP: 0.9, x: map[string]float64{"effort_low": 0.97}})
 		if s.Work.Goal != workGoal || s.Work.Tier != "low" || s.Paused == nil || !s.Paused.Kept || s.Paused.Tier != "medium" {
