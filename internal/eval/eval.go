@@ -284,6 +284,7 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 	if c.Warm {
 		req.Current = current(cat, c)
 	}
+	req.State = st // what Jev sees (router.Blind)
 	return st, req
 }
 

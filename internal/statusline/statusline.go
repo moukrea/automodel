@@ -139,6 +139,7 @@ type View struct {
 	Flash      string  `json:"flash"`      // switched|compact|cold after a recent redecision
 	Budget     string  `json:"budget"`     // "over" when the session is over its spending cap
 	Why        string  `json:"why"`        // the last decision's short reason (aside, asked, go-ahead...)
+	WhyP       float64 `json:"why_p"`      // Jev's probability of that relation (0: Why is no relation)
 	From       string  `json:"from"`       // the effort the last decision left, when it changed it
 	// ClaudeEffort is the effort Claude Code itself shows (its spinner says
 	// "thinking with X effort"): its own setting, not the routed effort.
@@ -169,7 +170,7 @@ func Build(env *router.Env, sess *state.Session, now time.Time) View {
 		d = env.DefaultDecision("main", "default")
 	}
 	v := View{V: 1, Routed: true, Alias: env.Cfg.CustomModelID, Model: d.Model, Label: d.Model, short: d.Model,
-		Effort: d.Effort, Mode: d.Mode, Pin: sess.Pin, Issue: sess.JevIssue, Why: d.Why, From: d.From}
+		Effort: d.Effort, Mode: d.Mode, Pin: sess.Pin, Issue: sess.JevIssue, Why: d.Why, WhyP: d.WhyP, From: d.From}
 	if m := env.Catalog.Model(d.Model); m != nil {
 		v.short = m.ShortLabel()
 		if m.Label != "" {
@@ -208,7 +209,7 @@ func Build(env *router.Env, sess *state.Session, now time.Time) View {
 
 // text formats "automodel: Opus 5.5 high (xhigh→high · aside 0.59)": the
 // model and effort in force, then the last decision in short (the effort it
-// left, why, Jev's confidence). The effort Claude Code still shows, when it
+// left, why and how sure Jev is of it). The effort Claude Code still shows, when it
 // differs, follows struck through ("x̶h̶i̶g̶h̶"); a "↻ compact"/"↻ cold"/
 // "↻ switched" flash follows a redecision.
 func (v View) text() string {
@@ -235,12 +236,15 @@ func (v View) text() string {
 	case "fallback":
 		why = append(why, "⚠ fallback")
 	default:
-		if v.Why != "" && v.Confidence > 0 {
-			why = append(why, fmt.Sprintf("%s %.2f", v.Why, v.Confidence))
-		} else if v.Why != "" {
+		// A relation shows its own probability, a first prompt Jev's
+		// confidence in its level.
+		switch {
+		case v.Why != "" && v.WhyP > 0:
+			why = append(why, fmt.Sprintf("%s %.2f", v.Why, v.WhyP))
+		case (v.Why == "" || v.Why == "new") && v.Confidence > 0:
+			why = append(why, strings.TrimSpace(fmt.Sprintf("%s %.2f", v.Why, v.Confidence)))
+		case v.Why != "":
 			why = append(why, v.Why)
-		} else if v.Confidence > 0 {
-			why = append(why, fmt.Sprintf("%.2f", v.Confidence))
 		}
 	}
 	if len(why) > 0 {

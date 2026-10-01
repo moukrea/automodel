@@ -312,7 +312,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 			dec.Epoch = epoch
 			switch {
 			case asked != nil:
-				dec.Why = "asked"
+				dec.Why, dec.WhyP = "asked", 0
 			case dec.Why == "" && trigger == "initial":
 				dec.Why = "new"
 			}
@@ -559,6 +559,13 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 			}
 			st["recent_prompts"] = rp
 			left -= tokens.Estimate(mustJSON(rp))
+		}
+		// After a compaction the prompts before it are gone: its summary
+		// stays until enough new ones say what the work is about.
+		if _, ok := st["compaction_summary"]; !ok && tr.CompactSummary != "" && len(prev) < env.Catalog.State.RecentPromptsN() {
+			sum := tokens.Truncate(tr.CompactSummary, left/3)
+			st["compaction_summary"] = sum
+			left -= tokens.Estimate(sum)
 		}
 		if trigger != "compact" && tr.LastAssistant != "" {
 			la := tokens.Truncate(tr.LastAssistant, min(env.Catalog.State.LastAssistantN(), left/3))
