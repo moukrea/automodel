@@ -44,6 +44,11 @@ type Questions struct {
 	// Explicit words the yes/no asked for each request a prompt's words may
 	// make (an effort, more thinking, a mode, a model).
 	Explicit *Explicit `toml:"explicit" json:"explicit,omitempty"`
+	// Offer is the yes/no asked of a bare go-ahead after a detour whose
+	// paused work needs more: did the assistant offer one more thing for
+	// the detour, which the go-ahead accepts? (Else the go-ahead goes back
+	// to the paused work.)
+	Offer *Noul `toml:"offer" json:"offer,omitempty"`
 	// Continues and Informs are the warm-turn yes/no questions the relation
 	// question replaced: still parsed (older custom tunings), never asked.
 	Continues *Noul `toml:"continues" json:"continues,omitempty"`
@@ -163,6 +168,12 @@ type Meta struct {
 	// work in progress if that is its level; under it the prompt follows the
 	// work up and keeps at least its level.
 	RelationSeparateP float64 `toml:"relation_separate_threshold" json:"relation_separate_threshold,omitempty"`
+	// DetourOfferP is the yes-probability of the offer question from which
+	// a go-ahead after a detour takes up what the assistant offered for the
+	// detour (a wrap-up step of it, more of it) when the paused work needs
+	// more; under it the go-ahead goes back to the paused work, as a bare
+	// go-ahead does.
+	DetourOfferP float64 `toml:"detour_offer_threshold" json:"detour_offer_threshold,omitempty"`
 	// ExplicitP is the yes-probability from which a request in the prompt's
 	// words (an effort, more thinking, a mode) counts; ExplicitModelP the
 	// one for a model, stricter (a model is mentioned far more often than
@@ -191,6 +202,14 @@ func (m Meta) RelationSeparateThreshold() float64 {
 		return m.RelationSeparateP
 	}
 	return 0.6
+}
+
+// DetourOfferThreshold returns meta.detour_offer_threshold or 0.8.
+func (m Meta) DetourOfferThreshold() float64 {
+	if m.DetourOfferP > 0 {
+		return m.DetourOfferP
+	}
+	return 0.8
 }
 
 // ExplicitThreshold returns meta.explicit_threshold or 0.8 (probe on jev-1.13:

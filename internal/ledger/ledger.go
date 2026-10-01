@@ -54,6 +54,7 @@ type Decision struct {
 	ContinuesP *float64           `json:"continues_p,omitempty"`
 	InformsP   *float64           `json:"informs_p,omitempty"` // warm main: the prompt only informs the work in progress
 	AskedP     map[string]float64 `json:"asked_p,omitempty"`   // asked tiers (e.g. haiku): Jev's yes-probability
+	OfferP     *float64           `json:"offer_p,omitempty"`   // a go-ahead after a detour: the assistant offered more of it (else back to the paused work)
 	Label      string             `json:"label,omitempty"`     // workflow stage: its label or phase option
 	Loss       map[string]float64 `json:"loss,omitempty"`
 	GainUSD    float64            `json:"gain_usd,omitempty"`
@@ -70,8 +71,8 @@ type Decision struct {
 	WorkTier   string             `json:"work_tier,omitempty"`   // the work in progress's tier when deciding
 	WorkDone   bool               `json:"work_done,omitempty"`   // a wrap-up had closed it
 	PausedTier string             `json:"paused_tier,omitempty"` // the paused work's tier, when a detour paused some
-	Work       string             `json:"work,omitempty"`        // what the decision made of it: new, set, raised, resumed, done, reopened
-	Pauses     bool               `json:"pauses,omitempty"`      // new work below the work in progress, which it paused
+	Work       string             `json:"work,omitempty"`        // what the decision made of it: new, set, raised, resumed, done, reopened, detour-done
+	Pauses     bool               `json:"pauses,omitempty"`      // new work below the work in progress, which it paused (resumed: the detour waits)
 	Hold       string             `json:"hold,omitempty"`        // what set the tier besides the pick (the work in progress, a request)
 }
 

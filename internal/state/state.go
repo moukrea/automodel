@@ -46,7 +46,9 @@ const PinnedTier = "pinned"
 // model than the tiers' the user asked for in words: the work runs on it
 // (the tier is then only its level) until separate new work starts. Done:
 // a wrap-up closed it; only more work on it (a go-ahead, an addition)
-// reopens it and holds its level.
+// reopens it and holds its level. Kept (paused work only): a detour a
+// go-ahead went back from by default, below the work it went back to,
+// kept in case the assistant had offered more of it.
 type Work struct {
 	Tier  string    `json:"tier"`
 	Mode  string    `json:"mode,omitempty"`
@@ -54,6 +56,7 @@ type Work struct {
 	Goal  string    `json:"goal,omitempty"` // head of the prompt that started it
 	Since time.Time `json:"since,omitzero"` // started; for paused work, paused
 	Done  bool      `json:"done,omitempty"`
+	Kept  bool      `json:"kept,omitempty"`
 }
 
 // WorkGoalChars bounds the goal kept for the work in progress.
@@ -82,6 +85,14 @@ func (s *Session) WorkInProgress() *Work {
 		return nil
 	}
 	return &Work{Tier: s.Main.Tier, Mode: s.Main.Mode}
+}
+
+// Asked is an effort or a model (catalog key) the user asked for in words,
+// for the work that started at WorkSince (Work.Since).
+type Asked struct {
+	Effort    string    `json:"effort,omitempty"`
+	Model     string    `json:"model,omitempty"`
+	WorkSince time.Time `json:"work_since,omitzero"`
 }
 
 // PendingAgent is registered by the agent hook and bound by the proxy to the
@@ -127,6 +138,12 @@ type Session struct {
 	// UltracodeEpoch the decision epoch that notice belonged to.
 	UltracodeOn    bool `json:"ultracode_on,omitempty"`
 	UltracodeEpoch int  `json:"ultracode_epoch,omitempty"`
+
+	// PendingAsked is the effort or the model the user asked for in words
+	// that a late decision applied (Jev answered after the hook's timeout,
+	// when the hook could no longer tell Claude): the next prompt's hook
+	// says so if the decision in force still runs it.
+	PendingAsked *Asked `json:"pending_asked,omitempty"`
 
 	Repo *RepoSignals `json:"repo,omitempty"`
 

@@ -39,7 +39,8 @@ type Case struct {
 	// in progress is state.work_in_progress ({goal, level, mode, model,
 	// done: a wrap-up closed it}), else the decision in state.current;
 	// state.paused_work the work a detour paused; Jev sees their goal,
-	// level and done, as the hooks send them.
+	// level and done, as the hooks send them (not a paused work marked
+	// kept: a detour a go-ahead went back from, which the hooks don't send).
 	// state.mid_turn marks a prompt typed while Claude worked (it is not
 	// sent to Jev).
 	Relation string    `json:"relation,omitempty"`
@@ -167,6 +168,10 @@ type Result struct {
 	// ExplicitP is Jev's yes-probability per request a regex found in the
 	// prompt (effort_xhigh, mode_off...).
 	ExplicitP map[string]float64 `json:"explicit_p,omitempty"`
+	// OfferP: a go-ahead after a detour whose paused work needs more, Jev's
+	// yes-probability that the assistant offered one more thing for the
+	// detour (router.Request.BackFirst).
+	OfferP *float64 `json:"offer_p,omitempty"`
 	// FastPath is how the hooks took the prompt without the relation
 	// question (fastPath): RelP is then asked apart, only to diagnose; the
 	// decision and the relation metrics don't use it.
@@ -258,10 +263,18 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 			st["work_in_progress"] = map[string]any{"level": router.WorkLevel(cat, curTier)}
 		}
 		if w, ok := c.State["paused_work"].(map[string]any); ok {
-			req.Paused, st["paused_work"] = labeledWork(cat, model, w, "")
+			var sent map[string]any
+			req.Paused, sent = labeledWork(cat, model, w, "")
+			delete(st, "paused_work")
+			if kept, _ := w["kept"].(bool); kept && req.Paused != nil {
+				req.Paused.Kept = true
+			} else {
+				st["paused_work"] = sent
+			}
 		}
 	}
 	req.Peer = transcript.IsPeer(task)
+	req.GoAhead = !req.Peer && router.GoAhead(task)
 	if !req.Peer {
 		req.Explicit = router.ExplicitCandidates(cat, task, model)
 		if t := router.EffortTier(cat, model, "xhigh"); t != nil && router.Ultrathink(task) {
@@ -333,7 +346,11 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	st, req := setup(cat, c)
 	fp := fastPath(env, c, req)
 	ask := jev.Ask{Relation: req.Work != nil && fp == ""}
-	ask.Resume = ask.Relation && req.Paused != nil
+	ask.Resume = ask.Relation && router.Resumable(req.Paused)
+	if fp == "" {
+		_, back := proposalGoAhead(env, c, req)
+		ask.Offer = ask.Relation && back
+	}
 	for _, x := range req.Explicit {
 		ask.Explicit = append(ask.Explicit, x.Explicit)
 	}
@@ -362,10 +379,14 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	if a, ok := ans[jev.QRelation]; ok {
 		r.RelP, r.RelConf = a.Probabilities, a.Confidence
 	}
+	if a, ok := ans[jev.QOffer]; ok && a.Noul != nil {
+		p := *a.Noul
+		r.OfferP = &p
+	}
 	if fp != "" {
 		// The relation the hooks don't ask, alone in its own call (the
 		// questions of the decision stay the hooks').
-		q := map[string]jev.Question{jev.QRelation: jev.RelationQuestion(cat, req.Paused != nil)}
+		q := map[string]jev.Question{jev.QRelation: jev.RelationQuestion(cat, router.Resumable(req.Paused))}
 		if a, resp, err := cl.Ask(ctx, cat.Meta.JevModel, "", st, q); err == nil {
 			r.RelP, r.RelConf = a[jev.QRelation].Probabilities, a[jev.QRelation].Confidence
 			r.Cost += resp.Usage.Cost
@@ -415,6 +436,9 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 	if fp == router.FollowUpProposal {
 		req.FollowUp = fp
 	}
+	if fp == "" {
+		req.ProposalGoAhead, req.BackFirst = proposalGoAhead(env, c, req)
+	}
 	r.FastPath = fp
 	var cur *catalog.Tier
 	if req.Current != nil {
@@ -444,9 +468,11 @@ func (r *Result) judge(env *router.Env, req router.Request, ans map[string]jev.A
 
 // fastPath says how the hooks take a case's prompt without the relation
 // question: a bare go-ahead carried on without asking Jev ("go-ahead"), or
-// a go-ahead to a proposal routed without it (router.FollowUpProposal).
-// Neither once a wrap-up closed the work, unless the paused work needs
-// more (router.Acknowledges): then it is routed as any prompt.
+// a go-ahead to a proposal routed without it (router.FollowUpProposal),
+// unless a detour paused work (the proposal may be to go back to it: the
+// relation question is asked). Neither once a wrap-up closed the work,
+// unless the paused work needs more (router.Acknowledges): then it is
+// routed as any prompt.
 func fastPath(env *router.Env, c Case, req router.Request) string {
 	task, _ := c.State["task"].(string)
 	last, _ := c.State["last_assistant"].(string)
@@ -454,9 +480,38 @@ func fastPath(env *router.Env, c Case, req router.Request) string {
 	case !env.Cfg.Features.FastPath || req.Work == nil || env.Acknowledges(req.Work, req.Paused) || req.Peer || !router.GoAhead(task):
 		return ""
 	case c.State["phase"] != "post_compact" && router.Proposes(last):
+		if req.Paused != nil {
+			return ""
+		}
 		return router.FollowUpProposal
 	}
 	return "go-ahead"
+}
+
+// proposalGoAhead mirrors the hooks for a bare go-ahead to what the
+// assistant asked, routed with the relation question (fastPath is ""):
+// after a detour (paused work), or once a wrap-up closed the work
+// (router.Acknowledges; right after a compaction too, whose summary may
+// end on a proposal). It doesn't go below the work it follows unless it
+// is answered alone or goes back, and after a detour it goes back first
+// when the paused work needs more and the prompt wasn't typed mid-turn
+// (router.Request.ProposalGoAhead, BackFirst).
+func proposalGoAhead(env *router.Env, c Case, req router.Request) (goAhead, backFirst bool) {
+	task, _ := c.State["task"].(string)
+	last, _ := c.State["last_assistant"].(string)
+	compact := c.State["phase"] == "post_compact"
+	ack := req.Work != nil && env.Acknowledges(req.Work, req.Paused)
+	if !env.Cfg.Features.FastPath || req.Work == nil || (req.Paused == nil && !ack) || req.Peer || !router.GoAhead(task) {
+		return false, false
+	}
+	if ack {
+		return compact || router.Proposes(last), false
+	}
+	if compact || !router.Proposes(last) {
+		return false, false
+	}
+	_, backFirst = env.GoAheadWork(nil, req.Work, req.Paused, req.MidTurn)
+	return true, backFirst
 }
 
 // Rejudge applies the policy of env's catalog (thresholds, penalty, rules)
@@ -478,6 +533,10 @@ func Rejudge(env *router.Env, rs []Result) []Result {
 		}
 		if r.RelP != nil && fastPath(env, r.Case, req) == "" {
 			ans[jev.QRelation] = jev.Answer{Type: "choice", Probabilities: r.RelP, Confidence: r.RelConf}
+		}
+		if r.OfferP != nil {
+			p := *r.OfferP
+			ans[jev.QOffer] = jev.Answer{Type: "noul", Noul: &p}
 		}
 		for _, n := range []struct {
 			pfx string
@@ -520,9 +579,13 @@ type Summary struct {
 	// one, follows up work that runs on one, or the router moved it.
 	Relation RelationStats
 	Explicit ExplicitStats
-	Follow   Count
-	Model    Count
-	CostUSD  float64
+	// Offer scores the offer question (a go-ahead after a detour whose
+	// paused work needs more) against the relation labels: yes unless the
+	// label is resume.
+	Offer   *Binary
+	Follow  Count
+	Model   Count
+	CostUSD float64
 	// Scopes holds the per-scope tier metrics: exact accuracy, recall per
 	// tier, confusion matrices, tier share against label share, rank
 	// error and calibration.
@@ -551,6 +614,7 @@ type Binary struct {
 	Threshold          float64
 	N, Right           int
 	MeanYesP, MeanNoP  float64
+	MinYesP, MaxNoP    float64 // the gap a threshold can sit in
 	nYes, nNo          int
 	sumYesP, sumNoP    float64
 	FalseYes, FalseNos int
@@ -567,9 +631,13 @@ func (b *Binary) add(p float64, want bool) {
 		b.FalseNos++
 	}
 	if want {
+		if b.nYes == 0 || p < b.MinYesP {
+			b.MinYesP = p
+		}
 		b.nYes++
 		b.sumYesP += p
 	} else {
+		b.MaxNoP = max(b.MaxNoP, p)
 		b.nNo++
 		b.sumNoP += p
 	}
@@ -625,6 +693,12 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 					bucketRight[i]++
 				}
 			}
+		}
+		if r.OfferP != nil && r.Relation != "" {
+			if s.Offer == nil {
+				s.Offer = &Binary{Threshold: cat.Meta.DetourOfferThreshold()}
+			}
+			s.Offer.add(*r.OfferP, r.Relation != catalog.RelationResume)
 		}
 		for m, want := range r.Modes {
 			if p, has := r.ModeP[m]; has {
@@ -699,6 +773,9 @@ func Summarize(cat *catalog.Catalog, rs []Result) Summary {
 	}
 	for _, b := range s.Modes {
 		b.finish()
+	}
+	if s.Offer != nil {
+		s.Offer.finish()
 	}
 	s.Scopes = map[string]*ScopeStats{}
 	for _, sc := range []string{catalog.ScopeMain, catalog.ScopeSubagent} {
@@ -781,6 +858,10 @@ func PrintSummary(w io.Writer, s Summary) {
 	}
 	for m, c := range s.ModeDecision {
 		fmt.Fprintf(w, "mode %s on/off (router decision): %d/%d right (on %d/%d, off %d/%d)\n", m, c.Right, c.N, c.On.Right, c.On.N, c.Off.Right, c.Off.N)
+	}
+	if b := s.Offer; b != nil {
+		fmt.Fprintf(w, "detour offer @%.2f: %d/%d right (false yes %d, false no %d), yes-cases p %.2f and up, no-cases at most %.2f\n",
+			b.Threshold, b.Right, b.N, b.FalseYes, b.FalseNos, b.MinYesP, b.MaxNoP)
 	}
 	if f := s.Follow; f.N > 0 {
 		fmt.Fprintf(w, "follow-ups (continue, extend, inform, side_question, resume, mid-turn, peer): %d/%d decisions below the work they hold\n", f.N-f.Right, f.N)

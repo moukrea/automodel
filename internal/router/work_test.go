@@ -39,3 +39,30 @@ func TestHoldNamesTheRelationThatHolds(t *testing.T) {
 		t.Errorf("hold %q", v.Hold)
 	}
 }
+
+// A wrap-up that closes a kept detour runs at the higher of the detour's
+// level and Jev's at most (live: "commit it" closing a low detour read low
+// 0.53 / xhigh 0.39 and ran at high, the policy's pick); what the prompt
+// asks for (ultrathink) still counts. A wrap-up of the work itself, with
+// no kept detour, keeps the pick.
+func TestDetourDoneRunsAtTheDetourLevel(t *testing.T) {
+	e := testEnv(t)
+	work := &state.Work{Tier: "xhigh", Goal: "fix the oversell race in checkout"}
+	kept := &state.Work{Tier: "low", Goal: "fix the port in the README", Kept: true}
+	rd := Reading{probs: map[string]float64{"low": 0.53, "high": 0.08, "xhigh": 0.39}, conf: 0.4, top: "low",
+		relation: map[string]float64{catalog.RelationWrapUp: 0.83, catalog.RelationContinue: 0.17}}
+	p := policy.Params{Penalty: 1.5, Scale: 1}
+	free := Request{Scope: catalog.ScopeMain, Work: work}
+	pick := e.Judge(free, rd, nil, policy.RepoPolicy{}, p)
+	if pick.Tier.ID == "low" || pick.Work == nil || pick.Work.Kind != WorkDone {
+		t.Fatalf("wrap-up of the work: %s, work %+v (the pick should be above low)", pick.Tier.ID, pick.Work)
+	}
+	req := Request{Scope: catalog.ScopeMain, Work: work, Paused: kept}
+	if v := e.Judge(req, rd, nil, policy.RepoPolicy{}, p); v.Tier.ID != "low" || v.Mode != "" || v.Work == nil || v.Work.Kind != WorkDetourDone {
+		t.Errorf("wrap-up closing the kept detour: %s/%s, work %+v", v.Tier.ID, v.Mode, v.Work)
+	}
+	req.MinTier = "xhigh"
+	if v := e.Judge(req, rd, nil, policy.RepoPolicy{}, p); v.Tier.ID != "xhigh" {
+		t.Errorf("ultrathink on the wrap-up closing the kept detour: %s", v.Tier.ID)
+	}
+}

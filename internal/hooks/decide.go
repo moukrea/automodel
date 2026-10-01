@@ -53,9 +53,18 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, nil // a newer prompt came in: its own decision stands
 	}
 
+	// A late decision decides on the assistant message the prompt's own
+	// hook read: Claude may have written its answer to the prompt since.
+	readTr := func(path string) *transcript.Info {
+		t := readTranscript(path)
+		if late && t != nil && in.LastAssistant != nil {
+			t.LastAssistant = *in.LastAssistant
+		}
+		return t
+	}
 	var tr *transcript.Info
 	if sess.Model == "" {
-		tr = readTranscript(in.TranscriptPath) // the model identity outranks settings
+		tr = readTr(in.TranscriptPath) // the model identity outranks settings
 	}
 	mi := detectModel(env, sess, in, tr)
 	// Only sessions positively on the routed model are touched: a session
@@ -140,6 +149,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	var signals *state.RepoSignals
 	var work *router.WorkUpdate // what the decision makes of the work in progress
 	var asked *router.Asked     // an effort or a model the prompt asked for in words
+	turnOnly := false           // answered alone, without the mode the work keeps
 	spawnTrigger := ""          // Jev timed out: decide again in the background
 	// A pin keeps the ultracode mode unless its effort is below the mode's.
 	if pin != "" && !synthetic {
@@ -162,24 +172,40 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// on a warm turn, after a compaction or after a pause; after a detour,
 	// the paused work when it needs more. A go-ahead to a proposal ("Want
 	// me to fix it?") starts that work, which may be bigger: it is routed,
-	// not below the work in progress (nor the paused work). Once a wrap-up
-	// closed the work, "ok" or "looks good" mostly acknowledges it: routed,
-	// Jev's relation says whether it reopens the work; unless that work was
-	// a detour and the paused work needs more, which the go-ahead goes
-	// back to.
+	// not below the work in progress. After a detour (paused work), what
+	// the assistant asked may offer to go back to the paused work, a
+	// wrap-up step of the detour ("Want me to push it?") or more of it:
+	// routed with the relation question, which offers resume; when the
+	// paused work needs more, the go-ahead goes back there unless Jev says
+	// the assistant offered one more thing for the detour ("Anything
+	// else?" offers nothing of it). Once a wrap-up closed the work, "ok"
+	// or "looks good" mostly acknowledges it: routed, Jev's relation says
+	// whether it reopens the work; unless that work was a detour and the
+	// paused work needs more, which a bare go-ahead goes back to. A
+	// go-ahead to a proposal there is routed with the relation question
+	// too, but never starts a work of its own ("yes" to "Want me to add
+	// the same check to the importer?" is no goal, nor below the work);
+	// right after a compaction, whose summary may end on such a proposal,
+	// a go-ahead once the work is done is taken as one.
 	followUp := ""
+	proposalGoAhead, backFirst := false, false
 	wip := sess.WorkInProgress()
-	back, _ := env.GoAheadWork(sess.Main, wip, sess.PausedWork(now), false)
-	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) && !env.Acknowledges(wip, sess.PausedWork(now)) &&
+	back, resumed := env.GoAheadWork(sess.Main, wip, sess.PausedWork(now), false)
+	if pin == "" && sess.Main != nil && env.Cfg.Features.FastPath && typed && goAhead(in.Prompt) &&
 		(trigger == "warm" || trigger == "compact" || trigger == "cold") &&
 		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) &&
 		(back == nil || !env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, back.Tier))) {
 		if tr == nil {
-			tr = readTranscript(in.TranscriptPath)
+			tr = readTr(in.TranscriptPath)
 		}
+		proposes := trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant)
 		switch {
-		case trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant):
+		case env.Acknowledges(wip, sess.PausedWork(now)):
+			proposalGoAhead = proposes || trigger == "compact" // routed as any prompt otherwise
+		case proposes && sess.PausedWork(now) == nil:
 			followUp = router.FollowUpProposal
+		case proposes:
+			proposalGoAhead, backFirst = true, resumed // not mid-turn: the router checks
 		default:
 			// Typed mid-turn, it lowers nothing.
 			if dec, work = env.Carry(router.Request{SessionID: in.SessionID, Scope: catalog.ScopeMain, Trigger: trigger, RepoDir: in.Cwd,
@@ -193,14 +219,14 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	}
 	if trigger != "" && pin == "" && dec == nil { // no routing while pinned or carried
 		if tr == nil && trigger != "initial" {
-			tr = readTranscript(in.TranscriptPath)
+			tr = readTr(in.TranscriptPath)
 		}
 		signals = sess.Repo
 		if signals == nil {
 			signals = repo.Signals(ctx, in.Cwd)
 		}
 		req := mainRequest(env, in, sess, tr, signals, trigger)
-		req.FollowUp = followUp
+		req.FollowUp, req.ProposalGoAhead, req.BackFirst = followUp, proposalGoAhead, backFirst
 		// [model:auto] / [effort:auto] handing a pin back: say so in the
 		// ledger (and to Jev) — the move off a pinned model is the user's call.
 		if (etag == "auto" || mtag == "auto") && sess.Pin != "" {
@@ -225,7 +251,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if out.TimedOut && !late {
 			spawnTrigger = trigger
 		}
-		work, asked = out.Work, out.Asked
+		work, asked, turnOnly = out.Work, out.Asked, out.TurnOnly
 		if !out.Changed || (late && out.TimedOut) {
 			dec = nil
 		}
@@ -239,6 +265,14 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, nil
 	}
 	_, err = env.State.Update(in.SessionID, func(s *state.Session) bool {
+		// What a late decision could not say: said by this prompt's hook,
+		// if this prompt goes on with the work it was asked for.
+		var pending *router.Asked
+		pendingSince := time.Time{}
+		if !late && s.PendingAsked != nil {
+			pending, pendingSince = &router.Asked{Effort: s.PendingAsked.Effort, Model: s.PendingAsked.Model}, s.PendingAsked.WorkSince
+			s.PendingAsked = nil
+		}
 		if late {
 			if s.LastPromptAt.UnixNano() != lateAt {
 				dec = nil // a newer prompt came in while Jev answered
@@ -293,17 +327,26 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				s.ResetEffortEpoch() // top-level effort change: the policy accepted the rebuild
 			}
 		}
+		if late && s.Main != nil && dec != nil && asked != nil && !asked.Turn && s.Work != nil {
+			s.PendingAsked = &state.Asked{Effort: asked.Effort, Model: asked.Model, WorkSince: s.Work.Since}
+		}
 		if s.Main == nil || late {
-			return true // a late decision can't inject the ultracode notice: the next prompt does
+			return true // a late decision can't inject a notice: the next prompt does
 		}
 		switch want := s.Main.Workflows; {
 		case want && (!s.UltracodeOn || s.UltracodeEpoch != s.Main.Epoch):
 			notice, s.UltracodeOn, s.UltracodeEpoch = UltracodeOn, true, s.Main.Epoch
 		case !want && s.UltracodeOn:
+			// Off for this turn only when the router answers this prompt
+			// alone and the work keeps the mode; a pin or the budget cap
+			// keeps it off.
 			notice, s.UltracodeOn = UltracodeOff, false
-			if w := s.Work; w != nil && env.Catalog.Modes[w.Mode] != nil && env.Catalog.Modes[w.Mode].Workflows {
+			if turnOnly {
 				notice = UltracodeOffTurn
 			}
+		}
+		if asked == nil && pending != nil && s.Work != nil && s.Work.Since.Equal(pendingSince) {
+			asked = pending // not on another work (a new task, the paused work resumed)
 		}
 		if n := askedNotice(env.Catalog, asked, s.Main); n != "" {
 			notice = strings.TrimSpace(notice + "\n\n" + n)
@@ -314,6 +357,10 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, err
 	}
 	if spawnTrigger != "" {
+		if tr != nil {
+			la := tr.LastAssistant
+			in.LastAssistant = &la
+		}
 		spawnLate(in, spawnTrigger, now)
 	}
 	if !synthetic && in.Prompt != "" && !late {
@@ -445,14 +492,17 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	// started it (also after a compaction, when recent prompts are gone)
 	// and the level it was decided at; and the work a detour paused, which
 	// the prompt may go back to.
-	var work, paused *state.Work
+	var work, paused, shown *state.Work
 	if trigger != "initial" {
 		work, paused = sess.WorkInProgress(), sess.PausedWork(env.Now())
+	}
+	if router.Resumable(paused) {
+		shown = paused // not a kept detour, below the work in progress
 	}
 	for _, w := range []struct {
 		key  string
 		work *state.Work
-	}{{"work_in_progress", work}, {"paused_work", paused}} {
+	}{{"work_in_progress", work}, {"paused_work", shown}} {
 		if w.work == nil {
 			continue
 		}
@@ -548,6 +598,7 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	// session, never lowers the effort the work runs at.
 	req.MidTurn = trigger != "initial" && tr.MidTurnFor(in.Prompt)
 	req.Peer = transcript.IsPeer(in.Prompt)
+	req.GoAhead = !req.Peer && goAhead(in.Prompt)
 	if !req.Peer {
 		// What the user's words may ask for: Jev confirms each request;
 		// ultrathink is a keyword, a floor at xhigh.

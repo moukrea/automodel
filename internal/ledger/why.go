@@ -214,6 +214,9 @@ func workLine(d Decision, o WhyOptions) string {
 	if len(d.Relation) > 0 {
 		parts = append(parts, "relation: "+ranked(d.Relation, 2))
 	}
+	if d.OfferP != nil {
+		parts = append(parts, fmt.Sprintf("offered more of the detour: %.2f", *d.OfferP))
+	}
 	if len(d.Explicit) > 0 {
 		parts = append(parts, "asks in words: "+ranked(d.Explicit, 3))
 	}
@@ -247,11 +250,17 @@ func workLine(d Decision, o WhyOptions) string {
 	case "raised":
 		parts = append(parts, "raises the work in progress")
 	case "resumed":
-		parts = append(parts, "resumes the paused work ("+d.PausedTier+")")
+		if d.Pauses {
+			parts = append(parts, "resumes the paused work ("+d.PausedTier+"), the detour waits")
+		} else {
+			parts = append(parts, "resumes the paused work ("+d.PausedTier+")")
+		}
 	case "done":
 		parts = append(parts, "marks the work in progress done")
 	case "reopened":
 		parts = append(parts, "reopens the work in progress")
+	case "detour-done":
+		parts = append(parts, "closes the detour that waited, not the work in progress")
 	}
 	return strings.Join(parts, " · ")
 }

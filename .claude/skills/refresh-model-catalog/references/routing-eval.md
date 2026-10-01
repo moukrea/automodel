@@ -55,8 +55,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   on this bug?"). A question about automodel's routing (why the session or
   a subagent got, kept or changed its effort, model or mode: "why did it
   stay at xhigh?", "why did the reviewer run on Sonnet?", the status line's
-  level) is an aside, unless routing is what the work in progress builds
-  or tunes; so is a question or a remark unrelated to the work ("which
+  level), or what models cost ("is Sonnet cheaper than Opus for this kind
+  of refactor?"), is an aside, unless routing is what the work in progress
+  builds or tunes; so is a question or a remark unrelated to the work ("which
   command shows a folder's size?", model news, a comment in passing, a
   thank-you): its own level, for that turn only. A question that only
   recalls or explains finished work is a wrap-up. Once a wrap-up has
@@ -66,9 +67,14 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   "nice, that was quick") is an aside at its own level, even when its
   words are a go-ahead's. The same change repeated on another target (another
   endpoint, page or module) is a new task; another case or input of the
-  same deliverable extends it, and so does a step the work calls for, such
+  same deliverable extends it (one more file for the audit or the review in
+  progress, "continue: check the importer the same way"), and so does a
+  test of what the work added ("add a test that an expired coupon is
+  refused", after the work that added expiry), and a step the work calls for, such
   as repairing what the bug it fixes left behind (a script refunding the
-  double charges after the double-charge fix). A small standalone edit
+  double charges after the double-charge fix), or a regression the work
+  caused ("since the refactor the minimap icons flicker, can you look at
+  that too?"). A small standalone edit
   asked in passing ("while you're in the config, set the review agent's
   effort to medium") is a new task at its own level. A prompt typed while Claude works or sent by
   another session is labeled like a follow-up: it never lowers the work.
@@ -79,7 +85,11 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   "ultrathink" is at least xhigh; "think harder" and its family one rank
   above the higher of the work's level and the tier in force (on a
   follow-up exactly that, not the level the words "think harder" suggest,
-  unless the prompt adds work that needs more: then that work's level).
+  unless the prompt adds work that needs more: then that work's level);
+  on a prompt that takes its own level (a new task, a first prompt, a
+  wrap-up, an aside), one rank above that level, whatever the work it
+  leaves ("new thing, take your time: add validation to the signup form"
+  in an xhigh session is high).
   A model asked for the rest of the work as it stands ("do the rest with
   Sonnet, it's only CSS") keeps the work's level on that model; with more
   work to it (an extension), that work's level. Asked for a wrap-up, a
@@ -87,7 +97,21 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   "ultrathink" is for that answer only: the work keeps its level and
   model. Going back to
   paused work ("back to the migration", or a bare go-ahead once the detour
-  is done) takes that work's level. Where the rubric is ambiguous (a small
+  is done) takes that work's level. A go-ahead to a proposal after a
+  detour is labelled by what was proposed: going back to the paused work
+  is a resume ("yes" to "Shall I get back to the migration?"), a wrap-up
+  step of the detour a wrap-up at its own level ("yes" to "Committed.
+  Want me to push it?"), more of the detour a continue at the detour's
+  level, also when a remark follows the offer. An acknowledgement ("ok",
+  "perfect", "lgtm", "nickel", "parfait") right after such an offer
+  accepts it, labelled the same. A go-ahead to a closing
+  question that offers nothing of the detour ("Done. Anything else?",
+  "Shall I carry on?", "Ça te va ?") goes back to the paused work, as a
+  bare go-ahead does: a resume at that work's level.
+  A fact about how a part of the work may run (the effort or the model a
+  subagent can use for one step) is inform at the work's level; an
+  instruction to set it in a file or a config is a new task or an
+  extension. Where the rubric is ambiguous (a small
   mechanical follow-up, implementing an agreed design), keep the lower
   tier the prompt alone would get in `accept`.
   Modes (`modes.ultracode`): a follow-up keeps the work's mode, a new task
@@ -95,7 +119,10 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   wrap-up, a side question or an aside runs without it, whatever the
   work's (the work keeps it for the next follow-up), unless the prompt
   asks for it in words for that turn; a prompt typed mid-turn or sent by
-  another session keeps the mode the turn runs with. Once a wrap-up closed
+  another session keeps the mode the turn runs with. A mode asked for in
+  words wants the tier it runs at (xhigh for ultracode); on a follow-up
+  of work below it, the work's level stays in `accept` (the mode metric
+  scores a missed request). Once a wrap-up closed
   the work, its mode is no longer in force (a fact on a cold turn, or the
   decision after a compaction, gets the mode its own work needs).
 - `relation` labels how a warm, resumed or post-compaction prompt relates
@@ -135,7 +162,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   `model` (the model a request in words moved the work to), which the eval
   uses but doesn't send, like the hooks. `state.paused_work` (`{goal,
   level}`, same extras) is the work a detour paused; with it Jev is offered
-  `resume`. A session on a model outside the tiers has `state.current`
+  `resume`. With `kept: true` it is a detour a bare go-ahead went back
+  from, below the work in progress: the eval keeps it for the router but,
+  like the hooks, neither sends it nor offers `resume`. A session on a model outside the tiers has `state.current`
   `{effort, model}` (the model's label) instead of a tier.
   `state.mid_turn: true` marks a prompt typed while Claude was working (the
   eval applies the mid-turn rule; it is not sent to Jev). A message from
@@ -150,15 +179,17 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   that were (see `docs/research/2026-09-warm-routing.md` §7), so
   held-out numbers come from a fresh set written apart and run once. Once
   its failures have been analysed case by case, a held-out set is used
-  up: it joins the train split (held-out run 1 did in round 3, §8), and
+  up: it joins the train split (held-out run 1 did in round 3, §8,
+  held-out run 2 in round 4, §10), and
   the next held-out number needs another fresh set.
 - Never copy real prompts or transcripts: invent the text.
 
 ## Running it
 
-Use a dev build and an isolated config: `automodel eval` loads the catalog
-through the store, which saves it as the last-good copy in the config's
-state dir.
+Use a dev build and an isolated config: without `--catalog`, `automodel
+eval` loads the configured catalog through the store, which saves it as the
+last-good copy in the config's state dir. A `--catalog` candidate is never
+saved (builds before v0.17 saved it too).
 
 ```sh
 go build -o /tmp/am ./cmd/automodel
@@ -169,7 +200,7 @@ export OPENROUTER_API_KEY="$(sed -n 's/^openrouter_api_key *= *"\(.*\)"/\1/p' ~/
 /tmp/am eval --catalog catalog.proposed.toml --cases heldout.jsonl --repeat 3 --summary --check   # once, at the end
 ```
 
-A train run (443 cases × 3) costs about $0.15 and takes about a minute.
+A train run (640 cases × 3) costs about $0.25 and takes about two minutes.
 `--json` gives every answer (probabilities, confidence, relation,
 explicit-request and mode probabilities) for offline analysis; on a prompt
 the hooks take without the relation question (a bare go-ahead, a go-ahead
@@ -299,11 +330,31 @@ downgrades that cost something (a cache rebuild), and leaving a model a
 work runs on because it was asked in words; switch costs are those of the
 model the decision ends up on. A bare go-ahead brings
 back the work in progress's tier and mode without asking Jev (also after a
-compaction or a pause), unless it answers a proposal ("Want me to fix
-it?"), which is routed with the work as a floor, or the work is done and
+compaction or a pause), unless it answers a proposal (a question or an
+offer at the end of the assistant's message, `router.Proposes`: "Want me
+to fix it?", "Should I push it? CI takes ten minutes.", "let me know if
+you want it"), which is routed with the work as a floor. After a detour
+it is asked the relation question: the proposal may be to go back to the
+paused work, to wrap the detour up or to do more of it; when the paused
+work needs more, the go-ahead goes back to it unless the offer question
+(`[questions.offer]`) says the assistant offered one more thing for the
+detour, from `meta.detour_offer_threshold` (tune it in the gap the eval
+prints as "detour offer": offers of the detour against closing questions
+and offers to go back); a go-ahead that stays on the detour runs at the
+detour's level, whatever the relation reads (Jev's level of the bare words
+leans on the paused work, and the offer may be a wrap-up step or more of
+the detour), and doesn't close it. Going back on a bare go-ahead (the
+offer question under its bar, or Jev reading resume), an open detour
+waits in turn (`Kept`): the next wrap-up closes it, not the work, at the
+higher of the detour's level and Jev's at most. A kept detour is never
+shown to Jev nor resumed: a go-ahead goes on with the work, and going
+back to it in words is new work. Or the work is done and
 no paused work needs more (`router.Acknowledges`): then it is routed like
 any prompt, and Jev's relation says whether it reopens the work or only
-acknowledges it. The eval mirrors these
+acknowledges it; a go-ahead to a proposal there (or any go-ahead right
+after a compaction) holds the work's level unless it is a wrap-up step or
+an aside, and a bare go-ahead read as new work is answered alone, never a
+work named "yes". The eval mirrors these
 rules (`internal/eval` `setup`, `router.Judge`, and the hooks' own
 go-ahead path `router.Carried`); keep it in sync with
 `internal/hooks/decide.go`.

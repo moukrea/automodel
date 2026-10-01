@@ -33,7 +33,10 @@ type Config struct {
 	// 0.12): custom if that file was edited, else default.
 	Tuning string `toml:"tuning"`
 	// CatalogExact (flags only): Catalog is a whole catalog, used alone.
-	CatalogExact                 bool     `toml:"-"`
+	CatalogExact bool `toml:"-"`
+	// NoLastGood (flags only): the catalog is a candidate (eval --catalog),
+	// never kept as the hooks' last valid catalog.
+	NoLastGood                   bool     `toml:"-"`
 	StateDir                     string   `toml:"state_dir"`
 	Ledger                       string   `toml:"ledger"` // default: <state_dir>/ledger.jsonl
 	CacheTTL                     Duration `toml:"cache_ttl"`

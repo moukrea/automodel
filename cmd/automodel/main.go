@@ -273,7 +273,7 @@ func evalCmd(cfg *config.Config, args []string) error {
 		}
 		defer done()
 		c := *cfg
-		c.Catalog, c.CatalogExact = path, true
+		c.Catalog, c.CatalogExact, c.NoLastGood = path, true, true
 		cfg = &c
 	}
 	env, err := router.New(cfg)
