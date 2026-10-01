@@ -34,6 +34,8 @@ type Decision struct {
 	// prompt's relation to the work (continue, aside...), "asked", "new",
 	// "go-ahead", "mid-turn", "peer".
 	Why string `json:"why,omitempty"`
+	// WhyP is Jev's probability of that relation (0 when Why is no relation).
+	WhyP float64 `json:"why_p,omitempty"`
 	// From is the effort before this decision, when it changed it.
 	From string `json:"from,omitempty"`
 	DecidedAt  time.Time          `json:"decided_at"`

@@ -244,7 +244,8 @@ func TestRejudge(t *testing.T) {
 	env := &router.Env{Cfg: config.Default(), Catalog: c}
 	rel := map[string]float64{"new_task": 0.55, "extend": 0.45}
 	rs := []Result{{Case: Case{ID: "a", Scope: catalog.ScopeMain, Warm: true, Want: "xhigh", Relation: "extend",
-		State: map[string]any{"phase": "warm", "task": "and the retry storm too", "current": map[string]any{"tier": "xhigh"}}},
+		State: map[string]any{"phase": "warm", "task": "and the retry storm too", "current": map[string]any{"tier": "xhigh"},
+			"work_in_progress": map[string]any{"goal": "stop the retry loop from hammering the API", "level": "xhigh"}}},
 		Probs: map[string]float64{"low": 0.1, "medium": 0.8, "high": 0.1}, Conf: 0.7, RelP: rel}}
 	if r := Rejudge(env, rs)[0]; r.Decision != "xhigh" || r.WorkTier != "xhigh" || !strings.HasPrefix(r.Hold, "follow-up of the work in progress") {
 		t.Errorf("held: %+v", r)
@@ -646,4 +647,26 @@ func explicitTier(req router.Request, e string) string {
 		}
 	}
 	return ""
+}
+
+// Blind: when Jev sees nothing of what the work is about (no goal, no
+// recent prompts, no compaction summary), a separate relation doesn't take
+// the prompt below the work; with the work's goal, it does.
+func TestBlindHolds(t *testing.T) {
+	c := testCatalog(t)
+	env := &router.Env{Cfg: config.Default(), Catalog: c}
+	mk := func(st map[string]any) []Result {
+		return []Result{{Case: Case{ID: "b", Scope: catalog.ScopeMain, Warm: true, Want: "high", State: st},
+			Probs: map[string]float64{"low": 0.8, "high": 0.2}, Conf: 0.6, RelP: map[string]float64{"aside": 0.8, "side_question": 0.2}}}
+	}
+	blind := map[string]any{"phase": "warm", "task": "why does the status line show xhigh struck through?", "current": map[string]any{"tier": "high"},
+		"last_assistant": "Nothing more to do: the test run already finished."}
+	if r := Rejudge(env, mk(blind))[0]; r.Decision != "high" {
+		t.Errorf("blind aside lowered the work: %s (%s)", r.Decision, r.Hold)
+	}
+	seen := map[string]any{"phase": "warm", "task": "unrelated: what does HTTP 409 mean?", "current": map[string]any{"tier": "high"},
+		"work_in_progress": map[string]any{"goal": "render the routing fields in the status line", "level": "high"}}
+	if r := Rejudge(env, mk(seen))[0]; r.Decision != "low" {
+		t.Errorf("aside with a known work held: %s (%s)", r.Decision, r.Hold)
+	}
 }

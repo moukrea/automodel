@@ -332,7 +332,8 @@ func warmSession(t *testing.T, env *router.Env, sid, tier string, ctx int) {
 	d.Tier, d.Effort, d.Epoch = tt.ID, tt.Effort, 1
 	env.State.Update(sid, func(s *state.Session) bool {
 		s.Main, s.ContextTokens, s.LastPromptAt, s.EffortBase = d, ctx, time.Now(), tier
-		s.Prompts, s.SpendUSD, s.Work = 10, 3, nil
+		s.Prompts, s.SpendUSD = 10, 3
+		s.Work = &state.Work{Tier: tier, Goal: "fix the flaky retry test", Since: time.Now()}
 		return true
 	})
 }

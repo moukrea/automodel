@@ -168,7 +168,7 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 			return nil, ""
 		}
 		return work, fmt.Sprintf("%s (%s %.2f)", FollowUpProposal, top, p)
-	case rd.separate() >= e.Catalog.Meta.RelationSeparateThreshold():
+	case rd.separate() >= e.Catalog.Meta.RelationSeparateThreshold() && !Blind(req):
 		return nil, ""
 	case done && top != catalog.RelationContinue && top != catalog.RelationExtend:
 		return nil, "" // a question or a fact after the work was wrapped up
@@ -330,4 +330,26 @@ func head(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
+}
+
+// Blind reports a state where Jev can't see what the work in progress is
+// about: no goal, no recent prompts, no compaction summary (a work from an
+// older session, the turns after a compaction). It can't tell a question
+// about the work from an aside then, so a separate relation doesn't take
+// the prompt below the work (live: "why does the status line show xhigh
+// struck?" in the session building the status line read aside 0.79 with
+// only the level of the work to go on, and the fix that followed ran at low).
+func Blind(req Request) bool {
+	if req.Work != nil && req.Work.Goal != "" {
+		return false
+	}
+	if wip, _ := req.State["work_in_progress"].(map[string]any); wip["goal"] != nil {
+		return false
+	}
+	for _, k := range []string{"recent_prompts", "compaction_summary"} {
+		if v, ok := req.State[k]; ok && v != nil {
+			return false
+		}
+	}
+	return true
 }

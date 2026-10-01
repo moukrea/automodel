@@ -120,7 +120,7 @@ func TestJSONRouted(t *testing.T) {
 		return true
 	})
 	m := runJSON(t, env, jevIn)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","why":"","from":"","claude_effort":"","text":"automodel: Opus 5.5 xhigh +ultracode (0.86)"}`
+	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","why":"","why_p":0,"from":"","claude_effort":"","text":"automodel: Opus 5.5 xhigh +ultracode (0.86)"}`
 	if m["_raw"] != want {
 		t.Errorf("got  %s\nwant %s", m["_raw"], want)
 	}
@@ -181,7 +181,7 @@ func TestJSONStates(t *testing.T) {
 func TestJSONCatalogError(t *testing.T) {
 	var out strings.Builder
 	CatalogErrorJSON("jev", strings.NewReader(jevIn), &out)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","budget":"","why":"","from":"","claude_effort":"","text":"automodel: ⚠ catalog"}` + "\n"
+	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","budget":"","why":"","why_p":0,"from":"","claude_effort":"","text":"automodel: ⚠ catalog"}` + "\n"
 	if out.String() != want {
 		t.Errorf("got  %s\nwant %s", out.String(), want)
 	}
@@ -252,7 +252,7 @@ func TestJSONReadOnlyWritesNothing(t *testing.T) {
 // the effort Claude Code still shows struck through (red in its own status
 // line, plain in the JSON text other status lines embed).
 func TestRenderWhy(t *testing.T) {
-	v := View{Label: "Opus 5.5", Effort: "high", State: "routed", Confidence: 0.59, Why: "inform", From: "xhigh", ClaudeEffort: "xhigh"}
+	v := View{Label: "Opus 5.5", Effort: "high", State: "routed", Confidence: 0.44, Why: "inform", WhyP: 0.59, From: "xhigh", ClaudeEffort: "xhigh"}
 	if got, want := v.text(), "automodel: Opus 5.5 high x\u0336h\u0336i\u0336g\u0336h\u0336 (xhigh→high · inform 0.59)"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

@@ -231,7 +231,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	keep := func(reason string) (*state.Decision, Outcome) {
 		d := *req.Current
-		d.Why = shortWhy(reason)
+		d.Why, d.WhyP = shortWhy(reason), 0
 		rec.Kept, rec.KeepReason, rec.Chosen, rec.Model, rec.Effort, rec.Mode = true, reason, d.Tier, d.APIID, d.Effort, d.Mode
 		rec.LatencyMS = e.Now().Sub(start).Milliseconds()
 		if err := e.Ledger.Append(rec); err != nil {
@@ -389,8 +389,8 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		rec.Explicit[strings.TrimPrefix(id, jev.QExplicitPfx)] = p
 	}
 	dec.JevChoice, dec.Confidence, dec.Probs = rd.top, rd.conf, rd.probs
-	if top, _ := rd.relationTop(); top != "" {
-		dec.Why = strings.ReplaceAll(top, "_", " ")
+	if top, p := rd.relationTop(); top != "" {
+		dec.Why, dec.WhyP = strings.ReplaceAll(top, "_", " "), p
 	}
 
 	v := e.Judge(req, rd, cur, rp, params)
