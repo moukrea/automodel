@@ -310,6 +310,16 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				epoch = prev.Epoch + 1
 			}
 			dec.Epoch = epoch
+			switch {
+			case asked != nil:
+				dec.Why = "asked"
+			case dec.Why == "" && trigger == "initial":
+				dec.Why = "new"
+			}
+			dec.From = ""
+			if prev != nil && prev.Effort != dec.Effort && prev.Effort != "" {
+				dec.From = prev.Effort
+			}
 			s.Main = dec
 			s.CompactPending, s.CompactTrigger, s.ColdHint = false, "", false
 			switch {

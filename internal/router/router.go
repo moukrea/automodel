@@ -231,6 +231,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	keep := func(reason string) (*state.Decision, Outcome) {
 		d := *req.Current
+		d.Why = shortWhy(reason)
 		rec.Kept, rec.KeepReason, rec.Chosen, rec.Model, rec.Effort, rec.Mode = true, reason, d.Tier, d.APIID, d.Effort, d.Mode
 		rec.LatencyMS = e.Now().Sub(start).Milliseconds()
 		if err := e.Ledger.Append(rec); err != nil {
@@ -388,6 +389,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 		rec.Explicit[strings.TrimPrefix(id, jev.QExplicitPfx)] = p
 	}
 	dec.JevChoice, dec.Confidence, dec.Probs = rd.top, rd.conf, rd.probs
+	if top, _ := rd.relationTop(); top != "" {
+		dec.Why = strings.ReplaceAll(top, "_", " ")
+	}
 
 	v := e.Judge(req, rd, cur, rp, params)
 	v, rec.BudgetCap = e.capBudget(req, v, cur)
@@ -1226,4 +1230,15 @@ func SetupLog(stateDir, name string) func() {
 	log.SetOutput(f)
 	log.SetPrefix(fmt.Sprintf("[%d] ", os.Getpid()))
 	return func() { f.Close() }
+}
+
+// shortWhy names a kept decision's reason in a word or two for the status
+// line.
+func shortWhy(reason string) string {
+	for _, w := range []string{"go-ahead", "mid-turn", "peer", "compaction", "pinned"} {
+		if strings.Contains(reason, w) {
+			return w
+		}
+	}
+	return "kept"
 }

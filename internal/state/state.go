@@ -30,6 +30,12 @@ type Decision struct {
 	JevChoice  string             `json:"jev_choice,omitempty"`
 	Confidence float64            `json:"confidence,omitempty"`
 	Probs      map[string]float64 `json:"probs,omitempty"`
+	// Why is the short reason of the decision for the status line: the
+	// prompt's relation to the work (continue, aside...), "asked", "new",
+	// "go-ahead", "mid-turn", "peer".
+	Why string `json:"why,omitempty"`
+	// From is the effort before this decision, when it changed it.
+	From string `json:"from,omitempty"`
 	DecidedAt  time.Time          `json:"decided_at"`
 	Epoch      int                `json:"epoch"`
 }

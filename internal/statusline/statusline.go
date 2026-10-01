@@ -79,13 +79,13 @@ func RunJSON(env *router.Env, stdin io.Reader, stdout io.Writer, readOnly bool) 
 }
 
 // CatalogErrorJSON is what `statusline --json` prints when the catalog can't
-// be loaded (the text statusline prints "jev → ⚠ catalog").
+// be loaded (the text statusline prints "automodel: ⚠ catalog").
 func CatalogErrorJSON(alias string, stdin io.Reader, stdout io.Writer) error {
 	raw, _ := io.ReadAll(stdin)
 	in := parse(raw)
 	custom := func(m string) bool { return strings.TrimSuffix(m, "[1m]") == alias }
 	v := View{V: 1, Routed: in.SessionID != "" && (custom(in.Model.ID) || custom(in.Model.DisplayName)),
-		Alias: alias, State: "error", Issue: "catalog", Text: alias + " → ⚠ catalog", full: true}
+		Alias: alias, State: "error", Issue: "catalog", Text: "automodel: ⚠ catalog", full: true}
 	return writeJSON(stdout, v)
 }
 
@@ -138,6 +138,8 @@ type View struct {
 	Issue      string  `json:"issue"`      // why Jev couldn't be asked, or the error
 	Flash      string  `json:"flash"`      // switched|compact|cold after a recent redecision
 	Budget     string  `json:"budget"`     // "over" when the session is over its spending cap
+	Why        string  `json:"why"`        // the last decision's short reason (aside, asked, go-ahead...)
+	From       string  `json:"from"`       // the effort the last decision left, when it changed it
 	// ClaudeEffort is the effort Claude Code itself shows (its spinner says
 	// "thinking with X effort"): its own setting, not the routed effort.
 	// "" when it matches Effort or is unknown.
@@ -167,7 +169,7 @@ func Build(env *router.Env, sess *state.Session, now time.Time) View {
 		d = env.DefaultDecision("main", "default")
 	}
 	v := View{V: 1, Routed: true, Alias: env.Cfg.CustomModelID, Model: d.Model, Label: d.Model, short: d.Model,
-		Effort: d.Effort, Mode: d.Mode, Pin: sess.Pin, Issue: sess.JevIssue}
+		Effort: d.Effort, Mode: d.Mode, Pin: sess.Pin, Issue: sess.JevIssue, Why: d.Why, From: d.From}
 	if m := env.Catalog.Model(d.Model); m != nil {
 		v.short = m.ShortLabel()
 		if m.Label != "" {
@@ -204,29 +206,45 @@ func Build(env *router.Env, sess *state.Session, now time.Time) View {
 	return v
 }
 
-// text formats "jev → opus-5.5·xhigh 0.82", "jev → opus-5.5·xhigh +ultracode
-// 0.74", with a "↻ compact"/"↻ cold"/"↻ switched" flash after a redecision.
+// text formats "automodel: Opus 5.5 high (xhigh→high · aside 0.59)": the
+// model and effort in force, then the last decision in short (the effort it
+// left, why, Jev's confidence). The effort Claude Code still shows, when it
+// differs, follows struck through ("x̶h̶i̶g̶h̶"); a "↻ compact"/"↻ cold"/
+// "↻ switched" flash follows a redecision.
 func (v View) text() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s → %s", v.Alias, v.short)
+	fmt.Fprintf(&b, "automodel: %s", cmp.Or(v.Label, v.short))
 	if v.Effort != "" {
-		b.WriteString("·" + v.Effort)
+		b.WriteString(" " + v.Effort)
 	}
 	if v.Mode != "" {
 		b.WriteString(" +" + v.Mode)
 	}
+	if v.ClaudeEffort != "" {
+		b.WriteString(" " + strike(v.ClaudeEffort))
+	}
+	var why []string
+	if v.From != "" && v.Effort != "" {
+		why = append(why, v.From+"→"+v.Effort)
+	}
 	switch v.State {
 	case "pinned":
-		b.WriteString(" (pinned)")
+		why = append(why, "pinned")
 	case "default":
-		b.WriteString(" (default)")
+		why = append(why, "default")
 	case "fallback":
-		b.WriteString(" ⚠ fallback")
+		why = append(why, "⚠ fallback")
 	default:
-		fmt.Fprintf(&b, " %.2f", v.Confidence)
+		if v.Why != "" && v.Confidence > 0 {
+			why = append(why, fmt.Sprintf("%s %.2f", v.Why, v.Confidence))
+		} else if v.Why != "" {
+			why = append(why, v.Why)
+		} else if v.Confidence > 0 {
+			why = append(why, fmt.Sprintf("%.2f", v.Confidence))
+		}
 	}
-	if v.ClaudeEffort != "" {
-		fmt.Fprintf(&b, " · real effort: %s (Claude Code shows %s)", v.Effort, v.ClaudeEffort)
+	if len(why) > 0 {
+		b.WriteString(" (" + strings.Join(why, " · ") + ")")
 	}
 	if v.Budget != "" {
 		b.WriteString(" ⚠ budget")
@@ -240,9 +258,26 @@ func (v View) text() string {
 	return b.String()
 }
 
+// strike draws s struck through with combining characters, which survive
+// any status line that embeds the text (no escape codes).
+func strike(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		b.WriteRune(r)
+		b.WriteRune('\u0336')
+	}
+	return b.String()
+}
+
 // Render formats the text segment of a routed session.
+// In Claude Code's own status line the effort it still shows is red.
 func Render(env *router.Env, sess *state.Session, now time.Time) string {
-	return Build(env, sess, now).Text
+	v := Build(env, sess, now)
+	if v.ClaudeEffort == "" {
+		return v.Text
+	}
+	st := strike(v.ClaudeEffort)
+	return strings.Replace(v.Text, st, "\x1b[31m"+st+"\x1b[0m", 1)
 }
 
 // chain returns the user's own statusline. Claude Code cancels a run when

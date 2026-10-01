@@ -72,7 +72,7 @@ PreToolUse[Agent] ─▶ automodel hook agent  ─▶ Jev ─▶ model alias + p
 PreToolUse[Workflow] ─▶ automodel hook workflow ─▶ {model, effort} per agent()  │
 PreCompact / SessionStart / PostModelSwitch ─▶ markers                          │
 Claude Code ─(model "jev")─▶ automodel serve ─(model + effort rewritten)─▶ api.anthropic.com
-statusLine ─▶ automodel statusline:  jev → opus-5.5·xhigh +ultracode 0.82  ↻ switched
+statusLine ─▶ automodel statusline:  automodel: Opus 5.5 xhigh +ultracode (high→xhigh · extend 0.82)  ↻ switched
 ```
 
 `install` does everything and is idempotent:
@@ -132,13 +132,17 @@ restores your statusline (agentline's is left as is) and removes the service
 
 ## Status line
 
-On a `jev` session the automodel segment shows what the routing chose:
-`jev → opus-5.5·xhigh +ultracode 0.86` (model, effort, mode, Jev's
-confidence), `(default)` before the first decision, `(pinned)` while your
-`/effort` wins, `· real effort: low (Claude Code shows xhigh)` when Claude
-Code's own spinner shows another effort than the one routed, `⚠ fallback` and
-`⚠ jev: <why>` when Jev couldn't be asked, `⚠ budget` over the spending cap,
-and `↻ switched|compact|cold` for `statusline_flash` (30s) after a
+On a `jev` session the automodel segment shows what the routing chose and
+why, in short: `automodel: Opus 5.5 high (xhigh→high · aside 0.59)` is the
+model, effort and mode in force, then the last decision: the effort it left
+when it changed it, why (the prompt's relation to the work in progress:
+continue, extend, aside, wrap up…; `asked` for a request in words, `new`,
+`go-ahead`, `mid-turn`, `peer`, `kept`) and Jev's confidence. `default`
+before the first decision, `pinned` while your `/effort` wins. When Claude
+Code's own spinner shows another effort than the one routed, that effort
+follows struck through and red (`x̶h̶i̶g̶h̶`). `⚠ fallback` and `⚠ jev: <why>`
+when Jev couldn't be asked, `⚠ budget` over the spending cap, and
+`↻ switched|compact|cold` for `statusline_flash` (30s) after a
 redecision. Sessions on a named model show nothing.
 
 **Your own status line** is kept: `install` saves it as `statusline_command`
@@ -163,7 +167,7 @@ Tools that only read the state (session viewers, dashboards) add
 automodel hasn't seen.
 
 ```json
-{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","claude_effort":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}
+{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","why":"extend","from":"high","claude_effort":"","text":"automodel: Opus 5.5 xhigh +ultracode (high→xhigh · extend 0.86)"}
 ```
 
 `{"v":1,"routed":false}` for a session automodel doesn't route (with every
