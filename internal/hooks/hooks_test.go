@@ -126,6 +126,20 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			answers[id] = map[string]any{"type": "noul", "noul": v}
 		case "choice":
+			if kind, ok := strings.CutPrefix(id, jev.QExplicitPfx); ok {
+				// A request Choice: a.x keys kind_value; none takes the rest.
+				opts, _ := q.Criteria.(map[string]any)
+				probs, rest := map[string]float64{}, 1.0
+				for o := range opts {
+					if o != jev.ExplicitNone {
+						probs[o] = a.x[kind+"_"+o]
+						rest -= probs[o]
+					}
+				}
+				probs[jev.ExplicitNone] = max(rest, 0)
+				answers[id] = map[string]any{"type": "choice", "probabilities": probs}
+				continue
+			}
 			if id == jev.QRelation {
 				rel, p := cmp.Or(a.rel, catalog.RelationNewTask), cmp.Or(a.relP, 0.95)
 				opts, _ := q.Criteria.(map[string]any) // the options asked
@@ -401,18 +415,15 @@ func TestWarmDecisions(t *testing.T) {
 	}
 
 	// Without per-turn effort an effort change rebuilds the cache: on a big
-	// context no switch can pay back, so Jev is not even asked.
+	// context no switch can pay back, so the tier stays. Jev is still asked:
+	// any prompt may ask for an effort in words.
 	env.Cfg.Features.PerTurnEffort = false
 	warmSession(t, env, "w5", "xhigh", 800_000)
 	n := fj.calls()
 	fj.answers = []fa{{tier: "low", conf: 0.99}}
 	decide("w5", "Now write the commit message")
-	if s := main("w5"); s.Main.Tier != "xhigh" || fj.calls() != n {
+	if s := main("w5"); s.Main.Tier != "xhigh" || fj.calls() != n+1 {
 		t.Errorf("expensive switch: tier %s, jev calls %d", s.Main.Tier, fj.calls()-n)
-	}
-	data, _ := os.ReadFile(env.Cfg.Ledger)
-	if !strings.Contains(string(data), `"skipped":true`) {
-		t.Error("skipped decision not in the ledger")
 	}
 	// On a small context the same switch pays back: top-level change, new epoch.
 	warmSession(t, env, "w6", "xhigh", 2_000)

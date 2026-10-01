@@ -600,13 +600,13 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	req.Peer = transcript.IsPeer(in.Prompt)
 	req.GoAhead = !req.Peer && goAhead(in.Prompt)
 	if !req.Peer {
-		// What the user's words may ask for: Jev confirms each request;
+		// What the user may ask for in words: Jev tells a request from a mention;
 		// ultrathink is a keyword, a floor at xhigh.
 		model := env.Catalog.DefaultTier(catalog.ScopeMain).Model
 		if sess.Main != nil {
 			model = sess.Main.Model
 		}
-		req.Explicit = router.ExplicitCandidates(env.Catalog, in.Prompt, model)
+		req.Explicit = router.ExplicitRequests(env.Catalog, model)
 		if t := router.EffortTier(env.Catalog, model, "xhigh"); t != nil && router.Ultrathink(in.Prompt) {
 			req.MinTier = t.ID
 		}

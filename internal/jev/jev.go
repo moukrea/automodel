@@ -107,8 +107,8 @@ type Ask struct {
 	// that the go-ahead accepts (a bare go-ahead after a detour whose
 	// paused work needs more).
 	Offer bool
-	// Explicit: the requests a regex found in the prompt's words, a yes/no
-	// each (Jev tells a request from a mention).
+	// Explicit: every request the prompt could make, asked as one Choice
+	// per kind (Jev tells a request from a mention, and which one).
 	Explicit []Explicit
 }
 
@@ -127,6 +127,9 @@ const (
 	ExplicitModel  = "model"
 	ExplicitMore   = "more"
 	ExplicitOff    = "off"
+	// ExplicitNone is the option of a request Choice for a prompt that asks
+	// for nothing of that kind.
+	ExplicitNone = "none"
 )
 
 // ID is the request's question ID: explicit_effort_xhigh, explicit_mode_off...
@@ -135,8 +138,8 @@ func (x Explicit) ID() string { return QExplicitPfx + x.Kind + "_" + x.Value }
 // Questions builds the routing questions of a scope: a Score over the tiers
 // (they are ordered, so a Score fits better than a Choice), one Noul per
 // mode and per asked tier, and what a asks for: a Choice on the prompt's
-// relation to the work in progress, a Noul per explicit request found in
-// the prompt. It returns the tier IDs in level order.
+// relation to the work in progress, a Choice per kind of explicit request.
+// It returns the tier IDs in level order.
 func Questions(c *catalog.Catalog, scope string, a Ask) (map[string]Question, []string) {
 	var levels, ids []string
 	for _, t := range c.ScoredTiers(scope) {
@@ -161,8 +164,8 @@ func Questions(c *catalog.Catalog, scope string, a Ask) (map[string]Question, []
 	if a.Offer && scope == catalog.ScopeMain {
 		qs[QOffer] = OfferQuestion(c)
 	}
-	for _, x := range a.Explicit {
-		qs[x.ID()] = ExplicitQuestion(c, x)
+	for id, q := range ExplicitQuestions(c, a.Explicit) {
+		qs[id] = q
 	}
 	return qs, ids
 }
@@ -199,41 +202,109 @@ func OfferQuestion(c *catalog.Catalog) Question {
 	return Question{Type: "noul", Instructions: w.Question, Criteria: map[string]string{"true": w.Yes, "false": w.No}}
 }
 
-// ExplicitQuestion is the yes/no that confirms one explicit request.
-func ExplicitQuestion(c *catalog.Catalog, x Explicit) Question {
-	w := DefaultExplicit
-	if o := c.Questions.Explicit; o != nil {
-		for _, f := range []struct {
-			dst *string
-			v   string
-		}{
-			{&w.Question, o.Question}, {&w.Yes, o.Yes}, {&w.No, o.No},
-			{&w.OffQuestion, o.OffQuestion}, {&w.OffYes, o.OffYes}, {&w.OffNo, o.OffNo},
-			{&w.ModelQuestion, o.ModelQuestion}, {&w.ModelYes, o.ModelYes}, {&w.ModelNo, o.ModelNo},
-			{&w.Effort, o.Effort}, {&w.More, o.More}, {&w.Mode, o.Mode}, {&w.Model, o.Model},
-		} {
-			if f.v != "" {
-				*f.dst = f.v
+// ExplicitQuestions are the Choices on what a prompt asks of the assistant
+// itself, one per kind of request in xs (QExplicitPfx + kind): the effort
+// or more thinking, the workflow mode or its refusal, the model. Each
+// option is a request (its value), plus none. Their options compete, so
+// "passe en xhigh" reads xhigh, not high nor the mode as well.
+func ExplicitQuestions(c *catalog.Catalog, xs []Explicit) map[string]Question {
+	opts := map[string]map[string]*catalog.Option{}
+	label := map[string]string{}
+	for _, x := range xs {
+		w := explicitWording(c, x.Kind)
+		if opts[x.Kind] == nil {
+			opts[x.Kind] = map[string]*catalog.Option{ExplicitNone: w.Options[ExplicitNone]}
+		}
+		key := x.Value
+		switch {
+		case x.Kind == ExplicitMode && x.Value != ExplicitOff:
+			key = "on"
+		case x.Kind == ExplicitModel:
+			key = "model"
+		}
+		if x.Kind == ExplicitMode {
+			label[x.Kind] = x.Label
+		}
+		opts[x.Kind][x.Value] = fillOption(w.Options[key], x.Label)
+	}
+	qs := map[string]Question{}
+	for kind, o := range opts {
+		if v := label[kind]; v != "" {
+			o[ExplicitNone] = fillOption(o[ExplicitNone], v)
+		}
+		qs[QExplicitPfx+kind] = Question{Type: "choice", Instructions: strings.ReplaceAll(explicitWording(c, kind).Question, "{v}", label[kind]), Criteria: o}
+	}
+	return qs
+}
+
+// explicitWording is the Choice wording of a kind of request: the
+// catalog's (questions.explicit_<kind>) over the built-in one, option by
+// option.
+func explicitWording(c *catalog.Catalog, kind string) catalog.Relation {
+	w, r := DefaultExplicitEffort, c.Questions.ExplicitEffort
+	switch kind {
+	case ExplicitMode:
+		w, r = DefaultExplicitMode, c.Questions.ExplicitMode
+	case ExplicitModel:
+		w, r = DefaultExplicitModel, c.Questions.ExplicitModel
+	}
+	if r == nil {
+		return w
+	}
+	out := catalog.Relation{Question: w.Question, Options: map[string]*catalog.Option{}}
+	if r.Question != "" {
+		out.Question = r.Question
+	}
+	for id, o := range w.Options {
+		out.Options[id] = o
+		if ro := r.Options[id]; ro != nil && ro.What != "" {
+			out.Options[id] = ro
+		}
+	}
+	return out
+}
+
+// fillOption is o with {v} replaced by v.
+func fillOption(o *catalog.Option, v string) *catalog.Option {
+	if o == nil {
+		return nil
+	}
+	f := &catalog.Option{What: strings.ReplaceAll(o.What, "{v}", v), NotFor: strings.ReplaceAll(o.NotFor, "{v}", v)}
+	for _, e := range o.Examples {
+		f.Examples = append(f.Examples, strings.ReplaceAll(e, "{v}", v))
+	}
+	return f
+}
+
+// ExplicitProbs reads the answers to the explicit-request questions, keyed
+// by request ID (explicit_effort_low, explicit_mode_off...): a Choice's
+// options but none, or a yes/no per request (answers saved before the
+// Choices).
+func ExplicitProbs(ans map[string]Answer) map[string]float64 {
+	var out map[string]float64
+	for id, a := range ans {
+		if !strings.HasPrefix(id, QExplicitPfx) {
+			continue
+		}
+		if out == nil {
+			out = map[string]float64{}
+		}
+		if a.Noul != nil {
+			out[id] = *a.Noul
+			continue
+		}
+		for opt, p := range a.Probabilities {
+			if opt != ExplicitNone {
+				out[id+"_"+opt] = p
 			}
 		}
 	}
-	name := map[string]string{ExplicitEffort: w.Effort, ExplicitMode: w.Mode, ExplicitModel: w.Model}[x.Kind]
-	if x.Kind == ExplicitEffort && x.Value == ExplicitMore {
-		name = w.More
-	}
-	name = strings.ReplaceAll(name, "{v}", x.Label)
-	q, yes, no := w.Question, w.Yes, w.No
-	switch {
-	case x.Kind == ExplicitMode && x.Value == ExplicitOff:
-		q, yes, no = w.OffQuestion, w.OffYes, w.OffNo
-	case x.Kind == ExplicitModel:
-		q, yes, no = w.ModelQuestion, w.ModelYes, w.ModelNo
-	}
-	return Question{Type: "noul", Instructions: strings.ReplaceAll(q, "{x}", name), Criteria: map[string]string{"true": yes, "false": no}}
+	return out
 }
 
-// DefaultRelation and DefaultExplicit are the built-in wordings (the
-// catalog's questions.relation and questions.explicit override them).
+// DefaultRelation and the DefaultExplicit Choices are the built-in
+// wordings (the catalog's questions.relation and questions.explicit_*
+// override them).
 var (
 	DefaultRelation = catalog.Relation{
 		Question: "How does the new prompt `task` relate to the work in progress (started by `work_in_progress.goal`, carried on in `recent_prompts`, last reported in `last_assistant`; `work_in_progress.done` once it was wrapped up)?",
@@ -285,20 +356,80 @@ var (
 		Yes:      "Near its end the message names one more specific thing it would do for the detour, and the go-ahead says yes to it: a wrap-up step of the detour ('Shall I open a PR for it?', 'Je pousse la branche ?') or more of it ('The same null check is missing in the export handler: want me to add it there too?', 'Je fais pareil dans le module d'import ?'), also when a remark follows the offer ('Shall I push the branch? CI takes about ten minutes.'), when the offer has no question mark ('dis-moi si je lance aussi le linter'), or when the go-ahead is only an acknowledgement ('ok', 'perfect', 'lgtm', 'super', 'top', 'nickel', 'parfait'): right after an offer, it accepts it.",
 		No:       "The message names nothing more to do for the detour: it reports the detour done or where it stands and closes on a general question or a check that names no step of it ('Anything else?', 'Is that OK?', 'Can I go on?', 'Autre chose ?'); or it offers to go back to the paused work ('Shall I get back to the migration?', 'On reprend la migration ?'); or the go-ahead answers something else. The message decides, whatever the go-ahead's words.",
 	}
-	DefaultExplicit = catalog.Explicit{
-		Question:      "Does the new prompt `task` explicitly ask the assistant itself to use {x} for its own work (this prompt, or the rest of the work in progress)?",
-		Yes:           "It tells the assistant to work that way itself, as an instruction or a wish, in any language, up or down: 'do this at xhigh', 'set your effort to medium for the rest', 'use ultracode for the audit', 'run it with several agents in parallel', 'répartis ça entre plusieurs agents en parallèle', 'think harder about it', 'passe en low', 'mets l'effort à high pour la suite', 'effort élevé pour ça' (élevé is high, moyen medium, faible low), 'fais-le en ultracode', 'réfléchis à fond', 'mets le paquet'. A lower effort for easier work, or a cap on it, is asked just as much, usually with the reason: 'drop to medium for what's left, it's boilerplate', 'low is enough for the changelog', 'high, no more: it's routine', 'repasse en medium pour la suite, c'est mécanique', 'faible suffit pour ça'. An effort for a part of the work (some files, a step) or for this answer is for the assistant's own work too: 'low effort is fine for that summary', 'mets l'effort à low pour les fichiers de traduction'.",
-		No:            "It is about something else, or only talks about it: setting it for subagents, workflow agents or a workflow stage, in a config, a tuning or catalog entry or automodel's routing; quoting or testing a prompt or a string that contains it; a question, a mention, news, a refusal: 'give the review agents low effort', 'effort = \"medium\" in the stage config', 'a test that the prompt \"fais-le en max\" pins nothing', 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'.",
-		OffQuestion:   "Does the new prompt `task` explicitly ask the assistant itself not to use {x}, or to stop using it, for its own work (this prompt, or the rest of the work in progress)?",
-		OffYes:        "It asks the assistant to do this work without it, or to stop it, in any language, usually saying the assistant does it itself (one at a time, alone): 'no ultracode for this', 'skip the workflow, just fix it', 'no more agents, do the remaining ones yourself one by one', 'do the rest alone, without the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle, fais la suite toi-même'.",
-		OffNo:         "It asks for it, turns it off for something else (a workflow stage, a config, a subagent), only mentions or discusses it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'disable the parallel stage in the config', 'ultracode était lent hier'.",
-		ModelQuestion: "Does the new prompt `task` ask the assistant to run on {x} itself for its own work (this prompt, or the rest of the work in progress), instead of the model it runs on now?",
-		ModelYes:      "It tells the assistant to switch to that model, to go back to it, or to do this work, the rest of it or one part of it (a step, a test, a file) with it, as an instruction or a wish, often with the reason: 'switch to Sonnet for this', 'take Sonnet for this bit, it's routine', 'do the rest with Fable', 'use Opus for the concurrency test, it's the hard one', 'back to Opus for the rest of it', 'passe sur Sonnet pour la suite', 'fais ça avec Fable'.",
-		ModelNo:       "It only talks about the model, sets it for something else or refuses it: a mention, a comparison, release news, prices or benchmarks, a question about models or about how automodel routes and why it picked one; a subagent, workflow agents or a workflow stage, a config, a tuning or catalog entry set to it; a quoted prompt or test string; a refusal: 'Sonnet 5.5 is out', 'is Sonnet cheaper than Opus?', 'why did it pick Opus?', 'Fable tops the index now', 'make the review agent use sonnet', 'pas besoin d'Opus', 'Opus a mis 3 minutes'.",
-		Effort:        "the {v} reasoning effort",
-		More:          "more thinking than usual or than so far (thinking harder, longer or more carefully, taking its time, going all out)",
-		Mode:          "the {v} mode (several agents working in parallel, orchestrated as a workflow)",
-		Model:         "the {v} model",
+	DefaultExplicitEffort = catalog.Relation{
+		Question: "Does the new prompt `task` ask the assistant itself to work at a given reasoning effort, or to think more than usual, for its own work (this prompt, a part of it, or the rest of the work in progress)? Pick the level the prompt names, more when it asks to think more without naming one, or none. The request can take any wording, in any language. Only when it names no level but a step from the current one ('one notch lower', 'un cran au-dessus') is it the level next to `current.effort`, in the order low, medium, high, xhigh, max.",
+		Options: map[string]*catalog.Option{
+			"none": {
+				What:     "It asks for no effort of the assistant's own: most prompts. Also when it only talks about effort or thinking (a question, a mention, news, a complaint, a refusal), sets an effort for something else (subagents, workflow agents or a workflow stage, a config, a tuning or catalog entry, automodel's routing), quotes or tests a prompt that contains one, uses the ultrathink keyword (handled apart), or only asks for a mode with several agents or for a model.",
+				NotFor:   "A request for the assistant's own effort, up or down, also as a cap, for a part of the work or with a reason ('low is enough for the changelog', 'dial it back to medium', 'think harder about it').",
+				Examples: []string{"fix the failing test", "go through the payment module carefully and list every unchecked error", "look into the memory leak in depth this time", "automodel put this at low but it looks tricky to me", "why did it stay at xhigh?", "give the review agents low effort", "effort = \"medium\" in the stage config", "a test that the prompt \"fais-le en max\" pins nothing", "max retries is 3", "the hot path needs low latency", "use ultracode for the audit", "switch to Sonnet for this", "ultrathink: is the lease renewed under the lock?", "pas besoin de xhigh ici", "le CPU tourne à fond"},
+			},
+			"low": {
+				What:     "The low effort (low, faible, bas, minimal, the lowest), as an instruction or a wish, also as a cap or for easier work.",
+				NotFor:   "Another level named.",
+				Examples: []string{"passe en low", "low is enough for the changelog", "go back to low for this one", "low effort is fine for that summary", "faible suffit pour ça", "mets l'effort à low pour les fichiers de traduction"},
+			},
+			"medium": {
+				What:     "The medium effort (medium, moyen, mid), as an instruction or a wish, also as a cap or for easier work.",
+				NotFor:   "Another level named.",
+				Examples: []string{"set your effort to medium for the rest", "dial it back to medium", "drop to medium for what's left, it's boilerplate", "medium is enough from here", "repasse en medium pour la suite, c'est mécanique", "moyen suffit pour le reste"},
+			},
+			"high": {
+				What:     "The high effort, named high (or élevé, haut), as an instruction or a wish, also as a cap or for easier work than now.",
+				NotFor:   "xhigh or max, named so; more thinking with no level named (more).",
+				Examples: []string{"switch to high effort for the migration", "high is fine for the remaining wiring", "high, no more: it's routine", "mets l'effort à high pour la suite", "effort élevé pour ça"},
+			},
+			"xhigh": {
+				What:     "The xhigh effort (extra high, x-high), as an instruction or a wish.",
+				NotFor:   "high and max, which are other levels; the ultracode mode (several agents), which is no effort level.",
+				Examples: []string{"do this at xhigh", "x-high for this one please", "passe en xhigh", "fais la suite en xhigh"},
+			},
+			"max": {
+				What:     "The max effort (maximum, the highest level), as an instruction or a wish.",
+				NotFor:   "xhigh, another level; more thinking with no level named (more).",
+				Examples: []string{"max effort on this", "use the maximum reasoning effort for the proof", "fais-le en max", "passe au max pour celle-là"},
+			},
+			"more": {
+				What:     "It asks the assistant to think more than it would, with no level named: think harder, longer or more carefully than usual, take its time, go all out.",
+				NotFor:   "A task described as thorough, careful, in depth or harder ('check every path in detail', 'investigate it properly', 'examine the diff closely', 'the next one is harder'): the level judges the task, that is no request. A remark that the level automodel or Jev picked was too low. A level named (low to max); the ultrathink keyword; thinking less.",
+				Examples: []string{"think harder about it", "take your time on this one", "think it through more carefully than last time", "réfléchis bien avant de toucher au verrou", "prends ton temps", "mets le paquet sur celle-là"},
+			},
+		},
+	}
+	DefaultExplicitMode = catalog.Relation{
+		Question: "Does the new prompt `task` ask the assistant itself to do its own work in the {v} mode (several agents working in parallel, orchestrated as a workflow), or to do it without that mode or stop it? Pick what it asks, or none. The request can take any wording, in any language.",
+		Options: map[string]*catalog.Option{
+			"none": {
+				What:     "Neither: most prompts. Also a question, a mention or a complaint about the mode or workflows, turning parallel work on or off for something else (a workflow stage, a config, a subagent), agents that are not the assistant's (CI build agents, support agents), and requests for an effort level or more thinking ('passe en xhigh', 'think harder', 'max effort') or for a model, which are not this mode.",
+				NotFor:   "Asking for the mode or several agents doing the assistant's work (on), or asking to work without them (off).",
+				Examples: []string{"fix the failing test", "{v} was slow yesterday", "did the workflow finish?", "have one review agent check the migration, then apply its notes yourself", "send a subagent to find which test is flaky and report back", "inutile de changer de modèle, termine la doc", "no need for max effort on the changelog", "disable the parallel stage in the config", "our CI spreads the e2e suite across 4 build agents", "passe en xhigh pour la suite", "think harder about the lock", "should we use {v} for this kind of audit?"},
+			},
+			"on": {
+				What:     "It asks for the mode: {v} by name, a workflow, or several agents or subagents doing the assistant's work in parallel.",
+				NotFor:   "One subagent for one task; an effort level or more thinking alone; agents that are not the assistant's; only talking about the mode.",
+				Examples: []string{"use {v} for the audit", "fais-le en {v}", "run it with several agents in parallel", "fan this out to subagents", "split the remaining packages across 4 agents", "répartis ça entre plusieurs agents en parallèle", "lance plusieurs sous-agents sur les modules"},
+			},
+			"off": {
+				What:     "It asks the assistant to work without the mode or to stop it, usually doing the work itself, one at a time.",
+				NotFor:   "Asking for the mode; turning it off for something else (a config, a workflow stage); refusing an effort level or a model ('pas besoin de max', 'no need for Opus', 'pas besoin de passer sur Sonnet'): only the mode with several agents counts.",
+				Examples: []string{"no {v} for this", "skip the workflow, just fix it", "no more agents, do the rest yourself one by one", "single-thread from here", "pas besoin d'{v}", "sans workflow", "arrête les agents en parallèle, fais la suite toi-même"},
+			},
+		},
+	}
+	DefaultExplicitModel = catalog.Relation{
+		Question: "Does the new prompt `task` ask the assistant itself to run on another model for its own work (this prompt, a part of it, or the rest of the work in progress), instead of the one it runs on now? Pick that model, or none. The request can take any wording, in any language.",
+		Options: map[string]*catalog.Option{
+			"none": {
+				What:     "No model asked for the assistant itself: most prompts. Also talking about models (release news, comparisons, prices, benchmarks, why automodel picked one), setting a model for something else (a subagent, workflow agents or a stage, a config, a tuning or catalog entry), a quoted prompt or test string, a refusal, and requests for an effort level or a mode only.",
+				NotFor:   "Asking the assistant to switch to a model, go back to one, or do this work or a part of it with one.",
+				Examples: []string{"fix the failing test", "Sonnet 5.5 is out", "is Sonnet cheaper than Opus?", "why did it pick Opus?", "make the review agent use sonnet", "pas besoin d'Opus", "Opus a mis 3 minutes", "passe en xhigh"},
+			},
+			"model": {
+				What:     "{v}: it asks the assistant to switch to {v}, to go back to it, or to do this work, the rest of it or one part of it (a step, a test, a file) with it, as an instruction or a wish, often with the reason.",
+				NotFor:   "Another model named; only talking about {v}.",
+				Examples: []string{"switch to {v} for this", "do the rest with {v}", "take {v} for this bit, it's routine", "back to {v} for the rest of it", "passe sur {v} pour la suite", "fais ça avec {v}"},
+			},
+		},
 	}
 )
 

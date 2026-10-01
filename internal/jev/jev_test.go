@@ -29,8 +29,13 @@ func TestCatalogWordingIsBuiltIn(t *testing.T) {
 	if !reflect.DeepEqual(*c.Questions.Relation, DefaultRelation) {
 		t.Errorf("questions.relation differs from the built-in wording:\n%+v\n%+v", *c.Questions.Relation, DefaultRelation)
 	}
-	if !reflect.DeepEqual(*c.Questions.Explicit, DefaultExplicit) {
-		t.Errorf("questions.explicit differs from the built-in wording")
+	for _, q := range []struct {
+		name      string
+		got, want *catalog.Relation
+	}{{"effort", c.Questions.ExplicitEffort, &DefaultExplicitEffort}, {"mode", c.Questions.ExplicitMode, &DefaultExplicitMode}, {"model", c.Questions.ExplicitModel, &DefaultExplicitModel}} {
+		if q.got == nil || !reflect.DeepEqual(*q.got, *q.want) {
+			t.Errorf("questions.explicit_%s differs from the built-in wording", q.name)
+		}
 	}
 	if c.Questions.Offer == nil || *c.Questions.Offer != DefaultOffer {
 		t.Errorf("questions.offer differs from the built-in wording")
@@ -95,27 +100,55 @@ func TestQuestions(t *testing.T) {
 			t.Errorf("relation question doesn't name %s", path)
 		}
 	}
-	for id, want := range map[string]string{
-		"explicit_effort_xhigh":            "ask the assistant itself to use the xhigh reasoning effort for its own work (this prompt, or the rest of the work in progress)?",
-		"explicit_effort_more":             "to use more thinking than usual or than so far",
-		"explicit_mode_off":                "not to use the ultracode mode (several agents working in parallel",
-		"explicit_model_claude-sonnet-5-5": "ask the assistant to run on the Sonnet 5.5 model itself for its own work (this prompt",
+	// One Choice per kind of request, its options competing, plus none.
+	for id, want := range map[string][]string{
+		"explicit_effort": {"none", "xhigh", "more"},
+		"explicit_mode":   {"none", "off"},
+		"explicit_model":  {"none", "claude-sonnet-5-5"},
 	} {
 		q := qs[id]
-		crit, _ := q.Criteria.(map[string]string)
-		if q.Type != "noul" || !strings.Contains(q.Instructions, want) || crit["true"] == "" || crit["false"] == "" {
+		opts, _ := q.Criteria.(map[string]*catalog.Option)
+		if q.Type != "choice" || len(opts) != len(want) {
 			t.Errorf("%s = %+v", id, q)
 		}
+		for _, o := range want {
+			if opts[o] == nil || opts[o].What == "" || strings.Contains(opts[o].What+opts[o].NotFor+strings.Join(opts[o].Examples, ""), "{v}") {
+				t.Errorf("%s option %s = %+v", id, o, opts[o])
+			}
+		}
+	}
+	if m := qs["explicit_model"].Criteria.(map[string]*catalog.Option)["claude-sonnet-5-5"]; !strings.Contains(m.What, "switch to Sonnet 5.5") {
+		t.Errorf("model option = %+v", m)
+	}
+	if q := qs["explicit_mode"]; !strings.Contains(q.Instructions, "in the ultracode mode") {
+		t.Errorf("mode question = %s", q.Instructions)
 	}
 	// A custom tuning can reword one option; the others stay built in.
 	c.Questions.Relation = &catalog.Relation{Options: map[string]*catalog.Option{"inform": {What: "Only a fact."}}}
-	c.Questions.Explicit = &catalog.Explicit{Effort: "effort level {v}"}
+	c.Questions.ExplicitEffort = &catalog.Relation{Options: map[string]*catalog.Option{"xhigh": {What: "Extra high, by name."}}}
 	qs, _ = Questions(c, catalog.ScopeMain, Ask{Relation: true, Explicit: xs[:1]})
 	opt := qs[QRelation].Criteria.(map[string]*catalog.Option)
 	if opt["inform"].What != "Only a fact." || opt["extend"] != DefaultRelation.Options["extend"] || qs[QRelation].Instructions != DefaultRelation.Question {
 		t.Errorf("partial relation tuning: %+v", opt)
 	}
-	if !strings.Contains(qs["explicit_effort_xhigh"].Instructions, "to use effort level xhigh for") {
-		t.Errorf("partial explicit tuning: %s", qs["explicit_effort_xhigh"].Instructions)
+	eo := qs["explicit_effort"].Criteria.(map[string]*catalog.Option)
+	if eo["xhigh"].What != "Extra high, by name." || eo["none"].What != DefaultExplicitEffort.Options["none"].What || qs["explicit_effort"].Instructions != DefaultExplicitEffort.Question {
+		t.Errorf("partial explicit tuning: %+v", eo)
+	}
+}
+
+// Choice answers read as request IDs (none left out); saved yes/no answers
+// still read.
+func TestExplicitProbs(t *testing.T) {
+	yes := 0.9
+	got := ExplicitProbs(map[string]Answer{
+		"explicit_effort":                  {Type: "choice", Probabilities: map[string]float64{"none": 0.1, "low": 0.85, "medium": 0.05}},
+		"explicit_mode":                    {Type: "choice", Probabilities: map[string]float64{"none": 0.9, "off": 0.1}},
+		"explicit_model_claude-sonnet-5-5": {Type: "noul", Noul: &yes},
+		"relation":                         {Type: "choice", Probabilities: map[string]float64{"continue": 1}},
+	})
+	want := map[string]float64{"explicit_effort_low": 0.85, "explicit_effort_medium": 0.05, "explicit_mode_off": 0.1, "explicit_model_claude-sonnet-5-5": 0.9}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ExplicitProbs = %v", got)
 	}
 }

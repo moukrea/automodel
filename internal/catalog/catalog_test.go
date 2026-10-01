@@ -79,8 +79,8 @@ func TestInvalidCatalog(t *testing.T) {
 		"questions.relation: unknown option detour",
 		"questions.relation.options.extend: what is required",
 		"questions.relation: option new_task is missing",
-		"questions.explicit.question must contain {x}",
-		"questions.explicit.model_question must contain {x}",
+		"questions.explicit_effort: unknown option huge",
+		"questions.explicit_model.options.model.what must contain {v}",
 	}
 	errs := is.Errors()
 	for _, w := range want {

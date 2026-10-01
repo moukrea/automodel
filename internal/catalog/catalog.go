@@ -41,8 +41,17 @@ type Questions struct {
 	// Relation is the Choice on how a main-session prompt relates to the
 	// work in progress (asked once there is one).
 	Relation *Relation `toml:"relation" json:"relation,omitempty"`
-	// Explicit words the yes/no asked for each request a prompt's words may
-	// make (an effort, more thinking, a mode, a model).
+	// ExplicitEffort, ExplicitMode and ExplicitModel are the Choices asked
+	// of every main-session prompt: the effort it asks the assistant to
+	// work at (or more thinking), the workflow mode asked for or refused,
+	// the model asked for; "none" when it asks for nothing of that kind.
+	// Options: none, low, medium, high, xhigh, max, more; none, on, off;
+	// none, model ({v}: the mode's ID or the model's label).
+	ExplicitEffort *Relation `toml:"explicit_effort" json:"explicit_effort,omitempty"`
+	ExplicitMode   *Relation `toml:"explicit_mode" json:"explicit_mode,omitempty"`
+	ExplicitModel  *Relation `toml:"explicit_model" json:"explicit_model,omitempty"`
+	// Explicit is deprecated (ignored): the yes/no asked for each request a
+	// regex found, before the Choices.
 	Explicit *Explicit `toml:"explicit" json:"explicit,omitempty"`
 	// Offer is the yes/no asked of a bare go-ahead after a detour whose
 	// paused work needs more: did the assistant offer one more thing for

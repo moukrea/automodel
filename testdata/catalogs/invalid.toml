@@ -70,6 +70,8 @@ not_for = "A new task."
 [questions.relation.options.detour]
 what = "Something else."
 
-[questions.explicit]
-question = "Does it ask for more?"
-model_question = "Does it ask to run on another model?"
+[questions.explicit_effort.options.huge]
+what = "A huge effort."
+
+[questions.explicit_model.options.model]
+what = "Another model."

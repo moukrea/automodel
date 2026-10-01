@@ -208,7 +208,7 @@ func TestCaseSetup(t *testing.T) {
 	if wip, _ := st["work_in_progress"].(map[string]any); wip["level"] != "xhigh" {
 		t.Errorf("state = %v", st)
 	}
-	if w := req.Work; w == nil || w.Tier != "xhigh" || w.Mode != "ultracode" || !req.MidTurn || req.Current == nil || len(req.Explicit) != 1 || req.Explicit[0].Tier != "low" {
+	if w := req.Work; w == nil || w.Tier != "xhigh" || w.Mode != "ultracode" || !req.MidTurn || req.Current == nil || explicitTier(req, "low") != "low" {
 		t.Errorf("request = %+v", req)
 	}
 	st, req = setup(c, Case{Scope: catalog.ScopeMain, State: map[string]any{
@@ -228,7 +228,7 @@ func TestCaseSetup(t *testing.T) {
 	if w, p := req.Work, req.Paused; w == nil || w.Model != "claude-sonnet-5-5" || w.Tier != "high" || p == nil || p.Tier != "xhigh" || p.Mode != "ultracode" || p.Goal != "Migrate the ledger to v2" {
 		t.Errorf("work %+v, paused %+v", req.Work, req.Paused)
 	}
-	if req.Current == nil || req.Current.Tier != state.PinnedTier || req.Current.Model != "claude-sonnet-5-5" || len(req.Explicit) != 1 || req.Explicit[0].Tier != "xhigh" {
+	if req.Current == nil || req.Current.Tier != state.PinnedTier || req.Current.Model != "claude-sonnet-5-5" || explicitTier(req, "xhigh") != "xhigh" {
 		t.Errorf("request = %+v", req)
 	}
 	if wip, pw := st["work_in_progress"].(map[string]any), st["paused_work"].(map[string]any); len(wip) != 2 || len(pw) != 2 || pw["level"] != "xhigh" {
@@ -607,6 +607,8 @@ func TestRelationAskedApartOnFastPath(t *testing.T) {
 				out[id] = map[string]any{"type": "choice", "choice": "continue", "confidence": 0.9, "probabilities": map[string]float64{"continue": 0.95, "extend": 0.05}}
 			case q.Type == "score":
 				out[id] = map[string]any{"type": "score", "confidence": 1, "probabilities": map[string]float64{"0": 1}}
+			case q.Type == "choice":
+				out[id] = map[string]any{"type": "choice", "choice": jev.ExplicitNone, "confidence": 1, "probabilities": map[string]float64{jev.ExplicitNone: 1}}
 			default:
 				out[id] = map[string]any{"type": "noul", "noul": 0.05}
 			}
@@ -634,4 +636,14 @@ func TestRelationAskedApartOnFastPath(t *testing.T) {
 	if r = Rejudge(env, rs)[0]; r.Decision != "xhigh" || r.FastPath != "go-ahead" {
 		t.Errorf("rejudged: %+v", r)
 	}
+}
+
+// explicitTier is the tier the request for effort e maps to ("" if none).
+func explicitTier(req router.Request, e string) string {
+	for _, x := range req.Explicit {
+		if x.Kind == "effort" && x.Value == e {
+			return x.Tier
+		}
+	}
+	return ""
 }

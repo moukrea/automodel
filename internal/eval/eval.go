@@ -276,7 +276,7 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 	req.Peer = transcript.IsPeer(task)
 	req.GoAhead = !req.Peer && router.GoAhead(task)
 	if !req.Peer {
-		req.Explicit = router.ExplicitCandidates(cat, task, model)
+		req.Explicit = router.ExplicitRequests(cat, model)
 		if t := router.EffortTier(cat, model, "xhigh"); t != nil && router.Ultrathink(task) {
 			req.MinTier = t.ID
 		}
@@ -405,12 +405,13 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 				r.AskedP = map[string]float64{}
 			}
 			r.AskedP[strings.TrimPrefix(id, jev.QTierPfx)] = *a.Noul
-		case strings.HasPrefix(id, jev.QExplicitPfx):
-			if r.ExplicitP == nil {
-				r.ExplicitP = map[string]float64{}
-			}
-			r.ExplicitP[strings.TrimPrefix(id, jev.QExplicitPfx)] = *a.Noul
 		}
+	}
+	for id, p := range jev.ExplicitProbs(ans) {
+		if r.ExplicitP == nil {
+			r.ExplicitP = map[string]float64{}
+		}
+		r.ExplicitP[strings.TrimPrefix(id, jev.QExplicitPfx)] = p
 	}
 	if format != "choice" {
 		r.judge(env, req, ans, ids)

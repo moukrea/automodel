@@ -1407,31 +1407,88 @@ yes = "Near its end the message names one more specific thing it would do for th
 no = "The message names nothing more to do for the detour: it reports the detour done or where it stands and closes on a general question or a check that names no step of it ('Anything else?', 'Is that OK?', 'Can I go on?', 'Autre chose ?'); or it offers to go back to the paused work ('Shall I get back to the migration?', 'On reprend la migration ?'); or the go-ahead answers something else. The message decides, whatever the go-ahead's words."
 
 # Requests in prose ("passe en xhigh", "fais ça en ultracode", "think
-# harder"). A regex finds the words that may make one (an effort name, the
-# think-harder family, ultracode or workflows and their refusal, a model
-# name); only then is this yes/no asked, once per request, {x} naming it
-# (from effort/more/mode/model, {v} the effort, the mode or the model).
-# It asks about the action, not the subject, and about the assistant's
-# own work: effort names are often only talked about ("why did it stay at
-# xhigh?") or set for something else (a subagent, a workflow stage, a
-# tuning file, a quoted prompt). The ultrathink keyword needs no question
-# (a floor at xhigh). A model has its own question, about the
-# model the assistant itself runs on: in this line of work models are
-# compared, released and benchmarked far more often than asked for.
-[questions.explicit]
-question = "Does the new prompt `task` explicitly ask the assistant itself to use {x} for its own work (this prompt, or the rest of the work in progress)?"
-yes = "It tells the assistant to work that way itself, as an instruction or a wish, in any language, up or down: 'do this at xhigh', 'set your effort to medium for the rest', 'use ultracode for the audit', 'run it with several agents in parallel', 'répartis ça entre plusieurs agents en parallèle', 'think harder about it', 'passe en low', 'mets l'effort à high pour la suite', 'effort élevé pour ça' (élevé is high, moyen medium, faible low), 'fais-le en ultracode', 'réfléchis à fond', 'mets le paquet'. A lower effort for easier work, or a cap on it, is asked just as much, usually with the reason: 'drop to medium for what's left, it's boilerplate', 'low is enough for the changelog', 'high, no more: it's routine', 'repasse en medium pour la suite, c'est mécanique', 'faible suffit pour ça'. An effort for a part of the work (some files, a step) or for this answer is for the assistant's own work too: 'low effort is fine for that summary', 'mets l'effort à low pour les fichiers de traduction'."
-no = "It is about something else, or only talks about it: setting it for subagents, workflow agents or a workflow stage, in a config, a tuning or catalog entry or automodel's routing; quoting or testing a prompt or a string that contains it; a question, a mention, news, a refusal: 'give the review agents low effort', 'effort = \"medium\" in the stage config', 'a test that the prompt \"fais-le en max\" pins nothing', 'why did it stay at xhigh?', 'max retries is 3', 'the workflow failed', 'ultracode was slow', 'pas besoin de xhigh ici', 'le CPU tourne à fond'."
-off_question = "Does the new prompt `task` explicitly ask the assistant itself not to use {x}, or to stop using it, for its own work (this prompt, or the rest of the work in progress)?"
-off_yes = "It asks the assistant to do this work without it, or to stop it, in any language, usually saying the assistant does it itself (one at a time, alone): 'no ultracode for this', 'skip the workflow, just fix it', 'no more agents, do the remaining ones yourself one by one', 'do the rest alone, without the parallel agents', 'pas besoin d'ultracode', 'sans workflow', 'arrête les agents en parallèle, fais la suite toi-même'."
-off_no = "It asks for it, turns it off for something else (a workflow stage, a config, a subagent), only mentions or discusses it, or says nothing against it: 'use ultracode', 'did the workflow finish?', 'disable the parallel stage in the config', 'ultracode était lent hier'."
-model_question = "Does the new prompt `task` ask the assistant to run on {x} itself for its own work (this prompt, or the rest of the work in progress), instead of the model it runs on now?"
-model_yes = "It tells the assistant to switch to that model, to go back to it, or to do this work, the rest of it or one part of it (a step, a test, a file) with it, as an instruction or a wish, often with the reason: 'switch to Sonnet for this', 'take Sonnet for this bit, it's routine', 'do the rest with Fable', 'use Opus for the concurrency test, it's the hard one', 'back to Opus for the rest of it', 'passe sur Sonnet pour la suite', 'fais ça avec Fable'."
-model_no = "It only talks about the model, sets it for something else or refuses it: a mention, a comparison, release news, prices or benchmarks, a question about models or about how automodel routes and why it picked one; a subagent, workflow agents or a workflow stage, a config, a tuning or catalog entry set to it; a quoted prompt or test string; a refusal: 'Sonnet 5.5 is out', 'is Sonnet cheaper than Opus?', 'why did it pick Opus?', 'Fable tops the index now', 'make the review agent use sonnet', 'pas besoin d'Opus', 'Opus a mis 3 minutes'."
-effort = "the {v} reasoning effort"
-more = "more thinking than usual or than so far (thinking harder, longer or more carefully, taking its time, going all out)"
-mode = "the {v} mode (several agents working in parallel, orchestrated as a workflow)"
-model = "the {v} model"
+# harder", "dial it back to medium", any language). Every main-session
+# prompt gets three Choices, one per kind: the effort it asks the assistant
+# to work at (or more thinking), the workflow mode asked for or refused,
+# the model asked for; "none" when it asks for nothing of that kind. No word
+# list picks the questions: before 2026-10 a regex did, and every wording it
+# lacked ("dial it back to medium") was missed. One Choice per kind, not a
+# yes/no per value: asked apart, "passe en xhigh" also read yes to high, max
+# and the mode (train precision 34%); as options they compete. They ask
+# about the action, not the subject, and about the assistant's own work:
+# effort names are often only talked about ("why did it stay at xhigh?") or
+# set for something else (a subagent, a workflow stage, a tuning file, a
+# quoted prompt). The ultrathink keyword needs no question (a floor at
+# xhigh). {v} is the mode's ID, or the model's label.
+[questions.explicit_effort]
+question = "Does the new prompt `task` ask the assistant itself to work at a given reasoning effort, or to think more than usual, for its own work (this prompt, a part of it, or the rest of the work in progress)? Pick the level the prompt names, more when it asks to think more without naming one, or none. The request can take any wording, in any language. Only when it names no level but a step from the current one ('one notch lower', 'un cran au-dessus') is it the level next to `current.effort`, in the order low, medium, high, xhigh, max."
+
+[questions.explicit_effort.options.none]
+what = "It asks for no effort of the assistant's own: most prompts. Also when it only talks about effort or thinking (a question, a mention, news, a complaint, a refusal), sets an effort for something else (subagents, workflow agents or a workflow stage, a config, a tuning or catalog entry, automodel's routing), quotes or tests a prompt that contains one, uses the ultrathink keyword (handled apart), or only asks for a mode with several agents or for a model."
+not_for = "A request for the assistant's own effort, up or down, also as a cap, for a part of the work or with a reason ('low is enough for the changelog', 'dial it back to medium', 'think harder about it')."
+examples = ["fix the failing test", "go through the payment module carefully and list every unchecked error", "look into the memory leak in depth this time", "automodel put this at low but it looks tricky to me", "why did it stay at xhigh?", "give the review agents low effort", "effort = \"medium\" in the stage config", "a test that the prompt \"fais-le en max\" pins nothing", "max retries is 3", "the hot path needs low latency", "use ultracode for the audit", "switch to Sonnet for this", "ultrathink: is the lease renewed under the lock?", "pas besoin de xhigh ici", "le CPU tourne à fond"]
+
+[questions.explicit_effort.options.low]
+what = "The low effort (low, faible, bas, minimal, the lowest), as an instruction or a wish, also as a cap or for easier work."
+not_for = "Another level named."
+examples = ["passe en low", "low is enough for the changelog", "go back to low for this one", "low effort is fine for that summary", "faible suffit pour ça", "mets l'effort à low pour les fichiers de traduction"]
+
+[questions.explicit_effort.options.medium]
+what = "The medium effort (medium, moyen, mid), as an instruction or a wish, also as a cap or for easier work."
+not_for = "Another level named."
+examples = ["set your effort to medium for the rest", "dial it back to medium", "drop to medium for what's left, it's boilerplate", "medium is enough from here", "repasse en medium pour la suite, c'est mécanique", "moyen suffit pour le reste"]
+
+[questions.explicit_effort.options.high]
+what = "The high effort, named high (or élevé, haut), as an instruction or a wish, also as a cap or for easier work than now."
+not_for = "xhigh or max, named so; more thinking with no level named (more)."
+examples = ["switch to high effort for the migration", "high is fine for the remaining wiring", "high, no more: it's routine", "mets l'effort à high pour la suite", "effort élevé pour ça"]
+
+[questions.explicit_effort.options.xhigh]
+what = "The xhigh effort (extra high, x-high), as an instruction or a wish."
+not_for = "high and max, which are other levels; the ultracode mode (several agents), which is no effort level."
+examples = ["do this at xhigh", "x-high for this one please", "passe en xhigh", "fais la suite en xhigh"]
+
+[questions.explicit_effort.options.max]
+what = "The max effort (maximum, the highest level), as an instruction or a wish."
+not_for = "xhigh, another level; more thinking with no level named (more)."
+examples = ["max effort on this", "use the maximum reasoning effort for the proof", "fais-le en max", "passe au max pour celle-là"]
+
+[questions.explicit_effort.options.more]
+what = "It asks the assistant to think more than it would, with no level named: think harder, longer or more carefully than usual, take its time, go all out."
+not_for = "A task described as thorough, careful, in depth or harder ('check every path in detail', 'investigate it properly', 'examine the diff closely', 'the next one is harder'): the level judges the task, that is no request. A remark that the level automodel or Jev picked was too low. A level named (low to max); the ultrathink keyword; thinking less."
+examples = ["think harder about it", "take your time on this one", "think it through more carefully than last time", "réfléchis bien avant de toucher au verrou", "prends ton temps", "mets le paquet sur celle-là"]
+
+[questions.explicit_mode]
+question = "Does the new prompt `task` ask the assistant itself to do its own work in the {v} mode (several agents working in parallel, orchestrated as a workflow), or to do it without that mode or stop it? Pick what it asks, or none. The request can take any wording, in any language."
+
+[questions.explicit_mode.options.none]
+what = "Neither: most prompts. Also a question, a mention or a complaint about the mode or workflows, turning parallel work on or off for something else (a workflow stage, a config, a subagent), agents that are not the assistant's (CI build agents, support agents), and requests for an effort level or more thinking ('passe en xhigh', 'think harder', 'max effort') or for a model, which are not this mode."
+not_for = "Asking for the mode or several agents doing the assistant's work (on), or asking to work without them (off)."
+examples = ["fix the failing test", "{v} was slow yesterday", "did the workflow finish?", "have one review agent check the migration, then apply its notes yourself", "send a subagent to find which test is flaky and report back", "inutile de changer de modèle, termine la doc", "no need for max effort on the changelog", "disable the parallel stage in the config", "our CI spreads the e2e suite across 4 build agents", "passe en xhigh pour la suite", "think harder about the lock", "should we use {v} for this kind of audit?"]
+
+[questions.explicit_mode.options.on]
+what = "It asks for the mode: {v} by name, a workflow, or several agents or subagents doing the assistant's work in parallel."
+not_for = "One subagent for one task; an effort level or more thinking alone; agents that are not the assistant's; only talking about the mode."
+examples = ["use {v} for the audit", "fais-le en {v}", "run it with several agents in parallel", "fan this out to subagents", "split the remaining packages across 4 agents", "répartis ça entre plusieurs agents en parallèle", "lance plusieurs sous-agents sur les modules"]
+
+[questions.explicit_mode.options.off]
+what = "It asks the assistant to work without the mode or to stop it, usually doing the work itself, one at a time."
+not_for = "Asking for the mode; turning it off for something else (a config, a workflow stage); refusing an effort level or a model ('pas besoin de max', 'no need for Opus', 'pas besoin de passer sur Sonnet'): only the mode with several agents counts."
+examples = ["no {v} for this", "skip the workflow, just fix it", "no more agents, do the rest yourself one by one", "single-thread from here", "pas besoin d'{v}", "sans workflow", "arrête les agents en parallèle, fais la suite toi-même"]
+
+[questions.explicit_model]
+question = "Does the new prompt `task` ask the assistant itself to run on another model for its own work (this prompt, a part of it, or the rest of the work in progress), instead of the one it runs on now? Pick that model, or none. The request can take any wording, in any language."
+
+[questions.explicit_model.options.none]
+what = "No model asked for the assistant itself: most prompts. Also talking about models (release news, comparisons, prices, benchmarks, why automodel picked one), setting a model for something else (a subagent, workflow agents or a stage, a config, a tuning or catalog entry), a quoted prompt or test string, a refusal, and requests for an effort level or a mode only."
+not_for = "Asking the assistant to switch to a model, go back to one, or do this work or a part of it with one."
+examples = ["fix the failing test", "Sonnet 5.5 is out", "is Sonnet cheaper than Opus?", "why did it pick Opus?", "make the review agent use sonnet", "pas besoin d'Opus", "Opus a mis 3 minutes", "passe en xhigh"]
+
+[questions.explicit_model.options.model]
+what = "{v}: it asks the assistant to switch to {v}, to go back to it, or to do this work, the rest of it or one part of it (a step, a test, a file) with it, as an instruction or a wish, often with the reason."
+not_for = "Another model named; only talking about {v}."
+examples = ["switch to {v} for this", "do the rest with {v}", "take {v} for this bit, it's routine", "back to {v} for the rest of it", "passe sur {v} pour la suite", "fais ça avec {v}"]
+
 
 # ----------------------------------------------------------------- state
 # How much of the conversation the main session's state shows Jev (within
