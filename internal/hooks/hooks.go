@@ -36,6 +36,9 @@ type Input struct {
 	CacheExpired   *bool           `json:"prompt_cache_likely_expired"`
 	CacheWarm      *bool           `json:"prompt_cache_warm"`
 	ContextTokens  int             `json:"context_tokens"`
+	// LastAssistant is the assistant message the prompt's own hook read,
+	// handed to its late decision (not from Claude Code).
+	LastAssistant *string `json:"automodel_last_assistant,omitempty"`
 }
 
 type Output struct {

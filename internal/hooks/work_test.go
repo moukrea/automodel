@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1856,5 +1857,57 @@ func TestCappedGoAheadNeverRaisesTheDetour(t *testing.T) {
 	last("Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?")
 	if s := decide("yes", fa{tier: "xhigh", conf: 0.4, ultra: 0.9, asked: 0.1, rel: "continue", relP: 0.8, offer: 0.9}); s.Work.Tier != "haiku" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
 		t.Errorf("yes to more of the Haiku detour, under high: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+}
+
+// The late decision of a go-ahead after a detour decides on the assistant
+// message the prompt's own hook read, not on Claude's answer written since
+// (review: the offer was gone, the late decision carried back to the
+// paused work without asking Jev).
+func TestLateDecisionReadsTheMessageDecidedOn(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	var late struct {
+		in      *Input
+		trigger string
+		at      time.Time
+	}
+	spawnLate = func(in *Input, trigger string, at time.Time) {
+		c := *in
+		late.in, late.trigger, late.at = &c, trigger, at
+	}
+	t.Cleanup(func() { spawnLate = func(*Input, string, time.Time) {} })
+	env.Cfg.Features.WarmTimeout.Duration = 50 * time.Millisecond
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	write := func(lines ...string) { os.WriteFile(tp, []byte(strings.Join(lines, "\n")+"\n"), 0o600) }
+	offer := `{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Fixed. The cart spec sleeps the same way: want me to fix it there too?"}]}}`
+	workSession(t, env, "lt", "xhigh", "ultracode", "xhigh")
+	write(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"On it."}]}}`)
+	fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"}}
+	run(t, env, "decide", map[string]any{"session_id": "lt", "prompt": "quick one: the flaky checkout spec fails once in ten, fix it", "cwd": cwd, "transcript_path": tp})
+	write(offer)
+	fj.delay, fj.answers = 300*time.Millisecond, []fa{{tier: "low", conf: 0.95, ultra: 0.05, rel: "continue", relP: 0.9, offer: 0.95}}
+	run(t, env, "decide", map[string]any{"session_id": "lt", "prompt": "yes", "cwd": cwd, "transcript_path": tp})
+	fj.delay = 0
+	if late.in == nil || late.in.LastAssistant == nil || !strings.Contains(*late.in.LastAssistant, "want me to fix it there too?") {
+		t.Fatalf("late decision input: %+v", late.in)
+	}
+	// Claude Code wrote the prompt and Claude's first step before the late
+	// process read the file.
+	write(offer,
+		`{"type":"system","subtype":"turn_duration"}`,
+		`{"type":"user","message":{"role":"user","content":"yes"}}`,
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"Applying the same wait to the cart spec."},{"type":"tool_use","id":"t1","name":"Edit","input":{}}]}}`)
+	b, _ := json.Marshal(late.in)
+	var in map[string]any
+	json.Unmarshal(b, &in)
+	n := fj.calls()
+	t.Setenv(LateEnv, fmt.Sprintf("%s:%d", late.trigger, late.at.UnixNano()))
+	run(t, env, "decide", in)
+	t.Setenv(LateEnv, "")
+	s, _ := env.State.Load("lt")
+	if _, asked := fj.last().Questions[jev.QOffer]; fj.calls() != n+1 || !asked || s.Main.Tier != "low" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+		t.Errorf("late decision on the offer: %d calls, main %s/%s, work %+v, paused %+v", fj.calls()-n, s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
 	}
 }

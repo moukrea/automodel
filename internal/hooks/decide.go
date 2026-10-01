@@ -53,9 +53,18 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, nil // a newer prompt came in: its own decision stands
 	}
 
+	// A late decision decides on the assistant message the prompt's own
+	// hook read: Claude may have written its answer to the prompt since.
+	readTr := func(path string) *transcript.Info {
+		t := readTranscript(path)
+		if late && t != nil && in.LastAssistant != nil {
+			t.LastAssistant = *in.LastAssistant
+		}
+		return t
+	}
 	var tr *transcript.Info
 	if sess.Model == "" {
-		tr = readTranscript(in.TranscriptPath) // the model identity outranks settings
+		tr = readTr(in.TranscriptPath) // the model identity outranks settings
 	}
 	mi := detectModel(env, sess, in, tr)
 	// Only sessions positively on the routed model are touched: a session
@@ -187,7 +196,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		!env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)) &&
 		(back == nil || !env.AboveCap(in.SessionID, catalog.ScopeMain, env.Catalog.Tier(catalog.ScopeMain, back.Tier))) {
 		if tr == nil {
-			tr = readTranscript(in.TranscriptPath)
+			tr = readTr(in.TranscriptPath)
 		}
 		proposes := trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant)
 		switch {
@@ -210,7 +219,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	}
 	if trigger != "" && pin == "" && dec == nil { // no routing while pinned or carried
 		if tr == nil && trigger != "initial" {
-			tr = readTranscript(in.TranscriptPath)
+			tr = readTr(in.TranscriptPath)
 		}
 		signals = sess.Repo
 		if signals == nil {
@@ -348,6 +357,10 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		return nil, err
 	}
 	if spawnTrigger != "" {
+		if tr != nil {
+			la := tr.LastAssistant
+			in.LastAssistant = &la
+		}
 		spawnLate(in, spawnTrigger, now)
 	}
 	if !synthetic && in.Prompt != "" && !late {
