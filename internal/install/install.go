@@ -82,9 +82,35 @@ func wrapper(cmd string) bool {
 			return false
 		}
 		s := string(b)
+		if filepath.Base(f) == "jaunt-statusline" {
+			// jaunt's rich view runs the status line it keeps on its
+			// "# jaunt-original:" line (a statusLine object, or null): it
+			// shows the segment when that one does (agentline, automodel's).
+			orig := jauntOriginal(s)
+			return orig != "" && !strings.Contains(orig, "jaunt-statusline") && (owned(orig) || delegating(orig))
+		}
 		return strings.Contains(s, "automodel") && strings.Contains(s, "statusline")
 	}
 	return false
+}
+
+// jauntOriginal is the command of the statusLine jaunt's wrapper script
+// keeps on its "# jaunt-original: {json}" line ("" when none or null).
+func jauntOriginal(script string) string {
+	for _, l := range strings.Split(script, "\n") {
+		j, ok := strings.CutPrefix(strings.TrimSpace(l), "# jaunt-original:")
+		if !ok {
+			continue
+		}
+		var o struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(j)), &o) != nil {
+			return ""
+		}
+		return o.Command
+	}
+	return ""
 }
 
 // shellFields splits a command line on spaces, keeping quoted parts whole.

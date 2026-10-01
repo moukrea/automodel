@@ -262,3 +262,29 @@ func TestWrapperStatusline(t *testing.T) {
 		t.Errorf("inspect: %+v %v", r, err)
 	}
 }
+
+// jaunt's rich view wraps the status line in a jaunt-statusline script and
+// keeps the original on its "# jaunt-original:" line: the wrapper shows the
+// segment when that original does (agentline, automodel's own), so it is
+// kept (on Work, agentline behind the wrapper was replaced and lost).
+func TestJauntWrapperStatusline(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{Exe: "/u/bin/automodel", ConfigPath: "/u/.config/automodel/config.toml"}
+	write := func(orig string) string {
+		d := filepath.Join(dir, fmt.Sprint(len(orig)))
+		os.MkdirAll(d, 0o700)
+		f := filepath.Join(d, "jaunt-statusline")
+		os.WriteFile(f, []byte("#!/bin/sh\n# Installed by jaunt.\n# jaunt-original: "+orig+"\nexec sh -c \"$x\"\n"), 0o755)
+		return f
+	}
+	for orig, want := range map[string]bool{
+		`{"type": "command", "command": "bash ~/.claude/agentline/statusline.sh", "refreshInterval": 1}`: true,
+		`{"type": "command", "command": "` + o.statuslineCmd() + `"}`:                                    true,
+		`{"type": "command", "command": "echo mine"}`:                                                    false,
+		`null`: false,
+	} {
+		if got := delegating(write(orig)); got != want {
+			t.Errorf("jaunt wrapper of %s: delegating = %v, want %v", orig, got, want)
+		}
+	}
+}
