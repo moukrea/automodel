@@ -39,7 +39,8 @@ type Case struct {
 	// in progress is state.work_in_progress ({goal, level, mode, model,
 	// done: a wrap-up closed it}), else the decision in state.current;
 	// state.paused_work the work a detour paused; Jev sees their goal,
-	// level and done, as the hooks send them.
+	// level and done, as the hooks send them (not a paused work marked
+	// kept: a detour a go-ahead went back from, which the hooks don't send).
 	// state.mid_turn marks a prompt typed while Claude worked (it is not
 	// sent to Jev).
 	Relation string    `json:"relation,omitempty"`
@@ -262,10 +263,18 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 			st["work_in_progress"] = map[string]any{"level": router.WorkLevel(cat, curTier)}
 		}
 		if w, ok := c.State["paused_work"].(map[string]any); ok {
-			req.Paused, st["paused_work"] = labeledWork(cat, model, w, "")
+			var sent map[string]any
+			req.Paused, sent = labeledWork(cat, model, w, "")
+			delete(st, "paused_work")
+			if kept, _ := w["kept"].(bool); kept && req.Paused != nil {
+				req.Paused.Kept = true
+			} else {
+				st["paused_work"] = sent
+			}
 		}
 	}
 	req.Peer = transcript.IsPeer(task)
+	req.GoAhead = !req.Peer && router.GoAhead(task)
 	if !req.Peer {
 		req.Explicit = router.ExplicitCandidates(cat, task, model)
 		if t := router.EffortTier(cat, model, "xhigh"); t != nil && router.Ultrathink(task) {
@@ -337,7 +346,7 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	st, req := setup(cat, c)
 	fp := fastPath(env, c, req)
 	ask := jev.Ask{Relation: req.Work != nil && fp == ""}
-	ask.Resume = ask.Relation && req.Paused != nil
+	ask.Resume = ask.Relation && router.Resumable(req.Paused)
 	if fp == "" {
 		_, back := proposalGoAhead(env, c, req)
 		ask.Offer = ask.Relation && back
@@ -377,7 +386,7 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	if fp != "" {
 		// The relation the hooks don't ask, alone in its own call (the
 		// questions of the decision stay the hooks').
-		q := map[string]jev.Question{jev.QRelation: jev.RelationQuestion(cat, req.Paused != nil)}
+		q := map[string]jev.Question{jev.QRelation: jev.RelationQuestion(cat, router.Resumable(req.Paused))}
 		if a, resp, err := cl.Ask(ctx, cat.Meta.JevModel, "", st, q); err == nil {
 			r.RelP, r.RelConf = a[jev.QRelation].Probabilities, a[jev.QRelation].Confidence
 			r.Cost += resp.Usage.Cost
@@ -482,20 +491,24 @@ func fastPath(env *router.Env, c Case, req router.Request) string {
 // proposalGoAhead mirrors the hooks for a bare go-ahead to what the
 // assistant asked, routed with the relation question (fastPath is ""):
 // after a detour (paused work), or once a wrap-up closed the work
-// (router.Acknowledges). It doesn't go below the work it follows unless it
+// (router.Acknowledges; right after a compaction too, whose summary may
+// end on a proposal). It doesn't go below the work it follows unless it
 // is answered alone or goes back, and after a detour it goes back first
 // when the paused work needs more and the prompt wasn't typed mid-turn
 // (router.Request.ProposalGoAhead, BackFirst).
 func proposalGoAhead(env *router.Env, c Case, req router.Request) (goAhead, backFirst bool) {
 	task, _ := c.State["task"].(string)
 	last, _ := c.State["last_assistant"].(string)
+	compact := c.State["phase"] == "post_compact"
 	ack := req.Work != nil && env.Acknowledges(req.Work, req.Paused)
-	if !env.Cfg.Features.FastPath || req.Work == nil || (req.Paused == nil && !ack) || req.Peer ||
-		!router.GoAhead(task) || c.State["phase"] == "post_compact" || !router.Proposes(last) {
+	if !env.Cfg.Features.FastPath || req.Work == nil || (req.Paused == nil && !ack) || req.Peer || !router.GoAhead(task) {
 		return false, false
 	}
 	if ack {
-		return true, false
+		return compact || router.Proposes(last), false
+	}
+	if compact || !router.Proposes(last) {
+		return false, false
 	}
 	_, backFirst = env.GoAheadWork(nil, req.Work, req.Paused, req.MidTurn)
 	return true, backFirst

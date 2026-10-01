@@ -723,7 +723,9 @@ func TestDetourThenGoAhead(t *testing.T) {
 		detour(sid)
 		n := fj.calls()
 		s := decide(sid, p, "", fa{tier: "low", conf: 0.95, rel: "continue"})
-		if fj.calls() != n || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal || s.Work.Mode != "ultracode" {
+		// The open detour waits in turn (Kept): it may not be committed yet.
+		if fj.calls() != n || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused == nil || !s.Paused.Kept || s.Paused.Goal == workGoal ||
+			s.Work.Goal != workGoal || s.Work.Mode != "ultracode" {
 			t.Fatalf("%q after a detour (%d calls): %+v, work %+v, paused %+v", p, fj.calls()-n, s.Main, s.Work, s.Paused)
 		}
 		// The next follow-up holds the resumed work.
@@ -732,20 +734,26 @@ func TestDetourThenGoAhead(t *testing.T) {
 		}
 	}
 	all, _ := ledger.Decisions(env.Cfg.Ledger)
-	if d := all[len(all)-2]; d.Work != router.WorkResumed || d.Chosen != "xhigh" || d.Mode != "ultracode" {
+	if d := all[len(all)-2]; d.Work != router.WorkResumed || !d.Pauses || d.Chosen != "xhigh" || d.Mode != "ultracode" {
 		t.Errorf("ledger of the go-ahead = %+v", d)
 	}
 
 	// A go-ahead to a proposal after a detour: routed with the relation
 	// question, which offers resume (the proposal may be to go back, or
-	// more of the detour).
+	// more of the detour). Going back, the open detour waits (Kept), sure
+	// resume or not (live: "go" after "Anything else?" read resume 0.55 and
+	// dropped the uncommitted detour; "commit it" then closed the work).
 	tp := filepath.Join(cwd, "t.jsonl")
 	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Typo fixed. Want me to get back to the pool race?"}]}}`+"\n"), 0o600)
 	detour("dp")
 	n := fj.calls()
 	s := decide("dp", "yes", tp, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.9})
-	if opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any); fj.calls() != n+1 || opts[catalog.RelationResume] == nil || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Paused != nil || s.Work.Goal != workGoal {
+	if opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any); fj.calls() != n+1 || opts[catalog.RelationResume] == nil || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" ||
+		s.Paused == nil || !s.Paused.Kept || s.Work.Goal != workGoal {
 		t.Fatalf("go-ahead to a proposal to go back after a detour: %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	}
+	if s = decide("dp", "commit it", "", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.95}); s.Work.Goal != workGoal || s.Work.Done || s.Paused != nil {
+		t.Errorf("commit after going back to the work: work %+v, paused %+v", s.Work, s.Paused)
 	}
 	os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Typo fixed. I spotted the same typo in CONTRIBUTING.md: want me to fix it too?"}]}}`+"\n"), 0o600)
 	detour("dp2")
@@ -1400,34 +1408,49 @@ func TestGoAheadStayingOnADetourKeepsItsLevel(t *testing.T) {
 	for i, tc := range []struct {
 		last, rel string
 		relP      float64
-		done      bool // the detour ends up done (a wrap-up step, sure)
 	}{
-		{"Fixed the typo and committed it. Should I push it?\n\nIt would also push yesterday's lockfile bump.", "wrap_up", 0.92, true},
-		{"C'est corrigé et commité. Dis-moi si je pousse la branche.", "resume", 0.34, false},
-		{"Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?", "continue", 0.8, false},
-		{"Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?", "new_task", 0.9, false},
+		{"Fixed the typo and committed it. Should I push it?\n\nIt would also push yesterday's lockfile bump.", "wrap_up", 0.92},
+		{"C'est corrigé et commité. Dis-moi si je pousse la branche.", "resume", 0.34},
+		{"Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?", "continue", 0.8},
+		{"Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?", "new_task", 0.9},
 	} {
 		sid := fmt.Sprint("ds", i)
 		detour(sid, "low", false)
 		last(tc.last)
 		s := decide(sid, "yes", fa{tier: "xhigh", conf: 0.3, ultra: 0.9, rel: tc.rel, relP: tc.relP, offer: 0.87})
-		if s.Main.Tier != "low" || s.Main.Mode != "" || s.Work.Tier != "low" || s.Work.Mode != "" || s.Work.Done != tc.done || s.Work.Goal == workGoal || s.Work.Goal == "yes" ||
+		if s.Main.Tier != "low" || s.Main.Mode != "" || s.Work.Tier != "low" || s.Work.Mode != "" || s.Work.Done || s.Work.Goal == workGoal || s.Work.Goal == "yes" ||
 			s.Paused == nil || s.Paused.Goal != workGoal || s.Paused.Tier != "xhigh" {
 			t.Errorf("yes after %q (%s %.2f), Jev's level xhigh: main %s/%s, work %+v, paused %+v", tc.last, tc.rel, tc.relP, s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
 		}
 	}
-	// A wrap-up step Jev rates below the detour takes its own level.
-	detour("dsw", "medium", false)
-	last("Fixed. Should I push it?")
-	if s := decide("dsw", "yes", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "wrap_up", relP: 0.9, offer: 0.9}); s.Main.Tier != "low" || !s.Work.Done || s.Paused == nil {
-		t.Errorf("yes to pushing a medium detour: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
+	// Nor below it: what the assistant offered may be a wrap-up step or
+	// more of the detour, which a sure wrap-up can't tell (live: "looks
+	// good" to "Want me to add a sentence on that too?" read wrap_up
+	// 0.72-0.75, offer 0.56-0.58, and closed a medium detour at low). The
+	// detour stays open; the next wrap-up closes it.
+	for i, tc := range []struct{ last, prompt string }{
+		{"Fixed. Should I push it?", "yes"},
+		{"Done: the README now says the server listens on :8080. The Docker section mentions the port too. Want me to add a sentence on that too?", "looks good"},
+	} {
+		sid := fmt.Sprint("dsw", i)
+		detour(sid, "medium", false)
+		last(tc.last)
+		s := decide(sid, tc.prompt, fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "wrap_up", relP: 0.75, offer: 0.57})
+		if s.Main.Tier != "medium" || s.Work.Done || s.Work.Tier != "medium" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+			t.Errorf("%q to %q on a medium detour (wrap_up 0.75): main %+v, work %+v, paused %+v", tc.prompt, tc.last, s.Main, s.Work, s.Paused)
+		}
+		last("Done.")
+		if s = decide(sid, "commit it", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.95}); s.Main.Tier != "low" || !s.Work.Done || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+			t.Errorf("commit after %q: main %+v, work %+v, paused %+v", tc.prompt, s.Main, s.Work, s.Paused)
+		}
 	}
 }
 
 // A go-ahead to one more thing on an open detour is no wrap-up or aside
-// unless Jev is sure of that relation alone: live, "looks good" to "want
-// me to switch them to the same wait?" read wrap_up 0.45-0.49 and aside
-// 0.28-0.33, ran at low under a medium detour and closed it.
+// whatever the relation reads: live, "looks good" to "want me to switch
+// them to the same wait?" read wrap_up 0.45-0.49 and aside 0.28-0.33, ran
+// at low under a medium detour and closed it (see also
+// TestGoAheadStayingOnADetourKeepsItsLevel).
 func TestGoAheadToMoreOfAnOpenDetourHolds(t *testing.T) {
 	_, decide, detour, last := detourHarness(t)
 	for i, rel := range []string{"wrap_up", "aside"} {
@@ -1438,10 +1461,12 @@ func TestGoAheadToMoreOfAnOpenDetourHolds(t *testing.T) {
 			t.Errorf("looks good (%s 0.49): main %+v, work %+v, paused %+v", rel, s.Main, s.Work, s.Paused)
 		}
 	}
-	// Once the detour is done, an acknowledgement is answered alone.
+	// Once the detour is done too: the go-ahead accepts what the assistant
+	// offered for it (the offer question), at its level; read as an aside,
+	// it doesn't reopen it.
 	detour("lgd", "medium", true)
 	last("Committed. The cart spec sleeps the same way: shall I give it the same wait?")
-	if s := decide("lgd", "looks good", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "aside", relP: 0.45, offer: 0.7}); s.Main.Tier != "low" || !s.Work.Done || s.Paused == nil {
+	if s := decide("lgd", "looks good", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "aside", relP: 0.45, offer: 0.7}); s.Main.Tier != "medium" || !s.Work.Done || s.Paused == nil {
 		t.Errorf("looks good after the done detour (aside 0.45): main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
 	}
 }
@@ -1452,7 +1477,7 @@ func TestGoAheadToMoreOfAnOpenDetourHolds(t *testing.T) {
 // not the work it went back to, and going back to it pauses that work
 // again.
 func TestBackByDefaultKeepsTheDetour(t *testing.T) {
-	_, decide, detour, last := detourHarness(t)
+	fj, decide, detour, last := detourHarness(t)
 	offerMore := "C'est corrigé : la spec attend la réponse au lieu d'un sleep. Les specs du panier et des commandes dorment pareil : je leur mets la même attente ?"
 	detour("bk", "medium", false)
 	last(offerMore)
@@ -1465,11 +1490,24 @@ func TestBackByDefaultKeepsTheDetour(t *testing.T) {
 	if s.Main.Tier != "low" || s.Work.Goal != workGoal || s.Work.Done || s.Work.Mode != "ultracode" || s.Paused != nil {
 		t.Errorf("commit after going back by default: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
 	}
-	// Going back to the kept detour pauses the work it went back to.
+	// Jev doesn't see the kept detour (its resume option names the bigger
+	// work: "oui" to "On reprend la migration ?" read resume 0.84-0.87 with
+	// the kept detour as paused_work), and nothing resumes it: going back
+	// to it in words is new work, a detour that pauses the work again.
 	detour("bk2", "medium", false)
 	last(offerMore)
 	decide("bk2", "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.33})
-	s = decide("bk2", "non attends, reviens à la spec du checkout d'abord", fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.9})
+	last("C'est fait : les specs du panier et des commandes attendent aussi la réponse. On reprend la migration ?")
+	for _, a := range []fa{{tier: "high", conf: 0.6, ultra: 0.1, rel: "continue", relP: 0.9}, {tier: "high", conf: 0.6, ultra: 0.1, rel: "resume", relP: 0.87}} {
+		s = decide("bk2", "oui", a)
+		opts, _ := fj.last().Questions[jev.QRelation].Criteria.(map[string]any)
+		st, _ := fj.last().State.(map[string]any)
+		if _, shown := st["paused_work"]; shown || opts[catalog.RelationResume] != nil || s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" ||
+			s.Work.Goal != workGoal || s.Paused == nil || !s.Paused.Kept {
+			t.Errorf("oui to going back to the work, the detour kept (%s %.2f): paused_work sent %v, main %+v, work %+v, paused %+v", a.rel, a.relP, shown, s.Main, s.Work, s.Paused)
+		}
+	}
+	s = decide("bk2", "non attends, reviens à la spec du checkout d'abord", fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "new_task", relP: 0.9})
 	if s.Main.Tier != "medium" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal || s.Paused.Kept || s.Paused.Mode != "ultracode" {
 		t.Errorf("back to the kept detour: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
 	}
@@ -1562,6 +1600,23 @@ func TestGoAheadToAProposalAfterADoneWork(t *testing.T) {
 			t.Errorf("yes to %q after a done work (%s %.2f): main %s, work %+v", tc.last, tc.rel, tc.relP, s.Main.Tier, s.Work)
 		}
 	}
+	// Jev failing: not below the work either, which stays as it is (review:
+	// kept at the wrap-up's low under the high work).
+	workSession(t, env, "pde", "high", "", "high")
+	fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.95}}
+	run(t, env, "decide", map[string]any{"session_id": "pde", "prompt": "commit that", "cwd": cwd})
+	if s, _ := env.State.Load("pde"); s.Main.Tier != "low" || !s.Work.Done {
+		t.Fatalf("wrap-up: main %s, work %+v", s.Main.Tier, s.Work)
+	}
+	last("Committed. The exporter reads the same file and has no such check: want me to add it there too?")
+	fj.fail = true
+	run(t, env, "decide", map[string]any{"session_id": "pde", "prompt": "yes", "cwd": cwd, "transcript_path": tp})
+	fj.fail = false
+	s, _ := env.State.Load("pde")
+	all, _ := ledger.Decisions(env.Cfg.Ledger)
+	if d := all[len(all)-1]; s.Main.Tier != "high" || s.Work.Goal != workGoal || !s.Work.Done || d.Trigger != "fallback" || d.Hold != "go-ahead: the work's level" {
+		t.Errorf("yes to more after a done work, Jev failing: main %s, work %+v, ledger %+v", s.Main.Tier, s.Work, d)
+	}
 }
 
 // Typed mid-turn during a detour, a go-ahead goes on with the turn: the
@@ -1642,5 +1697,164 @@ func TestNewDetourKeepsTheWorkPausedFirst(t *testing.T) {
 	s = decide("quick: rename the README's Orders heading to Commandes", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"})
 	if s.Paused == nil || s.Paused.Goal != workGoal || s.Work.Tier != "low" {
 		t.Errorf("new detour after a raised one: work %+v, paused %+v", s.Work, s.Paused)
+	}
+}
+
+// A kept detour is below the work it hangs off and never takes its place:
+// with the work lowered in words below it, a go-ahead (to a closing
+// question, Jev failing, or bare) still carries the work on, and the next
+// wrap-up closes the detour, not the work (review: the go-ahead went back
+// to the kept detour, which marked the migration kept, and the detour's
+// wrap-up dropped the migration).
+func TestKeptDetourNeverTakesTheWorksPlace(t *testing.T) {
+	for i, tc := range []struct {
+		last string
+		fail bool
+	}{
+		{"Fait : les renames restants sont passés. Autre chose ?", false},
+		{"Fait : les renames restants sont passés. Autre chose ?", true},
+		{"Fait : les renames du client des taxes sont passés.", false},
+	} {
+		fj, decide, detour, last := detourHarness(t)
+		sid := fmt.Sprint("kw", i)
+		detour(sid, "medium", false)
+		last("C'est corrigé : la spec attend la réponse au lieu d'un sleep. Les specs du panier et des commandes dorment pareil : je leur mets la même attente ?")
+		decide(sid, "nickel", fa{tier: "medium", conf: 0.3, ultra: 0.05, rel: "aside", relP: 0.42, offer: 0.33})
+		last("OK, je reprends la migration.")
+		s := decide(sid, "passe en low pour la suite, c'est mécanique", fa{tier: "medium", conf: 0.9, ultra: 0.05, rel: "extend", relP: 0.9, x: map[string]float64{"effort_low": 0.97}})
+		if s.Work.Goal != workGoal || s.Work.Tier != "low" || s.Paused == nil || !s.Paused.Kept || s.Paused.Tier != "medium" {
+			t.Fatalf("lowered below the kept detour: work %+v, paused %+v", s.Work, s.Paused)
+		}
+		last(tc.last)
+		fj.fail = tc.fail
+		s = decide(sid, "ok", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "continue", relP: 0.6, offer: 0.1})
+		fj.fail = false
+		if s.Work.Goal != workGoal || s.Paused == nil || !s.Paused.Kept || s.Paused.Goal == workGoal {
+			t.Errorf("ok after %q (Jev failing %v): work %+v, paused %+v", tc.last, tc.fail, s.Work, s.Paused)
+		}
+		last("C'est fait.")
+		if s = decide(sid, "commite ça", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.95}); s.Work.Goal != workGoal || s.Work.Done || s.Paused != nil {
+			t.Errorf("commit after %q (Jev failing %v): work %+v, paused %+v", tc.last, tc.fail, s.Work, s.Paused)
+		}
+	}
+}
+
+// A bare go-ahead that goes back to the paused work keeps the open detour
+// paused in turn (Kept), also when Jev reads it going back, and when the
+// assistant asked nothing (live: "go" after "Anything else?" read resume
+// 0.55-0.59 and dropped the uncommitted README detour; the next "commit
+// it" closed the unfinished work instead).
+func TestGoAheadBackKeepsTheOpenDetour(t *testing.T) {
+	_, decide, detour, last := detourHarness(t)
+	for i, tc := range []struct {
+		last string
+		a    fa
+	}{
+		{"Port fixed in the README (8000 to 8080), not committed yet. Anything else?", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "resume", relP: 0.55, offer: 0.06}},
+		{"Port fixed in the README (8000 to 8080), not committed yet. Anything else?", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "continue", relP: 0.51, offer: 0.06}},
+		{"Port fixed in the README (8000 to 8080), not committed yet.", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "continue", relP: 0.9}},
+	} {
+		sid := fmt.Sprint("gk", i)
+		detour(sid, "low", false)
+		last(tc.last)
+		if s := decide(sid, "go", tc.a); s.Main.Tier != "xhigh" || s.Main.Mode != "ultracode" || s.Work.Goal != workGoal || s.Paused == nil || !s.Paused.Kept || s.Paused.Goal == workGoal {
+			t.Errorf("go after %q (%s %.2f): main %+v, work %+v, paused %+v", tc.last, tc.a.rel, tc.a.relP, s.Main, s.Work, s.Paused)
+		}
+		last("Next I write the multiprocess test.")
+		if s := decide(sid, "commit it", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "wrap_up", relP: 0.72}); s.Work.Goal != workGoal || s.Work.Done || s.Paused != nil {
+			t.Errorf("commit it after going back (%q): work %+v, paused %+v", tc.last, s.Work, s.Paused)
+		}
+	}
+}
+
+// After a compaction, a bare go-ahead once the work is done is taken as a
+// go-ahead to a proposal (the summary may end on one): it holds the work
+// and reopens it, "yes" is no goal. Without a proposal, read as new work,
+// it is answered alone and starts nothing (review: "yes" became the
+// work's goal at low under high work).
+func TestGoAheadIsNoGoal(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	for i, compact := range []bool{true, false} {
+		sid := fmt.Sprint("yg", i)
+		workSession(t, env, sid, "high", "", "high")
+		env.State.Update(sid, func(s *state.Session) bool { s.Work.Done = true; s.CompactPending = compact; return true })
+		os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Committed."}]}}`+"\n"), 0o600)
+		fj.answers = []fa{{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task", relP: 0.7}}
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": "yes", "cwd": cwd, "transcript_path": tp})
+		s, _ := env.State.Load(sid)
+		want, done := "low", true
+		if compact {
+			want, done = "high", false
+		}
+		if s.Work.Goal != workGoal || s.Work.Tier != "high" || s.Work.Done != done || s.Main.Tier != want {
+			t.Errorf("yes read as new work (compaction %v): main %s, work %+v", compact, s.Main.Tier, s.Work)
+		}
+	}
+}
+
+// A detour raised to the paused work's tier ties with it, whatever the
+// modes: a new detour keeps the work paused first (review: the raised
+// detour on ultracode evicted the migration paused at xhigh).
+func TestModeTieKeepsTheWorkPausedFirst(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	decide := func(p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": "mt", "prompt": p, "cwd": cwd})
+		s, _ := env.State.Load("mt")
+		return s
+	}
+	workSession(t, env, "mt", "xhigh", "", "xhigh")
+	decide("quick one: the flaky checkout spec fails once in ten, fix it", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"})
+	s := decide("and rewrite every checkout spec's waits while you're at it, en ultracode", fa{tier: "xhigh", conf: 0.95, ultra: 0.95, rel: "extend", x: map[string]float64{"mode_ultracode": 0.95}})
+	if s.Work.Tier != "xhigh" || s.Work.Mode != "ultracode" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+		t.Fatalf("raised detour: work %+v, paused %+v", s.Work, s.Paused)
+	}
+	if s = decide("quick: rename the README's Orders heading to Commandes", fa{tier: "low", conf: 0.95, ultra: 0.05, rel: "new_task"}); s.Paused == nil || s.Paused.Goal != workGoal || s.Work.Tier != "low" {
+		t.Errorf("new detour after a raised one on ultracode: work %+v, paused %+v", s.Work, s.Paused)
+	}
+}
+
+// A go-ahead staying on a detour never raises it, also when the decision
+// in force is above the detour and the switch down rebuilds the cache:
+// the confidence gate keeps this turn there, not the detour (review: a
+// Haiku detour went to high).
+func TestCappedGoAheadNeverRaisesTheDetour(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	cwd := t.TempDir()
+	tp := filepath.Join(cwd, "t.jsonl")
+	last := func(text string) {
+		os.WriteFile(tp, []byte(`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":`+strconvQuote(text)+`}]}}`+"\n"), 0o600)
+	}
+	decide := func(p string, a fa) *state.Session {
+		t.Helper()
+		fj.answers = []fa{a}
+		run(t, env, "decide", map[string]any{"session_id": "cg", "prompt": p, "cwd": cwd, "transcript_path": tp})
+		s, _ := env.State.Load("cg")
+		return s
+	}
+	workSession(t, env, "cg", "xhigh", "ultracode", "xhigh")
+	last("On it.")
+	decide("quick one: fix the typo recieve in README.md", fa{tier: "low", conf: 0.95, ultra: 0.05, asked: 0.97, rel: "new_task", relP: 0.95})
+	// A Haiku detour on a 60k context (a cold detour): leaving Haiku
+	// rebuilds the cache.
+	env.State.Update("cg", func(s *state.Session) bool {
+		h := env.Catalog.Tier(catalog.ScopeMain, "haiku")
+		s.Work.Tier, s.ContextTokens = h.ID, 60_000
+		s.Main.Tier, s.Main.Effort, s.Main.Model, s.Main.APIID, s.Main.Mode, s.Main.Workflows = h.ID, h.Effort, h.Model, h.Model, "", false
+		return true
+	})
+	if s := decide("why does the spec sleep at all? explain the retry design of the client in depth", fa{tier: "high", conf: 0.9, ultra: 0.05, asked: 0.05, rel: "side_question", relP: 0.9}); s.Main.Tier != "high" || s.Work.Tier != "haiku" {
+		t.Fatalf("side question on the Haiku detour: main %+v, work %+v", s.Main, s.Work)
+	}
+	last("Fixed. The same typo is in CONTRIBUTING.md: want me to fix it there too?")
+	if s := decide("yes", fa{tier: "xhigh", conf: 0.4, ultra: 0.9, asked: 0.1, rel: "continue", relP: 0.8, offer: 0.9}); s.Work.Tier != "haiku" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
+		t.Errorf("yes to more of the Haiku detour, under high: main %+v, work %+v, paused %+v", s.Main, s.Work, s.Paused)
 	}
 }

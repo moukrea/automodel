@@ -175,7 +175,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// paused work needs more, which a bare go-ahead goes back to. A
 	// go-ahead to a proposal there is routed with the relation question
 	// too, but never starts a work of its own ("yes" to "Want me to add
-	// the same check to the importer?" is no goal, nor below the work).
+	// the same check to the importer?" is no goal, nor below the work);
+	// right after a compaction, whose summary may end on such a proposal,
+	// a go-ahead once the work is done is taken as one.
 	followUp := ""
 	proposalGoAhead, backFirst := false, false
 	wip := sess.WorkInProgress()
@@ -190,7 +192,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		proposes := trigger != "compact" && tr != nil && router.Proposes(tr.LastAssistant)
 		switch {
 		case env.Acknowledges(wip, sess.PausedWork(now)):
-			proposalGoAhead = proposes // routed as any prompt otherwise
+			proposalGoAhead = proposes || trigger == "compact" // routed as any prompt otherwise
 		case proposes && sess.PausedWork(now) == nil:
 			followUp = router.FollowUpProposal
 		case proposes:
@@ -477,14 +479,17 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	// started it (also after a compaction, when recent prompts are gone)
 	// and the level it was decided at; and the work a detour paused, which
 	// the prompt may go back to.
-	var work, paused *state.Work
+	var work, paused, shown *state.Work
 	if trigger != "initial" {
 		work, paused = sess.WorkInProgress(), sess.PausedWork(env.Now())
+	}
+	if router.Resumable(paused) {
+		shown = paused // not a kept detour, below the work in progress
 	}
 	for _, w := range []struct {
 		key  string
 		work *state.Work
-	}{{"work_in_progress", work}, {"paused_work", paused}} {
+	}{{"work_in_progress", work}, {"paused_work", shown}} {
 		if w.work == nil {
 			continue
 		}
@@ -580,6 +585,7 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	// session, never lowers the effort the work runs at.
 	req.MidTurn = trigger != "initial" && tr.MidTurnFor(in.Prompt)
 	req.Peer = transcript.IsPeer(in.Prompt)
+	req.GoAhead = !req.Peer && goAhead(in.Prompt)
 	if !req.Peer {
 		// What the user's words may ask for: Jev confirms each request;
 		// ultrathink is a keyword, a floor at xhigh.

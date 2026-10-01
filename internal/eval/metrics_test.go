@@ -399,8 +399,9 @@ func TestEvalGoAhead(t *testing.T) {
 			t.Errorf("go after %q, %s 0.6: %+v", tc.last, tc.rel, r)
 		}
 	}
-	// Staying on the detour, the go-ahead runs at its level at most, and
-	// holds it unless a wrap-up or an aside is sure on its own.
+	// Staying on the detour (the assistant offered one more thing for it),
+	// the go-ahead runs at its level, whatever the relation reads: the
+	// offer may be more of the detour, which a sure wrap-up can't tell.
 	for _, tc := range []struct {
 		level string
 		rel   map[string]float64
@@ -408,7 +409,7 @@ func TestEvalGoAhead(t *testing.T) {
 	}{
 		{"xhigh", map[string]float64{"continue": 0.8, "new_task": 0.2}, "medium"},
 		{"xhigh", map[string]float64{"wrap_up": 0.92, "continue": 0.08}, "medium"},
-		{"low", map[string]float64{"wrap_up": 0.92, "continue": 0.08}, "low"},
+		{"low", map[string]float64{"wrap_up": 0.92, "continue": 0.08}, "medium"},
 		{"low", map[string]float64{"wrap_up": 0.49, "aside": 0.3, "continue": 0.21}, "medium"},
 	} {
 		cs := Case{Scope: catalog.ScopeMain, Warm: true, State: st("last_assistant", "Fixed. The same sleep is in the cart spec: want me to fix it there too?",
