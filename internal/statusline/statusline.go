@@ -190,7 +190,16 @@ func Build(env *router.Env, sess *state.Session, now time.Time) View {
 	if env.OverBudget(sess) {
 		v.Budget = "over"
 	}
-	if ce := cmp.Or(sess.ClientEffortLast, sess.ClientEffort0); ce != "" && d.Effort != "" && ce != d.Effort {
+	// Claude Code's own effort; in ultracode its payload says xhigh, so the
+	// transcript tells (it is no effort the routing runs, but a mode).
+	ce, routed := cmp.Or(sess.ClientEffortLast, sess.ClientEffort0), d.Effort
+	if sess.ClientUltracode {
+		ce = "ultracode"
+	}
+	if d.Mode == "ultracode" {
+		routed = "ultracode"
+	}
+	if ce != "" && d.Effort != "" && ce != routed {
 		v.ClaudeEffort = ce
 	}
 	cause := d.Trigger

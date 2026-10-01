@@ -140,7 +140,8 @@ continue, extend, aside, wrap up…; `asked` for a request in words, `new`,
 `go-ahead`, `mid-turn`, `peer`, `kept`) and Jev's confidence. `default`
 before the first decision, `pinned` while your `/effort` wins. When Claude
 Code's own spinner shows another effort than the one routed, that effort
-follows struck through and red (`x̶h̶i̶g̶h̶`). `⚠ fallback` and `⚠ jev: <why>`
+follows struck through and red (`x̶h̶i̶g̶h̶`; `u̶l̶t̶r̶a̶c̶o̶d̶e̶` when Claude Code is in
+ultracode, which its requests report as xhigh: read from the transcript). `⚠ fallback` and `⚠ jev: <why>`
 when Jev couldn't be asked, `⚠ budget` over the spending cap, and
 `↻ switched|compact|cold` for `statusline_flash` (30s) after a
 redecision. Sessions on a named model show nothing.

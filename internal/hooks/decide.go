@@ -287,6 +287,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if !synthetic && !late {
 			s.Prompts++
 		}
+		if tr != nil {
+			s.ClientUltracode = tr.Ultracode
+		}
 		if s.Repo == nil && signals != nil {
 			s.Repo = signals
 		}
