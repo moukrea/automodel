@@ -144,6 +144,13 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
 - `explicit` labels what the prompt asks for in words: `{"effort": "xhigh"}`
   (or `"more"` for "think harder" and its family; not "ultrathink", a
   keyword), `{"mode": "ultracode"}` (or `"off"`), `{"model": "sonnet"}`.
+  Several agents (or subagents) asked to do the assistant's work at once
+  is a request for ultracode, whether or not the word is used ("run two
+  subagents in parallel", "un agent par service"); one subagent for one
+  task is not. A task described as thorough or in depth ("audit it
+  carefully") asks for no more thinking; "take your time" and its family
+  do. Every prompt is asked about every request (no word list picks
+  them), so any case can count against precision.
   A case without it asks for nothing, so a mention ("why did it stay at
   xhigh?", "max retries is 3", "Sonnet 5.5 is out", "why did it pick
   Opus?"), and an effort, a mode or a model set for something else

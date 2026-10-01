@@ -384,34 +384,28 @@ still win.
   as the user asked…"), so it doesn't answer that it can't change its
   effort, nor hand the work to a subagent on the model asked; when Jev
   answered too late and a late decision applied it, the next prompt's hook
-  says so. A regex
-  finds the words that may make a request: effort names (`low`, `medium`
-  and `high` only next to "effort", "niveau", "reasoning", "en", "in",
-  "at", "passe", "switch", "use"…, or in a lowering or a cap: "drop to",
-  "down to", "lower it to", "redescends à", "baisse à", "is enough",
-  "suffit", where the effort ends its phrase (a sign, an emoji or a word
-  that can't be its noun: "for", "du coup", "given"...), so "boils down to
-  low latency" or "narrow it down to low-level functions" ask nothing; and
-  "élevé", "moyen", "faible", with "haut" and "bas" only after "effort"
-  or "niveau"), "ultracode", "workflows", "en parallèle", "in parallel",
-  "plusieurs agents", "several agents", "across subagents" or "across 4
-  agents" (not "across the build agents"), "sous-agents",
-  the names of models other than the session's
-  (Haiku, the asked tier, is never one); a mode word asks both whether it
-  wants the mode and whether it refuses it. Jev then confirms each one is a
-  request for the assistant's *own* work, not a mention ("why did it stay
-  at xhigh?") nor an effort set for something else (a subagent, a workflow
-  stage, a config or tuning file, a quoted prompt), from
-  `meta.explicit_threshold` (0.8). A model has its own question, about the
-  model the assistant itself should run on: model news, comparisons,
-  benchmarks, "why did it pick Opus?", a subagent or a config set to a
-  model and refusals are all no, and it needs
-  `meta.explicit_model_threshold` (0.85); an effort below the work in
-  progress needs 0.9. On the eval's train split, efforts asked in words
-  score 0.83 and up (lowerings, for the rest of the work or a part of it,
-  0.90 and up), models 0.82 and up; mentions, efforts and models set for
-  something else, and refusals 0.32 at most (0.54 for an effort the prompt
-  refuses: "xhigh is overkill"): none was confirmed.
+  says so. No word list is involved: every prompt is asked three
+  Choices, one per kind of request (the effort it asks the assistant to
+  work at, or more thinking; ultracode asked for or refused; another
+  model), each with "none" for prompts that ask for nothing of that kind,
+  so any wording in any language counts ("dial it back to medium", "un cran
+  au-dessus", "single-thread from here"). The options of a Choice compete:
+  "passe en xhigh" reads xhigh, not high nor max as well. Jev tells a
+  request for the assistant's *own* work from a mention ("why did it stay
+  at xhigh?"), a task described as thorough ("audit it in depth"), and an
+  effort or model set for something else (a subagent, a workflow stage, a
+  config or tuning file, a quoted prompt). Several agents asked to work in
+  parallel is a request for ultracode; one subagent for one task is not. A
+  request counts from `meta.explicit_threshold` (0.8), a model from
+  `meta.explicit_model_threshold` (0.85), an effort below the work in
+  progress from 0.9. Measured in 2026-10 (three answers per case): on the
+  repo's test split, 100% precision and 100% recall (the regex this
+  replaced: 100% and 90%); on an independent held-out set, 100% and 100%
+  (regex: 100% and 62%); on the train split, 97% and 97% (regex: 100% and
+  88%), where neither false reading changes anything: a request read at
+  the level already running ("use high effort for the rest" as xhigh on
+  xhigh work) and a go-ahead to launch a second wave of agents in work that
+  already runs ultracode.
 - **"ultrathink"**: at least `xhigh` for that prompt, without asking Jev.
   **"think harder"**, "take your time", "réfléchis à fond", "en profondeur",
   "mets le paquet"… (confirmed by Jev): one tier above the work in progress,

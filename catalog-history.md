@@ -258,3 +258,20 @@
 - Still to verify:
   - A live Claude Code session with these rules (the round-5 live test was a replay).
   - A fresh held-out set; the repo's test split.
+
+## 2026-10-01 — Requests in words: three Jev Choices on every prompt, no word list
+- Trigger: the owner's review. A regex picked which explicit-request questions Jev was asked, so any wording it lacked ("dial it back to medium", "go back to low", "single-thread from here", other languages) was never asked.
+- Changes: `[questions.explicit]` (a yes/no per request the regex found) is replaced by `[questions.explicit_effort]` (none, low, medium, high, xhigh, max, more), `[questions.explicit_mode]` (none, on, off) and `[questions.explicit_model]` (none, model), asked of every main-session prompt. `[questions.explicit]` is deprecated and ignored. Thresholds unchanged (0.8, 0.85 for a model, 0.9 below the work in progress). Eval: three labels follow the rule the train cases use since round 3 (several agents asked to work in parallel is a request for ultracode: `d-two-subagents`, `d-three-reviews`, `d-migration-docs`), and "take all the time you need" is the think-harder family (`n-max-months`, max).
+- Reasons: asked as a yes/no per value on every prompt, values didn't compete. "Passe en xhigh" also read yes to high, max and the mode, and the train precision fell to 34%. As one Choice per kind, three answers per case:
+
+  | | regex + yes/no (v0.17.0) | Choices |
+  |---|---|---|
+  | train: precision / recall | 100% / 88% | 97% / 97% |
+  | repo test split | 100% / 90% | 100% / 100% |
+  | held-out-3 (independent) | 100% / 62% | 100% / 100% |
+  | held-out-3: decision exact / rank error | 88% / 0.16 | 93% / 0.10 |
+  | Jev cost per decision | $0.00015 | $0.00026 |
+
+  On train, two false readings change nothing: "use high effort for the rest" read as xhigh on xhigh work, and a go-ahead to launch a second wave of agents in work already running ultracode. That first one keeps the train regression gate from passing (3 effort requests "confirmed on prompts that don't make them").
+- Caveats: the repo test split's per-case rows were read for this change (the d-* relabels), and held-out-3 had been measured once before. Both are no longer clean held-out sets for the explicit questions; the next measure needs a fresh held-out set.
+- Still to verify: a live session (requests in several languages, relative requests "un cran au-dessus"), and Jev latency in the hook with three more Choices.

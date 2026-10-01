@@ -117,7 +117,8 @@ there Jev sees `paused_work {goal, level}` and is offered `resume`; resume
 restores its tier, mode, model and goal and holds at it. Another new task
 drops it.
 
-**Requests in words.** A regex only *pre-filters*: it finds the words that
+**Requests in words.** (Until 2026-10; see §14 for what replaced it.) A
+regex only *pre-filters*: it finds the words that
 may make a request (effort names, the "think harder" family, ultracode,
 workflows, parallel agents and their refusals, the names of models other
 than the session's) and adds one yes/no per candidate to the same Jev call.
@@ -1111,3 +1112,71 @@ ultracode 0.8, Haiku 0.92). `eval.DefaultGate` is unchanged.
 - A done detour is not kept when a go-ahead goes back: if the assistant
   goes on with more of it, the next wrap-up closes the work instead.
 - A fresh held-out set; the repo's test split (not run this round).
+
+## 14. Requests in words without a word list (2026-10-01)
+
+The owner asked why a regex, not Jev, decided which requests Jev was asked
+about: every wording it lacked ("dial it back to medium", "go back to low",
+"single-thread from here", any other language) was never asked, so never
+applied. Held-out-3 had shown it: recall 62% at 100% precision.
+
+**First try: the same yes/no per value, on every prompt.** Ten questions
+(five efforts, more, the mode and its refusal, two models), cost per
+decision $0.00032 instead of $0.00015, and train precision fell to 34%.
+No request was invented on a prompt that makes none; the false yeses were
+neighbours of a real request: "passe en xhigh" also read yes to high (0.97),
+max and the mode, "ultrathink" yes to more, Sonnet yes to Fable (0.78).
+Asked apart, the values don't compete.
+
+**Kept: one Choice per kind,** `[questions.explicit_effort]` (none, low,
+medium, high, xhigh, max, more), `[questions.explicit_mode]` (none, on,
+off) and `[questions.explicit_model]` (none, one option per other main
+model), asked of every main-session prompt. The router reads each option's
+probability as the old yes for that request, so thresholds and the rules
+after them are unchanged. Wording rounds on train only:
+
+- "be thorough" as a more-thinking example made "thoroughly audit the
+  repo", "dig into it properly" and "review it carefully" read more (0.92
+  to 0.99). The option now says a task described as thorough is the task,
+  which the level judges.
+- "pas besoin de passer sur Sonnet" and "pas besoin de max" read as
+  refusing the mode (0.65 to 0.93). The off option now says refusing an
+  effort or a model is not refusing the mode.
+- "Use high effort for the rest", on xhigh work, reads xhigh (0.78 to 0.94)
+  in every wording tried, while four paraphrases read high (0.87 to 1.00).
+  It changes nothing (the work already runs at xhigh); it is the train
+  gate's only failure.
+
+On the repo's test split, four false readings remained, all on cases older
+than the round-3 rule that several agents asked to work in parallel is a
+request for ultracode ("run two subagents in parallel", "have three agents
+each review one module", "spawn one agent for the migration and another
+for the docs"), and one "take all the time you need" labelled without the
+think-harder request the rubric gives it. Narrowing the mode option to
+"the work fanned out over its parts" moved them little (0.86 to 0.94) and
+contradicted the train labels. The four labels were brought in line with
+the rubric instead; that means the test split's rows were read, and it is
+no longer clean for these questions.
+
+Three answers per case:
+
+| | regex + yes/no (v0.17.0) | Choices |
+|---|---|---|
+| train: precision / recall | 100% / 88% | 97% / 97% |
+| repo test split | 100% / 90% | 100% / 100% |
+| held-out-3 | 100% / 62% | 100% / 100% |
+| held-out-3: decision exact / rank error | 88% / 0.16 | 93% / 0.10 |
+| ultracode on/off, held-out-3 | 549/588 | 580/588 |
+
+(The v0.17.0 test-split figures are on the labels before the four
+relabels.) Held-out-3 was measured once before (§10) and used for nothing
+else; its two remaining errors below the work are relation readings, not
+requests ("is Opus better than Sonnet for SQL?" read as an aside, a Fable
+request read as a new task).
+
+**What is left on words alone:** Claude Code's `ultrathink` keyword (a
+floor at xhigh), the `[effort:X]` and `[model:X]` tags, the go-ahead list
+for the fast path (it only ever holds the work's level), and, in metadata
+privacy mode where Jev never sees the prompt, the narrow "think harder"
+forms.
+
