@@ -94,3 +94,24 @@ func TestMidTurnAndQueuedPrompts(t *testing.T) {
 		t.Error("IsPeer")
 	}
 }
+
+// Claude Code's ultracode (its payload says xhigh) shows in the transcript:
+// an ultra_effort_enter attachment, until an exit or a /effort to a level.
+func TestUltracode(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "t.jsonl")
+	read := func(lines ...string) bool {
+		os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+		info, err := Read(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return info.Ultracode
+	}
+	enter := `{"type":"attachment","attachment":{"type":"ultra_effort_enter","reminderType":"full"}}`
+	exit := `{"type":"attachment","attachment":{"type":"ultra_effort_exit"}}`
+	setXhigh := `{"type":"user","message":{"role":"user","content":"<local-command-stdout>Set effort level to xhigh (saved as your default for new sessions)</local-command-stdout>"}}`
+	setUltra := `{"type":"user","message":{"role":"user","content":"<local-command-stdout>Set effort level to ultracode</local-command-stdout>"}}`
+	if !read(enter) || read(enter, exit) || read(enter, setXhigh) || !read(setXhigh, setUltra) || read() {
+		t.Error("ultracode detection")
+	}
+}

@@ -183,6 +183,9 @@ type Session struct {
 	PinSource        string `json:"pin_source,omitempty"` // "/effort" | "prompt"
 	ClientEffort0    string `json:"client_effort0,omitempty"`
 	ClientEffortLast string `json:"client_effort_last,omitempty"` // last one seen: pins follow changes
+	// ClientUltracode: Claude Code's own effort is ultracode (its payload
+	// says xhigh), from the transcript at the last prompt.
+	ClientUltracode bool `json:"client_ultracode,omitempty"`
 
 	// JevIssue is why the last decision couldn't ask Jev (no key, timeout,
 	// HTTP error), cleared by the next successful answer.

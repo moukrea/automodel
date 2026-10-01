@@ -58,6 +58,10 @@ type Info struct {
 	// nothing was typed mid-turn.
 	MidTurn    bool
 	TurnPrompt string
+	// Ultracode: Claude Code's own effort is ultracode (its payload then
+	// says effort "xhigh"): an ultra_effort_enter attachment, until an
+	// ultra_effort_exit one or a /effort to another level.
+	Ultracode bool
 }
 
 // Read scans the tail of the transcript.
@@ -102,6 +106,10 @@ func Read(path string) (Info, error) {
 			case a == nil:
 			case a.Type == "model" && a.Identity != nil && a.Identity.ModelID != "":
 				info.Model = a.Identity.ModelID
+			case a.Type == "ultra_effort_enter":
+				info.Ultracode = true
+			case a.Type == "ultra_effort_exit":
+				info.Ultracode = false
 			case a.Type == "queued_command" && a.CommandMode == "prompt":
 				// Typed while Claude worked: it never becomes a user line.
 				var text string
@@ -132,6 +140,9 @@ func Read(path string) (Info, error) {
 			switch {
 			case e.IsCompactSummary:
 				info.CompactSummary = text
+			case strings.Contains(text, "<local-command-stdout>Set effort level to "):
+				_, lv, _ := strings.Cut(text, "<local-command-stdout>Set effort level to ")
+				info.Ultracode = strings.HasPrefix(lv, "ultracode")
 			case strings.HasPrefix(text, "[Request interrupted by user"):
 				info.Interrupted, info.InterruptedAt = true, len(info.UserPrompts)
 				info.MidTurn = false

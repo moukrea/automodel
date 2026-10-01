@@ -261,3 +261,18 @@ func TestRenderWhy(t *testing.T) {
 		t.Errorf("kept: %q", got)
 	}
 }
+
+// In Claude Code's ultracode its payload says xhigh: the struck effort is
+// "ultracode" (from the transcript), unless the routing runs it too.
+func TestClaudeUltracode(t *testing.T) {
+	c, _, _ := catalog.Load("../../catalog.toml", time.Now(), 3650)
+	env := &router.Env{Cfg: config.Default(), Catalog: c, Now: time.Now}
+	sess := &state.Session{ClientEffort0: "xhigh", ClientUltracode: true, Main: &state.Decision{Tier: "low", Model: "claude-opus-5-5", Effort: "low", Trigger: "warm", Confidence: 0.9}}
+	if v := Build(env, sess, time.Now().Add(time.Hour)); v.ClaudeEffort != "ultracode" {
+		t.Errorf("claude_effort = %q", v.ClaudeEffort)
+	}
+	sess.Main = &state.Decision{Tier: "xhigh", Mode: "ultracode", Model: "claude-opus-5-5", Effort: "xhigh", Trigger: "warm", Confidence: 0.9}
+	if v := Build(env, sess, time.Now().Add(time.Hour)); v.ClaudeEffort != "" {
+		t.Errorf("ultracode routed too, still struck: %q", v.ClaudeEffort)
+	}
+}
