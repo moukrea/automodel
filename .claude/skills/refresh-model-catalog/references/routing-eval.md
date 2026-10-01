@@ -162,7 +162,9 @@ and full numbers: `docs/research/2026-09-routing-quality.md`.
   `model` (the model a request in words moved the work to), which the eval
   uses but doesn't send, like the hooks. `state.paused_work` (`{goal,
   level}`, same extras) is the work a detour paused; with it Jev is offered
-  `resume`. A session on a model outside the tiers has `state.current`
+  `resume`. With `kept: true` it is a detour a bare go-ahead went back
+  from, below the work in progress: the eval keeps it for the router but,
+  like the hooks, neither sends it nor offers `resume`. A session on a model outside the tiers has `state.current`
   `{effort, model}` (the model's label) instead of a tier.
   `state.mid_turn: true` marks a prompt typed while Claude was working (the
   eval applies the mid-turn rule; it is not sent to Jev). A message from
@@ -339,17 +341,20 @@ work needs more, the go-ahead goes back to it unless the offer question
 detour, from `meta.detour_offer_threshold` (tune it in the gap the eval
 prints as "detour offer": offers of the detour against closing questions
 and offers to go back); a go-ahead that stays on the detour runs at the
-detour's level at most (Jev's level of the bare words leans on the paused
-work) and not below it unless it is a wrap-up step or an aside Jev is
-sure of on its own (`relation_separate_threshold`), or the detour is
-done. Going back by default (the offer question under its bar), an open
-detour waits in turn (`Kept`): the next wrap-up closes it, not the work.
-Or the work is done and
+detour's level, whatever the relation reads (Jev's level of the bare words
+leans on the paused work, and the offer may be a wrap-up step or more of
+the detour), and doesn't close it. Going back on a bare go-ahead (the
+offer question under its bar, or Jev reading resume), an open detour
+waits in turn (`Kept`): the next wrap-up closes it, not the work, at the
+higher of the detour's level and Jev's at most. A kept detour is never
+shown to Jev nor resumed: a go-ahead goes on with the work, and going
+back to it in words is new work. Or the work is done and
 no paused work needs more (`router.Acknowledges`): then it is routed like
 any prompt, and Jev's relation says whether it reopens the work or only
-acknowledges it; a go-ahead to a proposal there holds the work's level
-(and never starts a work named "yes") unless it is a wrap-up step or an
-aside. The eval mirrors these
+acknowledges it; a go-ahead to a proposal there (or any go-ahead right
+after a compaction) holds the work's level unless it is a wrap-up step or
+an aside, and a bare go-ahead read as new work is answered alone, never a
+work named "yes". The eval mirrors these
 rules (`internal/eval` `setup`, `router.Judge`, and the hooks' own
 go-ahead path `router.Carried`); keep it in sync with
 `internal/hooks/decide.go`.

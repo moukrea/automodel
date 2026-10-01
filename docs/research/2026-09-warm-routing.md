@@ -1028,3 +1028,86 @@ the 0.9 bar for lowerings, ultracode 0.8, Haiku 0.92).
   run, OpenRouter credits ran out during the second train run.
 - A fresh held-out set (held-out 3 was used once, on round 4's fixes).
 - The repo's test split (not run this round).
+
+## 13. Round 5 review: the fixes (2026-10-01)
+
+A review of the second-review fixes (unit tests, Jev probes) and a live
+replay (the real hooks and Jev on an isolated config, scripted replies,
+40 decisions) found four major issues, all in what becomes of a detour
+around a go-ahead, and smaller ones. The go-back / stay choice itself
+held; the state did not.
+
+### What they found, and the fixes
+
+| id | finding | fix |
+|---|---|---|
+| F1 review (major) | after going back by default, the kept detour was sent to Jev as `paused_work`, and the resume option's examples name the bigger work: "oui" to "On reprend la migration ?" read resume 0.84-0.87, "ok now back to the retry migration" 0.64-0.66, and made the detour the work in progress, below the migration | a kept detour is below the work in progress and never takes its place: Jev doesn't see it, `resume` isn't offered, nothing resumes it (`router.Resumable`), and going back to it in words is new work, a detour that pauses the work again. Without it, the probes read continue 0.77-0.96 (train: continue 1.00) |
+| F2 review (major) | with the work lowered in words below the kept detour, a go-ahead went back to the detour ("needs more"), marked the migration kept, and the detour's wrap-up dropped the migration | a go-ahead never goes back to a kept detour (`GoAheadWork`); a kept detour never waits on in place of the work a new detour pauses |
+| F1 live (major) | "looks good" to "Want me to add a sentence on that too?" on an open medium detour read wrap_up 0.72-0.75 with offer 0.56-0.58, ran at low and closed the detour (three runs of three) | staying on a detour (the offer question says the assistant offered one more thing for it) a go-ahead holds the detour's level whatever the relation reads, and doesn't close it: the offer may be a wrap-up step or more of the detour, and the relation can't tell (train: wrap-up steps read wrap_up 0.22-0.99, acknowledgements of more 0.01-0.47) |
+| F2 live (major) | "go" after "Anything else?" read resume 0.55-0.59 (a sure resume), dropped the uncommitted detour, and "commit it" then closed the unfinished work | any bare go-ahead that goes back to the paused work keeps the open detour waiting (`Kept`): back by default, by a sure resume, or with no question at all (`Carried`) |
+| F3 review | French acknowledgements to French offers read at the 0.35 bar on probes (0.33-0.39) | 7 train cases of them; the bar moves to 0.27 from the train gap (below) |
+| F4 review | after a compaction, "yes" once the work is done was routed as any prompt: it read new_task 0.36 and became the work's goal, at medium under high | right after a compaction, a go-ahead once the work is done is a go-ahead to a proposal (the summary may end on one): it holds the work and reopens it; and a bare go-ahead read as new work is answered alone, never a goal |
+| F5 review | Jev failing on a warm go-ahead to a proposal after a done work kept the wrap-up's low under the high work | on a Jev error, a go-ahead to a proposal runs at least the work's level and mode, the work unchanged |
+| F6 review | on a level tie decided by the mode, a detour raised on ultracode evicted the migration paused at xhigh | the work paused first waits on whenever the tiers tie, whatever the modes |
+| F7 review (low) | under a decision in force above a Haiku detour, the confidence gate kept the higher tier and the go-ahead raised the detour to it | the gates keep this turn on the tier in force, not the work |
+| F8 review (low) | a late decision read the transcript afresh: with Claude's first step written, the offer was gone and it carried back without asking Jev | the prompt's hook hands the assistant message it read to its late decision |
+| F3 live (low) | "commit it" closing a kept low detour ran at high (Jev low 0.53 / xhigh 0.39, the policy's pick) | a wrap-up closing a kept detour runs at the higher of the detour's level and Jev's at most; ultrathink or an effort asked still count |
+
+### The benchmark
+
+15 new invented train cases (`r7-`), English and French, in two new
+contexts: French acknowledgements ("super", "nickel", "ok", "parfait",
+"top") to French offers of more of an open or committed detour, also
+without a question mark (5), and to a closing question or an offer to go
+back (2); "looks good" and "sounds good" to more of a medium detour (2);
+a go-ahead and a typed "back to the migration" with a kept detour, which
+the eval keeps for the router but doesn't send (`paused_work.kept`, 3);
+go-aheads right after a compaction once the work is done, to a proposal
+the summary ends on or to nothing (3). 698 train cases (661 main), 210
+test (unchanged, not run).
+
+### Results (train split, one run of 3)
+
+| main scope | second review (646 cases) | round 5 fixes (661 cases) |
+|---|---:|---:|
+| router decision exact / acceptable | 92.8% / 97.7% | 92.7% / 97.4% (the 646: 92.8% / 97.7%) |
+| rank error | 0.085 | 0.086 |
+| decisions below / above the label | 24 / 116 | 24 / 121 |
+| follow-ups below their work | 0 of 1020 | 0 of 1062 |
+| detour offer | 147/147 at 0.35 | 171/174 at 0.27 (3 false no: "ok" to "Dis-moi si j'applique ...", 0.12-0.14) |
+| relation right | 84% | 82% |
+| explicit precision / recall | 100% / 89% (0 false) | 100% / 88% (0 false) |
+| ultracode on/off | 1923 of 1935 | 1965 of 1980 |
+| gate | passes | passes |
+
+The second-review column is the reviewer's run of the same code before
+these fixes. Re-judged with the new code and bar, its 2049 answers give
+the same decisions, one for one: the fixes change nothing outside the
+new cases. On the new cases the decision is right on 39 of 45 answers;
+the six others are above the label ("ok" to "Dis-moi si j'applique ..."
+goes back to the xhigh ultracode work; "ok" after a compaction with
+nothing proposed reads wrap_up 0.65-0.72 and runs at medium for low). The
+run cost $0.30.
+
+### Thresholds
+
+`detour_offer_threshold` 0.35 → 0.27, the middle of the new train gap:
+offers 0.34 and up, closing questions and offers to go back at most 0.20.
+One offer reads among the closers ("ok" to "Dis-moi si j'applique la même
+attente aux tests ..." after a commit, 0.12-0.14): no bar separates it,
+and it goes back, the safe side (a turn above the detour, not below the
+paused work). On the reviewer's probes the bar puts the French
+acknowledgements on the detour (12 of 12 and 32 of 32 right; "cool" to
+"... if needed", 0.19-0.23, still goes back). The others are unchanged
+(relation 0.55, explicit 0.8, model 0.85, the 0.9 bar for lowerings,
+ultracode 0.8, Haiku 0.92). `eval.DefaultGate` is unchanged.
+
+### Still open
+
+- A live session in Claude Code: the round-5 live test was a replay with
+  scripted replies (the weekly quota was at 90%); the Jev timeout path
+  (R5-3) and prompts typed mid-turn were not exercised live.
+- "ok" to an offer phrased "dis-moi si ..." after a commit reads as no.
+- A done detour is not kept when a go-ahead goes back: if the assistant
+  goes on with more of it, the next wrap-up closes the work instead.
+- A fresh held-out set; the repo's test split (not run this round).

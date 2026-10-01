@@ -289,19 +289,23 @@ and not below the work in progress. After a detour whose paused work
 needs more, it goes back to the paused work unless Jev says the assistant
 offered one more thing for the detour (a yes/no of its own,
 `meta.detour_offer_threshold`): "go" after "Anything else?" goes back; "yes"
-to "Committed. Want me to push it?" is a wrap-up step at its own level and
-the paused work waits; "yes" (or "ok", "nickel") to more of the detour goes
-on with it at the detour's level: not below it, and not above it either,
-since Jev's level of the bare word leans on the paused work. Going back
-this way, an open detour waits in turn, so the next "commit that" closes
-the detour, not the work it went back to. Once a wrap-up has
+(or "ok", "nickel", "looks good") to what the assistant offered for the
+detour, a wrap-up step ("Committed. Want me to push it?") or more of it,
+stays on the detour at its level, and the paused work waits: not below it,
+whatever the bare word reads as, and not above it either, since Jev's level
+of the bare word leans on the paused work. Going back on a bare go-ahead,
+an open detour waits in turn, so the next "commit that" closes the detour,
+not the work it went back to; such a waiting detour stays below the work:
+Jev doesn't see it, and a go-ahead never goes back to it. Once a wrap-up has
 marked the work done, a go-ahead is routed too: "looks good." mostly
 acknowledges the finished work, and Jev's relation says whether it reopens
-it ("yes" to one more proposal holds the work's level, and is never a new
-work of its own); unless the done work was a detour and the paused work
-needs more: the go-ahead goes back to it. Without Jev (a go-ahead, or a Jev
-failure) the tier and the mode still stay within the budget cap and the
-repository's bounds and `disable_modes`.
+it ("yes" to one more proposal holds the work's level, also right after a
+compaction, and a bare go-ahead is never a new work of its own); unless the
+done work was a detour and the paused work needs more: the go-ahead goes
+back to it. Without Jev (a go-ahead, or a Jev failure) a go-ahead to a
+proposal keeps at least the work's level, and the tier and the mode still
+stay within the budget cap and the repository's bounds and
+`disable_modes`.
 
 **What Jev is asked** (one call): a *Score* over the scope's tiers (they are
 ordered, and a Score sharpens the distribution: mean confidence 0.92 vs 0.88

@@ -242,3 +242,19 @@
 - Still to verify:
   - The reviewer's probes and a live session with the new wording (OpenRouter credits ran out).
   - A fresh held-out set; the repo's test split.
+
+## 2026-10-01 — Warm routing round 5 review: kept detours, go-aheads after a detour, offer bar 0.27
+- Trigger: a review of the second-review fixes and a live replay (the real hooks and Jev, scripted replies): a kept detour read as the paused work and took the migration's place; "looks good" to more of a medium detour closed it at low; a sure resume dropped an uncommitted detour, and "commit it" closed the unfinished work; French acknowledgements to French offers read at the 0.35 bar.
+- Changes:
+  - `meta.detour_offer_threshold` 0.35 → 0.27, the middle of the new train gap. No wording changed. Other thresholds unchanged (relation 0.55, explicit 0.8, model 0.85, lowering bar 0.9, ultracode 0.8, Haiku 0.92).
+  - Outside the catalog: a kept detour is not sent to Jev (no `resume` option) and never takes the work's place; any bare go-ahead going back to the paused work keeps the open detour waiting; a go-ahead staying on a detour holds its level whatever the relation reads and doesn't close it; a bare go-ahead is never a goal, and right after a compaction, once the work is done, it holds the work; on a Jev error a go-ahead to a proposal keeps the work's level; a tier tie keeps the work paused first whatever the modes; the confidence gate no longer raises the work; a wrap-up closing a kept detour runs at the higher of its level and Jev's at most; a late decision decides on the message the prompt answered.
+  - Benchmark: 15 new invented train cases (`r7-`); `paused_work.kept` marks a kept detour, which the eval doesn't send. 698 train, 210 test (unchanged, not run).
+- Reasons (`automodel eval --split train`, 661 main cases, one run of 3; the second review's run on 646 cases in brackets):
+  - Decision exact 92.7% [92.8%], acceptable 97.4% [97.7%], rank error 0.086 [0.085]; below / above the label 24 / 121 [24 / 116]. On the 646 earlier cases: 92.8% / 97.7%.
+  - Follow-ups below their work 0 of 1062 [0 of 1020]; detour offer at 0.27: 171/174 right, offers 0.34 and up but one at 0.12-0.14, closing questions and offers to go back at most 0.20.
+  - Explicit requests: precision 100% (0 false), recall 88% [89%]. Ultracode on/off 1965 of 1980. Regression gate on train: pass.
+  - On the second review's saved answers, the new code and bar change no decision.
+- Sources: docs/research/2026-09-warm-routing.md (§13).
+- Still to verify:
+  - A live Claude Code session with these rules (the round-5 live test was a replay).
+  - A fresh held-out set; the repo's test split.
