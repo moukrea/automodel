@@ -24,12 +24,12 @@ func TestRender(t *testing.T) {
 		d    *state.Decision
 		want string
 	}{
-		{nil, "jev → opus-5.5·high (default)"},
-		{&state.Decision{Tier: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh", Trigger: "initial", Confidence: 0.82, DecidedAt: now}, "jev → opus-5.5·xhigh 0.82"},
-		{&state.Decision{Tier: "high", Mode: "ultracode", Model: "claude-opus-5-5", Effort: "xhigh", Workflows: true, Trigger: "compact", Confidence: 0.74, DecidedAt: now}, "jev → opus-5.5·xhigh +ultracode 0.74 ↻ compact"},
-		{&state.Decision{Tier: "low", Model: "claude-opus-5-5", Effort: "low", Trigger: "warm", Confidence: 0.91, DecidedAt: now}, "jev → opus-5.5·low 0.91 ↻ switched"},
-		{&state.Decision{Tier: "high", Model: "claude-opus-5-5", Effort: "high", Trigger: "cold", Confidence: 0.7, DecidedAt: now.Add(-time.Minute)}, "jev → opus-5.5·high 0.70"},
-		{&state.Decision{Tier: "high", Model: "claude-opus-5-5", Effort: "high", Trigger: "fallback", Cause: "cold", DecidedAt: now}, "jev → opus-5.5·high ⚠ fallback ↻ cold"},
+		{nil, "automodel: Opus 5.5 high (default)"},
+		{&state.Decision{Tier: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh", Trigger: "initial", Why: "new", Confidence: 0.82, DecidedAt: now}, "automodel: Opus 5.5 xhigh (new 0.82)"},
+		{&state.Decision{Tier: "high", Mode: "ultracode", Model: "claude-opus-5-5", Effort: "xhigh", Workflows: true, Trigger: "compact", Confidence: 0.74, DecidedAt: now}, "automodel: Opus 5.5 xhigh +ultracode (0.74) ↻ compact"},
+		{&state.Decision{Tier: "low", Model: "claude-opus-5-5", Effort: "low", Trigger: "warm", Confidence: 0.91, DecidedAt: now}, "automodel: Opus 5.5 low (0.91) ↻ switched"},
+		{&state.Decision{Tier: "high", Model: "claude-opus-5-5", Effort: "high", Trigger: "cold", Confidence: 0.7, DecidedAt: now.Add(-time.Minute)}, "automodel: Opus 5.5 high (0.70)"},
+		{&state.Decision{Tier: "high", Model: "claude-opus-5-5", Effort: "high", Trigger: "fallback", Cause: "cold", DecidedAt: now}, "automodel: Opus 5.5 high (⚠ fallback) ↻ cold"},
 	}
 	for _, tc := range cases {
 		if got := Render(env, &state.Session{Main: tc.d}, now); got != tc.want {
@@ -38,7 +38,7 @@ func TestRender(t *testing.T) {
 	}
 	var out strings.Builder
 	in := `{"session_id":"s","model":{"id":"jev","display_name":"Jev (auto)"}}`
-	if err := Run(env, strings.NewReader(in), &out); err != nil || !strings.Contains(out.String(), "jev → opus-5.5·high") {
+	if err := Run(env, strings.NewReader(in), &out); err != nil || !strings.Contains(out.String(), "automodel: Opus 5.5 high") {
 		t.Errorf("Run = %q %v", out.String(), err)
 	}
 	if s, _ := env.State.Load("s"); s.Model != "jev" || s.ModelSource != "statusline" {
@@ -64,7 +64,7 @@ func TestRenderPinned(t *testing.T) {
 	c, _, _ := catalog.Load("../../catalog.toml", time.Now(), 3650)
 	env := &router.Env{Cfg: config.Default(), Catalog: c, Now: time.Now}
 	sess := &state.Session{Pin: "high", Main: &state.Decision{Tier: "high", Model: "claude-opus-5-5", Effort: "high", Trigger: "pinned", Confidence: 1}}
-	if got := Render(env, sess, time.Now()); !strings.Contains(got, "·high (pinned)") {
+	if got := Render(env, sess, time.Now()); !strings.Contains(got, "high (pinned)") {
 		t.Fatalf("render = %q", got)
 	}
 	sess.Pin, sess.JevIssue = "", "no OpenRouter key"
@@ -120,7 +120,7 @@ func TestJSONRouted(t *testing.T) {
 		return true
 	})
 	m := runJSON(t, env, jevIn)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","claude_effort":"","text":"jev → opus-5.5·xhigh +ultracode 0.86"}`
+	want := `{"v":1,"routed":true,"alias":"jev","model":"claude-opus-5-5","label":"Opus 5.5","effort":"xhigh","mode":"ultracode","state":"routed","confidence":0.86,"pin":"","issue":"","flash":"","budget":"","why":"","from":"","claude_effort":"","text":"automodel: Opus 5.5 xhigh +ultracode (0.86)"}`
 	if m["_raw"] != want {
 		t.Errorf("got  %s\nwant %s", m["_raw"], want)
 	}
@@ -143,19 +143,19 @@ func TestJSONStates(t *testing.T) {
 		sess state.Session
 		want map[string]any
 	}{
-		{"default", state.Session{}, map[string]any{"state": "default", "confidence": 0.0, "effort": "high", "flash": "", "text": "jev → opus-5.5·high (default)"}},
+		{"default", state.Session{}, map[string]any{"state": "default", "confidence": 0.0, "effort": "high", "flash": "", "text": "automodel: Opus 5.5 high (default)"}},
 		{"pinned", state.Session{Pin: "high", Main: &state.Decision{Model: "claude-opus-5-5", Effort: "high", Trigger: "pinned", Confidence: 1, DecidedAt: now}},
-			map[string]any{"state": "pinned", "pin": "high", "confidence": 0.0, "text": "jev → opus-5.5·high (pinned)"}},
+			map[string]any{"state": "pinned", "pin": "high", "confidence": 0.0, "text": "automodel: Opus 5.5 high (pinned)"}},
 		{"fallback+issue+flash", state.Session{JevIssue: "no OpenRouter key", Main: &state.Decision{Model: "claude-opus-5-5", Effort: "high", Trigger: "fallback", Cause: "cold", DecidedAt: now}},
-			map[string]any{"state": "fallback", "issue": "no OpenRouter key", "flash": "cold", "confidence": 0.0, "text": "jev → opus-5.5·high ⚠ fallback ⚠ jev: no OpenRouter key ↻ cold"}},
+			map[string]any{"state": "fallback", "issue": "no OpenRouter key", "flash": "cold", "confidence": 0.0, "text": "automodel: Opus 5.5 high (⚠ fallback) ⚠ jev: no OpenRouter key ↻ cold"}},
 		{"switched", state.Session{Main: &state.Decision{Model: "claude-opus-5-5", Effort: "low", Trigger: "warm", Confidence: 0.91, DecidedAt: now}},
-			map[string]any{"state": "routed", "flash": "switched", "confidence": 0.91, "text": "jev → opus-5.5·low 0.91 ↻ switched"}},
+			map[string]any{"state": "routed", "flash": "switched", "confidence": 0.91, "text": "automodel: Opus 5.5 low (0.91) ↻ switched"}},
 		{"compact", state.Session{Main: &state.Decision{Model: "claude-opus-5-5", Effort: "xhigh", Trigger: "compact", Confidence: 0.7, DecidedAt: now}},
 			map[string]any{"flash": "compact"}},
 		{"old flash", state.Session{Main: &state.Decision{Model: "claude-opus-5-5", Effort: "xhigh", Trigger: "compact", Confidence: 0.7, DecidedAt: now.Add(-time.Hour)}},
 			map[string]any{"flash": ""}},
 		{"over budget", state.Session{TotalUSD: 2, Main: &state.Decision{Model: "claude-opus-5-5", Effort: "low", Trigger: "cold", Confidence: 0.8, DecidedAt: now.Add(-time.Hour)}},
-			map[string]any{"budget": "over", "text": "jev → opus-5.5·low 0.80 ⚠ budget"}},
+			map[string]any{"budget": "over", "text": "automodel: Opus 5.5 low (0.80) ⚠ budget"}},
 	}
 	for _, tc := range cases {
 		env := jsonEnv(t)
@@ -181,7 +181,7 @@ func TestJSONStates(t *testing.T) {
 func TestJSONCatalogError(t *testing.T) {
 	var out strings.Builder
 	CatalogErrorJSON("jev", strings.NewReader(jevIn), &out)
-	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","budget":"","claude_effort":"","text":"jev → ⚠ catalog"}` + "\n"
+	want := `{"v":1,"routed":true,"alias":"jev","model":"","label":"","effort":"","mode":"","state":"error","confidence":0,"pin":"","issue":"catalog","flash":"","budget":"","why":"","from":"","claude_effort":"","text":"automodel: ⚠ catalog"}` + "\n"
 	if out.String() != want {
 		t.Errorf("got  %s\nwant %s", out.String(), want)
 	}
@@ -220,11 +220,11 @@ func TestRealEffortVsClaudeCode(t *testing.T) {
 	env := &router.Env{Cfg: config.Default(), Catalog: c, Now: time.Now}
 	sess := &state.Session{ClientEffort0: "xhigh", Main: &state.Decision{Tier: "low", Model: "claude-opus-5-5", Effort: "low", Trigger: "warm", Confidence: 0.95}}
 	v := Build(env, sess, time.Now().Add(time.Hour))
-	if v.ClaudeEffort != "xhigh" || v.Text != "jev → opus-5.5·low 0.95 · real effort: low (Claude Code shows xhigh)" {
+	if v.ClaudeEffort != "xhigh" || v.Text != "automodel: Opus 5.5 low "+strike("xhigh")+" (0.95)" {
 		t.Fatalf("got %q (claude_effort %q)", v.Text, v.ClaudeEffort)
 	}
 	sess.Main.Effort, sess.Main.Tier = "xhigh", "xhigh"
-	if v := Build(env, sess, time.Now().Add(time.Hour)); v.ClaudeEffort != "" || strings.Contains(v.Text, "real effort") {
+	if v := Build(env, sess, time.Now().Add(time.Hour)); v.ClaudeEffort != "" || strings.Contains(v.Text, strike("xhigh")) {
 		t.Fatalf("same effort still annotated: %q", v.Text)
 	}
 }
@@ -245,5 +245,19 @@ func TestJSONReadOnlyWritesNothing(t *testing.T) {
 	runJSON(t, env, jevIn) // the statusline itself records the model
 	if s, _ := env.State.Load("s"); s.Model != "jev" || s.ModelSource != "statusline" {
 		t.Errorf("recorded %q from %q", s.Model, s.ModelSource)
+	}
+}
+
+// The last decision in short: the effort it left, why, Jev's confidence;
+// the effort Claude Code still shows struck through (red in its own status
+// line, plain in the JSON text other status lines embed).
+func TestRenderWhy(t *testing.T) {
+	v := View{Label: "Opus 5.5", Effort: "high", State: "routed", Confidence: 0.59, Why: "inform", From: "xhigh", ClaudeEffort: "xhigh"}
+	if got, want := v.text(), "automodel: Opus 5.5 high x\u0336h\u0336i\u0336g\u0336h\u0336 (xhigh→high · inform 0.59)"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	v = View{Label: "Opus 5.5", Effort: "xhigh", State: "routed", Why: "go-ahead"}
+	if got := v.text(); got != "automodel: Opus 5.5 xhigh (go-ahead)" {
+		t.Errorf("kept: %q", got)
 	}
 }
