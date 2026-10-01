@@ -96,7 +96,7 @@ foreach ($shell in 'bash', 'pwsh') {
 	for ($i = 0; $i -lt 10 -and -not ($out -match 'mine'); $i++) {
 		$out = RunCommand $shell $sl '{"session_id":"t1","model":{"id":"jev","display_name":"Jev (auto)"}}'
 	}
-	if (-not ($out -match 'mine' -and $out -match 'jev')) { Fail "statusline via ${shell}: $out" }
+	if (-not ($out -match 'mine' -and $out -match 'automodel:')) { Fail "statusline via ${shell}: $out" }
 }
 
 Step 'the hooks relaunch a dead proxy'
