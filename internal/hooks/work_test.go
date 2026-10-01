@@ -207,7 +207,7 @@ func TestWorkInProgress(t *testing.T) {
 			if q[jev.QRelation].Type != "choice" {
 				t.Errorf("no relation question: %v", q)
 			}
-			if c.ask != "" && q[c.ask].Type != "noul" {
+			if c.ask != "" && !asked(q, c.ask) {
 				t.Errorf("no %s question: %v", c.ask, q)
 			}
 			s, _ := env.State.Load(sid)
@@ -444,7 +444,7 @@ func TestWorkModel(t *testing.T) {
 		sid := fmt.Sprint("m3", i)
 		workSession(t, env, sid, "high", "", "high")
 		s = decide(sid, c.prompt, fa{tier: "high", conf: 0.9, rel: "side_question", x: model(c.p)})
-		if q := fj.last().Questions["explicit_model_"+sonnet]; q.Type != "noul" || !strings.Contains(q.Instructions, "run on the Sonnet 5.5 model itself") {
+		if q := fj.last().Questions["explicit_model"]; !asked(fj.last().Questions, "explicit_model_"+sonnet) || !strings.Contains(fmt.Sprint(q.Criteria), "switch to Sonnet 5.5") {
 			t.Errorf("model question = %+v", q)
 		}
 		if s.PinModel != "" || s.Main.Model != "claude-opus-5-5" || s.Work.Model != "" {
@@ -606,7 +606,7 @@ func TestRequestsInWords(t *testing.T) {
 		if s.Main.Tier != c.want || s.Work.Tier != c.want {
 			t.Errorf("%q (effort_low %.2f): decision %s, work %s, want %s", c.prompt, c.p, s.Main.Tier, s.Work.Tier, c.want)
 		}
-		if q := fj.last().Questions["explicit_effort_low"]; !strings.Contains(q.Instructions, "itself") || !strings.Contains(q.Instructions, "its own work") {
+		if q := fj.last().Questions["explicit_effort"]; !asked(fj.last().Questions, "explicit_effort_low") || !strings.Contains(q.Instructions, "itself") || !strings.Contains(q.Instructions, "its own work") {
 			t.Errorf("effort question = %q", q.Instructions)
 		}
 	}
@@ -1910,4 +1910,14 @@ func TestLateDecisionReadsTheMessageDecidedOn(t *testing.T) {
 	if _, asked := fj.last().Questions[jev.QOffer]; fj.calls() != n+1 || !asked || s.Main.Tier != "low" || s.Work.Goal == workGoal || s.Paused == nil || s.Paused.Goal != workGoal {
 		t.Errorf("late decision on the offer: %d calls, main %s/%s, work %+v, paused %+v", fj.calls()-n, s.Main.Tier, s.Main.Mode, s.Work, s.Paused)
 	}
+}
+
+// asked reports whether request id (explicit_effort_low...) is an option of
+// its kind's Choice among the questions qs.
+func asked(qs map[string]jev.Question, id string) bool {
+	kind, value, _ := strings.Cut(strings.TrimPrefix(id, jev.QExplicitPfx), "_")
+	q := qs[jev.QExplicitPfx+kind]
+	opts, _ := q.Criteria.(map[string]any)
+	_, ok := opts[value]
+	return q.Type == "choice" && ok
 }

@@ -240,7 +240,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 
 	// A warm switch has to pay back its cost: when no answer could, Jev
-	// is not asked at all (unless the prompt may ask for something).
+	// is not asked at all. Only for prompts that can ask for nothing (a
+	// peer's message): any user prompt may ask for an effort, a mode or a
+	// model in words, and only Jev can tell.
 	if cur != nil && f.CostAware && req.SwitchCost != nil && req.MinTier == "" && len(req.Explicit) == 0 && !backFirst && !e.AboveCap(req.SessionID, req.Scope, cur) {
 		// Modes flip for free but wait for the next free moment then.
 		if g := policy.MaxGain(c, req.Scope, cur, req.SwitchCost, params); g <= 0 {
@@ -914,13 +916,9 @@ func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Readin
 				rd.asked = map[string]float64{}
 			}
 			rd.asked[strings.TrimPrefix(id, jev.QTierPfx)] = *a.Noul
-		case strings.HasPrefix(id, jev.QExplicitPfx):
-			if rd.explicit == nil {
-				rd.explicit = map[string]float64{}
-			}
-			rd.explicit[id] = *a.Noul
 		}
 	}
+	rd.explicit = jev.ExplicitProbs(ans)
 	return rd
 }
 

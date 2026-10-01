@@ -228,12 +228,18 @@ def validate(cat: dict, today: dt.date, stale_days: int, dom: dict) -> list[dict
         for oid in RELATIONS:
             if oid not in opts:
                 err(f"questions.relation: option {oid} is missing")
-    expl = questions.get("explicit")
-    if expl is not None:
-        for name, want in (("question", "{x}"), ("off_question", "{x}"), ("model_question", "{x}"),
-                           ("effort", "{v}"), ("mode", "{v}"), ("model", "{v}")):
-            if expl.get(name) and want not in expl[name]:
-                err(f"questions.explicit.{name} must contain {want}")
+    if "explicit" in questions:
+        warn("questions.explicit: deprecated, ignored (questions.explicit_effort, explicit_mode and explicit_model replaced it)")
+    for name, ids in (("explicit_effort", ["none", "low", "medium", "high", "xhigh", "max", "more"]),
+                      ("explicit_mode", ["none", "on", "off"]),
+                      ("explicit_model", ["none", "model"])):
+        for oid, o in (questions.get(name) or {}).get("options", {}).items():
+            if oid not in ids:
+                err(f"questions.{name}: unknown option {oid} (want {ids})")
+            elif not (o or {}).get("what"):
+                err(f"questions.{name}.options.{oid}: what is required")
+            elif name == "explicit_model" and oid == "model" and "{v}" not in o["what"]:
+                err("questions.explicit_model.options.model.what must contain {v} (the model)")
     for name in ("relation_separate_threshold", "explicit_threshold", "explicit_model_threshold"):
         if not 0 <= meta.get(name, 0) <= 1:
             err(f"meta.{name} must be between 0 and 1")

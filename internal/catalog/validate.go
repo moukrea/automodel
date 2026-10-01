@@ -162,13 +162,29 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 	if o := c.Questions.Offer; o != nil && (o.Question == "" || o.Yes == "" || o.No == "") {
 		errf("questions.offer: question, yes and no are required")
 	}
-	if x := c.Questions.Explicit; x != nil {
-		for _, f := range []struct{ name, v, want string }{
-			{"question", x.Question, "{x}"}, {"off_question", x.OffQuestion, "{x}"}, {"model_question", x.ModelQuestion, "{x}"},
-			{"effort", x.Effort, "{v}"}, {"mode", x.Mode, "{v}"}, {"model", x.Model, "{v}"},
-		} {
-			if f.v != "" && !strings.Contains(f.v, f.want) {
-				errf("questions.explicit.%s must contain %s", f.name, f.want)
+	if c.Questions.Explicit != nil {
+		warnf("questions.explicit: deprecated, ignored (questions.explicit_effort, explicit_mode and explicit_model replaced it)")
+	}
+	for _, q := range []struct {
+		name string
+		r    *Relation
+		ids  []string
+	}{
+		{"explicit_effort", c.Questions.ExplicitEffort, []string{"none", "low", "medium", "high", "xhigh", "max", "more"}},
+		{"explicit_mode", c.Questions.ExplicitMode, []string{"none", "on", "off"}},
+		{"explicit_model", c.Questions.ExplicitModel, []string{"none", "model"}},
+	} {
+		if q.r == nil {
+			continue
+		}
+		for id, o := range q.r.Options {
+			switch {
+			case !contains(q.ids, id):
+				errf("questions.%s: unknown option %s (want %v)", q.name, id, q.ids)
+			case o == nil || o.What == "":
+				errf("questions.%s.options.%s: what is required", q.name, id)
+			case q.name == "explicit_model" && id == "model" && !strings.Contains(o.What, "{v}"):
+				errf("questions.explicit_model.options.model.what must contain {v} (the model)")
 			}
 		}
 	}

@@ -217,8 +217,16 @@ func workLine(d Decision, o WhyOptions) string {
 	if d.OfferP != nil {
 		parts = append(parts, fmt.Sprintf("offered more of the detour: %.2f", *d.OfferP))
 	}
-	if len(d.Explicit) > 0 {
-		parts = append(parts, "asks in words: "+ranked(d.Explicit, 3))
+	// Every prompt is asked about every request: only the likely ones say
+	// something.
+	likely := map[string]float64{}
+	for k, p := range d.Explicit {
+		if p >= 0.3 {
+			likely[k] = p
+		}
+	}
+	if len(likely) > 0 {
+		parts = append(parts, "asks in words: "+ranked(likely, 3))
 	}
 	switch {
 	case d.Hold != "" && d.WorkTier != "":
