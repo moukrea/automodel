@@ -275,3 +275,8 @@
   On train, two false readings change nothing: "use high effort for the rest" read as xhigh on xhigh work, and a go-ahead to launch a second wave of agents in work already running ultracode. That first one keeps the train regression gate from passing (3 effort requests "confirmed on prompts that don't make them").
 - Caveats: the repo test split's per-case rows were read for this change (the d-* relabels), and held-out-3 had been measured once before. Both are no longer clean held-out sets for the explicit questions; the next measure needs a fresh held-out set.
 - Still to verify: a live session (requests in several languages, relative requests "un cran au-dessus"), and Jev latency in the hook with three more Choices.
+
+## 2026-10-02 — Cleanups that delete files are no low-tier work
+- Trigger: live, a request to free disk space by removing old builds and APKs, asked during a hard rendering work, read low (0.73–0.78) and ran at low.
+- Changes: the low criteria now say "with nothing to lose"; medium names "a cleanup that deletes files or data once what is safe to remove has been worked out". Hooks: a work without a goal (from before goals were kept) is named from the recent prompts, so a detour that pauses it leaves Jev something to go back to.
+- Reasons: on that prompt, medium now reads 0.96–0.99. On one answer per case, Jev's top level is exact on 64% of train (was 63%) and 71% of test (was 70%); decisions below the label went from 6 to 5 on train and 8 to 7 on test, with no follow-up below its work.

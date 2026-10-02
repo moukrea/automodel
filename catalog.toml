@@ -1187,13 +1187,13 @@ threshold = 0.92
 rank = 1
 model = "claude-opus-5-5"
 effort = "low"
-criteria = "Answering a question or making a small, fully specified change: lookups, explaining a known concept, renames, typo fixes, formatting, commit messages, summaries of work already done."
+criteria = "Answering a question or making a small, fully specified change with nothing to lose: lookups, explaining a known concept, renames, typo fixes, formatting, commit messages, summaries of work already done."
 
 [tiers.main.medium]
 rank = 2
 model = "claude-opus-5-5"
 effort = "medium"
-criteria = "A routine change with a clear recipe in one area: a small feature or endpoint with tests, a bug whose cause is evident, straightforward tests or docs for existing code."
+criteria = "A routine change with a clear recipe in one area: a small feature or endpoint with tests, a bug whose cause is evident, straightforward tests or docs for existing code, a cleanup that deletes files or data once what is safe to remove has been worked out (old builds, caches, temporary files)."
 
 [tiers.main.high]
 rank = 3
