@@ -636,7 +636,11 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	// A prompt typed while Claude works, or a message from another
 	// session, never lowers the effort the work runs at.
 	req.MidTurn = trigger != "initial" && tr.MidTurnFor(in.Prompt)
-	req.Peer = transcript.IsPeer(in.Prompt)
+	// A scheduled task's prompt (a cron the session set up, a wakeup) is no
+	// prompt the user typed: like another session's message it never
+	// lowers the work nor replaces it (live: a status check every 30 min
+	// read as new low work each time and kept the real work paused).
+	req.Peer = transcript.IsPeer(in.Prompt) || (tr != nil && tr.IsScheduled(in.Prompt))
 	req.GoAhead = !req.Peer && goAhead(in.Prompt)
 	if !req.Peer {
 		// What the user may ask for in words: Jev tells a request from a mention;

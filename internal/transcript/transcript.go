@@ -23,7 +23,9 @@ type entry struct {
 	IsMeta           bool            `json:"isMeta"`
 	IsSidechain      bool            `json:"isSidechain"`
 	Message          json.RawMessage `json:"message"`
-	Attachment       *struct {
+	// Prompt: a scheduled task's prompt (system scheduled_task_fire).
+	Prompt     string `json:"prompt"`
+	Attachment *struct {
 		Type     string `json:"type"`
 		Identity *struct {
 			ModelID string `json:"modelId"`
@@ -62,6 +64,9 @@ type Info struct {
 	// says effort "xhigh"): an ultra_effort_enter attachment, until an
 	// ultra_effort_exit one or a /effort to another level.
 	Ultracode bool
+	// Scheduled are the prompts tasks the session scheduled send (CronCreate,
+	// ScheduleWakeup, and each scheduled_task_fire): no prompt the user typed.
+	Scheduled []string
 }
 
 // Read scans the tail of the transcript.
@@ -129,11 +134,16 @@ func Read(path string) (Info, error) {
 				info.MidTurn = false
 			case "turn_duration", "stop_hook_summary":
 				info.MidTurn = false // the turn ended
+			case "scheduled_task_fire":
+				if p := strings.TrimSpace(e.Prompt); p != "" {
+					info.Scheduled = append(info.Scheduled, p)
+				}
 			}
 		case "assistant":
 			if t := assistantText(e.Message); t != "" {
 				info.LastAssistant = t
 			}
+			info.Scheduled = append(info.Scheduled, scheduledPrompts(e.Message)...)
 			info.MidTurn = callsTool(e.Message)
 		case "user":
 			text := userText(e.Message)
@@ -175,6 +185,41 @@ func callsTool(raw json.RawMessage) bool {
 	json.Unmarshal(m.Content, &blocks)
 	for _, b := range blocks {
 		if b.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
+}
+
+// scheduledPrompts are the prompts an assistant message schedules
+// (CronCreate, ScheduleWakeup).
+func scheduledPrompts(raw json.RawMessage) []string {
+	var m message
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	var blocks []struct {
+		Type  string `json:"type"`
+		Name  string `json:"name"`
+		Input struct {
+			Prompt string `json:"prompt"`
+		} `json:"input"`
+	}
+	json.Unmarshal(m.Content, &blocks)
+	var out []string
+	for _, b := range blocks {
+		if b.Type == "tool_use" && (b.Name == "CronCreate" || b.Name == "ScheduleWakeup") && strings.TrimSpace(b.Input.Prompt) != "" {
+			out = append(out, strings.TrimSpace(b.Input.Prompt))
+		}
+	}
+	return out
+}
+
+// IsScheduled reports a prompt a scheduled task sent (see Info.Scheduled).
+func (i *Info) IsScheduled(prompt string) bool {
+	p := strings.TrimSpace(prompt)
+	for _, s := range i.Scheduled {
+		if p != "" && (p == s || strings.HasPrefix(p, s) || strings.HasPrefix(s, p)) {
 			return true
 		}
 	}
