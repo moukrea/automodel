@@ -187,6 +187,16 @@ that suffix) and check `automodel help` mentions `statusline … --json`
 before calling it: older releases would render (and chain) the text status
 line instead. Skip the call when `AUTOMODEL_CHAINED=1`.
 
+**Decision history for other tools**: `automodel why --json --session <id>
+[-n 5] [--scope main|subagent|all]` prints one JSON array, newest last (main
+thread by default), and writes nothing. Each entry: `ts`, `scope`,
+`trigger`, `cause`, `tier`, `model`, `label`, `effort`, `mode`, `from` (the
+tier before), `kept`/`keep_reason`, `hold`, `why` (as in the status line)
+and `why_p`, `relation` and `explicit` (Jev's probabilities), `work`,
+`work_tier`, `paused_tier`, `confidence`, `jev_choice`, `probs`,
+`budget_cap`, `error` (why Jev failed), `latency_ms`. Fields are only ever
+added. Since 0.21.0.
+
 ## When it decides (main session)
 
 | Trigger | Condition | Cost of switching |
