@@ -149,6 +149,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	var signals *state.RepoSignals
 	var work *router.WorkUpdate // what the decision makes of the work in progress
 	var asked *router.Asked     // an effort or a model the prompt asked for in words
+	var goalFor string          // a goal named from the recent prompts for a work that has none
 	turnOnly := false           // answered alone, without the mode the work keeps
 	spawnTrigger := ""          // Jev timed out: decide again in the background
 	// A pin keeps the ultracode mode unless its effort is below the mode's.
@@ -227,6 +228,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		}
 		req := mainRequest(env, in, sess, tr, signals, trigger)
 		req.FollowUp, req.ProposalGoAhead, req.BackFirst = followUp, proposalGoAhead, backFirst
+		if req.Work != nil && (sess.Work == nil || sess.Work.Goal == "") {
+			goalFor = req.Work.Goal
+		}
 		// [model:auto] / [effort:auto] handing a pin back: say so in the
 		// ledger (and to Jev) — the move off a pinned model is the user's call.
 		if (etag == "auto" || mtag == "auto") && sess.Pin != "" {
@@ -301,6 +305,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		}
 		if s.Work == nil && (dec != nil || work != nil) {
 			s.Work = s.WorkInProgress() // a session from before: the decision in force was its work
+		}
+		if s.Work != nil && s.Work.Goal == "" && goalFor != "" {
+			s.Work.Goal = goalFor // named from the recent prompts (mainRequest)
 		}
 		if s.Paused != nil && s.PausedWork(now) == nil {
 			s.Paused = nil // paused too long ago to be resumed
@@ -509,6 +516,18 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	if trigger != "initial" {
 		work, paused = sess.WorkInProgress(), sess.PausedWork(env.Now())
 	}
+	if work != nil && work.Goal == "" && tr != nil {
+		// A work from before goals were kept: its goal is what the recent
+		// prompts asked, so Jev can relate a prompt to it, and find it
+		// again once a detour paused it (live: a disk cleanup asked during
+		// a hard rendering work paused it as {level: high}, with nothing
+		// for a later "et WP5 ?" to go back to).
+		if g := recentGoal(tr.UserPrompts, in.Prompt); g != "" {
+			w := *work
+			w.Goal = g
+			work = &w
+		}
+	}
 	if router.Resumable(paused) {
 		shown = paused // not a kept detour, below the work in progress
 	}
@@ -699,4 +718,21 @@ func effortTag(prompt string) string {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// recentGoal names a work that has no goal from the prompts before this
+// one: the last three that are not bare go-aheads, oldest first.
+func recentGoal(prompts []string, prompt string) string {
+	var picked []string
+	for i := len(prompts) - 1; i >= 0 && len(picked) < 3; i-- {
+		p := strings.TrimSpace(prompts[i])
+		if p == "" || p == strings.TrimSpace(prompt) || router.GoAhead(p) {
+			continue
+		}
+		picked = append([]string{head(p, 160)}, picked...)
+	}
+	if len(picked) == 0 {
+		return ""
+	}
+	return "(from the recent prompts) " + strings.Join(picked, " / ")
 }
