@@ -1927,3 +1927,16 @@ func asked(qs map[string]jev.Question, id string) bool {
 	_, ok := opts[value]
 	return q.Type == "choice" && ok
 }
+
+// A work from before goals were kept is named from the recent prompts (not
+// bare go-aheads, not the prompt being decided), so a detour that pauses it
+// leaves Jev something to go back to.
+func TestRecentGoal(t *testing.T) {
+	got := recentGoal([]string{"fix the shadow of Jak at night", "go", "and the lantern puddle too", "free some disk space"}, "free some disk space")
+	if got != "(from the recent prompts) fix the shadow of Jak at night / and the lantern puddle too" {
+		t.Errorf("recentGoal = %q", got)
+	}
+	if recentGoal([]string{"oui", "go"}, "x") != "" {
+		t.Error("go-aheads named a goal")
+	}
+}
