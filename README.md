@@ -232,7 +232,10 @@ at least `meta.relation_separate_threshold` (0.55) on `wrap_up`,
 `new_task` and `aside` together (on the eval's train split, 0.45 to 0.55
 give the same decisions and no follow-up below its work). Any other prompt
 keeps at least the work's tier and mode, and raises the work when it needs
-more. A wrap-up, a side question or an aside runs without the work's
+more and Jev is sure of it (`features.warm_min_confidence`, 0.8) or you ask
+for more thinking; an unsure reading, a prompt typed mid-turn or another
+session's message raises that turn only, so one weak reading doesn't keep
+a long work above what it needs. A wrap-up, a side question or an aside runs without the work's
 ultracode mode, which the work keeps for the next follow-up, and changes
 nothing of the work: what it asks for or needs (an effort, a model,
 "ultrathink", a level above the work) is for that answer only. Once a
@@ -347,7 +350,8 @@ layered on the chosen tier, whatever its model, with effort raised to
 `xhigh`. Jev answers it as a separate yes/no question (threshold 0.8, from
 the eval), and you can ask for it in words. Once on, it stays on for the
 work in progress: a follow-up keeps it, and a new task gets it only on
-Jev's own yes. A wrap-up, a side question or an aside runs without it
+Jev's own yes. Jev's yes never turns it on for a follow-up (it reads the
+whole work again from words like "carry on"): ask for it in words then. A wrap-up, a side question or an aside runs without it
 (Jev's answer reads the whole work: "open the draft PR" after a sweep
 still reads as the sweep), unless you ask for it in words for that turn;
 the work keeps it for the next follow-up. While it is on, the tier is raised to

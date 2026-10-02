@@ -717,7 +717,13 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 				(req.ProposalGoAhead && !back && !thisTurn(top)))
 		w := v
 		w.Model, w.Tier = workModel, workTier
-		v.Work = workUpdate(w, followed, work, hold, x, top, fresh, back, reopen)
+		// A follow-up raises the work for good only on a sure reading, or
+		// on a request for more thinking; a prompt typed mid-turn or a
+		// peer's message raises this turn only (live: a remark typed
+		// mid-turn read xhigh at 0.60 and kept a high work at xhigh for
+		// three hours of follow-ups Jev read as low).
+		sure := (rd.conf >= f.WarmMinConfidence || x.more || req.MinTier != "") && !req.MidTurn && !req.Peer
+		v.Work = workUpdate(w, followed, work, hold, x, top, fresh, back, reopen, sure)
 		// New work below the paused work: a longer detour, the paused work
 		// waits on, unless the work it replaces is on a higher tier and
 		// waits instead; on the same tier the work paused first waits on,
@@ -766,7 +772,7 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 // model) or needs (ultrathink, a level above the work) is for that answer
 // only, and so is anything a prompt that takes its own level asks for (top:
 // the prompt's likeliest relation). v.Model is the model the work runs on.
-func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x asks, top string, fresh, back, reopen bool) *WorkUpdate {
+func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x asks, top string, fresh, back, reopen, sure bool) *WorkUpdate {
 	switch {
 	case fresh:
 		u := &WorkUpdate{Kind: WorkNew, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
@@ -784,12 +790,15 @@ func workUpdate(v Verdict, followed *state.Work, work, hold *catalog.Tier, x ask
 		return &WorkUpdate{Kind: WorkSet, Tier: v.Tier.ID, Mode: v.Mode, Model: v.Model}
 	}
 	// A follow-up: the work's tier and mode, or the verdict's when they
-	// need more.
-	u := &WorkUpdate{Tier: higher(work, v.Tier).ID, Mode: cmp.Or(v.Mode, followed.Mode), Model: v.Model}
+	// need more and the reading is sure (see sure in Judge).
+	u := &WorkUpdate{Tier: work.ID, Mode: cmp.Or(v.Mode, followed.Mode), Model: v.Model}
+	if sure {
+		u.Tier = higher(work, v.Tier).ID
+	}
 	switch {
 	case v.Model != followed.Model:
 		u.Kind = WorkSet
-	case v.Tier.Rank > work.Rank || (v.Mode != "" && v.Mode != followed.Mode):
+	case (sure && v.Tier.Rank > work.Rank) || (v.Mode != "" && v.Mode != followed.Mode):
 		u.Kind = WorkRaised
 	case reopen:
 		u.Kind = WorkReopened
@@ -981,6 +990,14 @@ func (e *Env) mode(req Request, rd Reading, t *catalog.Tier, rp policy.RepoPolic
 			if p > 1-m.Threshold { // turning off needs a clear no
 				return m.ID, e.modeTier(req.Scope, t, m.ID)
 			}
+			continue
+		}
+		// Jev's answer turns a mode on for new work only: on a follow-up
+		// it reads the whole work again from words like "continue", and the
+		// work's mode was set when it started; asking for it in words still
+		// turns it on (live: "continue" read 0.84 and ran three hours of
+		// follow-ups at xhigh with ultracode nobody asked for).
+		if !fresh {
 			continue
 		}
 		if min := c.Tier(req.Scope, m.MinTier); p >= m.Threshold && (min == nil || t.Rank >= min.Rank) {
