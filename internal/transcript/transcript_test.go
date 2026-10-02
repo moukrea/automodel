@@ -115,3 +115,20 @@ func TestUltracode(t *testing.T) {
 		t.Error("ultracode detection")
 	}
 }
+
+// A scheduled task's prompts are known from the transcript: the
+// CronCreate/ScheduleWakeup call and each scheduled_task_fire entry.
+func TestScheduled(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(p, []byte(strings.Join([]string{
+		`{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","name":"CronCreate","input":{"cron":"4,34 * * * *","prompt":"Status check every 30 min: run etat.sh","recurring":true}}]}}`,
+		`{"type":"system","subtype":"scheduled_task_fire","prompt":"Wake up and check the build"}`,
+	}, "\n")+"\n"), 0o644)
+	info, err := Read(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsScheduled("Status check every 30 min: run etat.sh") || !info.IsScheduled("Wake up and check the build") || info.IsScheduled("fix the shadow of Jak") {
+		t.Errorf("scheduled = %v", info.Scheduled)
+	}
+}
