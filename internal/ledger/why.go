@@ -357,3 +357,86 @@ func Nth(all []Decision, session, scope string, n int) (Decision, bool) {
 	}
 	return Decision{}, false
 }
+
+// WhyEntry is one decision as `automodel why --json` prints it: a stable,
+// documented shape for other tools (fields are only ever added).
+type WhyEntry struct {
+	TS         time.Time          `json:"ts"`
+	Scope      string             `json:"scope"`
+	AgentType  string             `json:"agent_type,omitempty"`
+	Trigger    string             `json:"trigger"`
+	Cause      string             `json:"cause,omitempty"`
+	Tier       string             `json:"tier"`
+	Model      string             `json:"model"`
+	Label      string             `json:"label,omitempty"`
+	Effort     string             `json:"effort,omitempty"`
+	Mode       string             `json:"mode,omitempty"`
+	From       string             `json:"from,omitempty"` // tier in force before
+	Kept       bool               `json:"kept,omitempty"`
+	KeepReason string             `json:"keep_reason,omitempty"`
+	Skipped    bool               `json:"skipped,omitempty"`
+	Hold       string             `json:"hold,omitempty"`
+	Why        string             `json:"why,omitempty"`
+	WhyP       float64            `json:"why_p,omitempty"`
+	Relation   map[string]float64 `json:"relation,omitempty"`
+	Explicit   map[string]float64 `json:"explicit,omitempty"`
+	Work       string             `json:"work,omitempty"`
+	WorkTier   string             `json:"work_tier,omitempty"`
+	PausedTier string             `json:"paused_tier,omitempty"`
+	Confidence float64            `json:"confidence"`
+	JevChoice  string             `json:"jev_choice,omitempty"`
+	Probs      map[string]float64 `json:"probs,omitempty"`
+	BudgetCap  string             `json:"budget_cap,omitempty"`
+	Error      string             `json:"error,omitempty"`
+	LatencyMS  int64              `json:"latency_ms"`
+}
+
+// Entries turns ledger decisions into WhyEntry values; label names a model
+// key (nil: no label). Why is the kept reason in a word, an explicit request
+// Jev confirmed at 0.8 or more ("asked"), or the likeliest relation with its
+// probability.
+func Entries(ds []Decision, label func(string) string) []WhyEntry {
+	out := make([]WhyEntry, 0, len(ds))
+	for _, d := range ds {
+		e := WhyEntry{TS: d.TS, Scope: d.Scope, AgentType: d.AgentType, Trigger: d.Trigger, Cause: d.Cause, Tier: d.Chosen,
+			Model: d.Model, Effort: d.Effort, Mode: d.Mode, From: d.From, Kept: d.Kept, KeepReason: d.KeepReason,
+			Skipped: d.Skipped, Hold: d.Hold, Relation: d.Relation, Explicit: d.Explicit, Work: d.Work, WorkTier: d.WorkTier,
+			PausedTier: d.PausedTier, Confidence: d.Confidence, JevChoice: d.JevChoice, Probs: d.Probs, BudgetCap: d.BudgetCap,
+			Error: d.Error, LatencyMS: d.LatencyMS}
+		if label != nil {
+			e.Label = label(d.Model)
+		}
+		asked := false
+		for _, p := range d.Explicit {
+			asked = asked || p >= 0.8
+		}
+		switch {
+		case d.Kept:
+			e.Why = shortKeep(d.KeepReason)
+		case d.Hold != "" && shortKeep(d.Hold) != "kept":
+			e.Why = shortKeep(d.Hold) // a peer's message, a prompt typed mid-turn, a go-ahead
+		case asked:
+			e.Why = "asked"
+		case len(d.Relation) > 0:
+			for r, p := range d.Relation {
+				if p > e.WhyP || (p == e.WhyP && r < e.Why) {
+					e.Why, e.WhyP = r, p
+				}
+			}
+			e.Why = strings.ReplaceAll(e.Why, "_", " ")
+		case d.Trigger == "initial":
+			e.Why = "new"
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func shortKeep(reason string) string {
+	for _, w := range []string{"go-ahead", "mid-turn", "peer", "compaction", "pinned"} {
+		if strings.Contains(reason, w) {
+			return w
+		}
+	}
+	return "kept"
+}

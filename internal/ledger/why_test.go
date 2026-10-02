@@ -88,3 +88,23 @@ func TestWhy(t *testing.T) {
 		t.Error("ShortModel")
 	}
 }
+
+// why --json: the reason in a word, the relation's own probability.
+func TestEntries(t *testing.T) {
+	ds := []Decision{
+		{Trigger: "warm", Chosen: "low", Model: "m", Relation: map[string]float64{"aside": 0.79, "side_question": 0.16}},
+		{Trigger: "warm", Chosen: "high", Relation: map[string]float64{"new_task": 0.9}, Hold: "peer message"},
+		{Trigger: "warm", Chosen: "low", Explicit: map[string]float64{"effort_low": 0.97}, Relation: map[string]float64{"extend": 1}},
+		{Trigger: "warm", Kept: true, KeepReason: "go-ahead: holds the work in progress"},
+		{Trigger: "initial", Chosen: "xhigh"},
+	}
+	es := Entries(ds, func(string) string { return "Opus 5.5" })
+	for i, want := range []string{"aside", "peer", "asked", "go-ahead", "new"} {
+		if es[i].Why != want {
+			t.Errorf("%d: why %q, want %q", i, es[i].Why, want)
+		}
+	}
+	if es[0].WhyP != 0.79 || es[0].Label != "Opus 5.5" {
+		t.Errorf("entry 0: %+v", es[0])
+	}
+}

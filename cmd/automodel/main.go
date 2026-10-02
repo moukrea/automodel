@@ -57,7 +57,8 @@ Usage:
                                        (--json: the routing state as one JSON line, for status lines like agentline;
                                         --read-only: write nothing, for other tools reading the state)
   automodel report [--json] [--since 7d] [--baseline xhigh]
-  automodel why [--session id] [-n 5] [--scope main] [--follow]   explain the latest routing decisions
+  automodel why [--session id] [-n 5] [--scope main] [--follow] [--json]   explain the latest routing decisions
+                                       (--json: one JSON array, newest last, main thread unless --scope all)
   automodel flag [--session id] [--n 1] --want tier [--note "..."]   label a wrong decision (local eval case)
   automodel tuning [use default|custom | init [--full] | diff | show [--default] | path]
                                        the routing tuning: automodel's default, or your custom file over it
@@ -404,7 +405,11 @@ func why(cfg *config.Config, args []string) error {
 	follow := fs.Bool("follow", false, "keep printing new decisions")
 	scope := fs.String("scope", "", "only this scope: main or subagent")
 	ledgerPath := fs.String("ledger", cfg.Ledger, "ledger path")
+	jsonOut := fs.Bool("json", false, "one JSON array, newest last, main thread only unless --scope all or subagent (read-only, for other tools)")
 	fs.Parse(args)
+	if *jsonOut {
+		return whyJSON(cfg, *ledgerPath, *session, *scope, *n)
+	}
 	o := ledger.WhyOptions{Session: *session, N: *n}
 	if c, _, err := router.LoadCatalog(cfg); err == nil {
 		o.Rank = rankFn(c)
@@ -436,6 +441,47 @@ func why(cfg *config.Config, args []string) error {
 	_, done := ledger.SessionDecisions(all, sid, 0)
 	stop := make(chan struct{})
 	return ledger.FollowFrom(*ledgerPath, sid, len(done), o, os.Stdout, stop)
+}
+
+// whyJSON prints a session's recent decisions as one JSON array (newest
+// last). It writes nothing: no last-good catalog, no state.
+func whyJSON(cfg *config.Config, ledgerPath, session, scope string, n int) error {
+	all, err := ledger.Decisions(ledgerPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if scope == "" {
+		scope = catalog.ScopeMain
+	}
+	if scope != "all" {
+		kept := all[:0]
+		for _, d := range all {
+			if d.Scope == scope {
+				kept = append(kept, d)
+			}
+		}
+		all = kept
+	}
+	_, ds := ledger.SessionDecisions(all, session, n)
+	var label func(string) string
+	c := *cfg
+	c.NoLastGood = true
+	if cat, err := router.NewStore(&c).Get(); err == nil {
+		label = func(m string) string {
+			if md := cat.Model(m); md != nil {
+				return md.Label
+			}
+			for _, md := range cat.Models {
+				if md.APIID == m {
+					return md.Label
+				}
+			}
+			return ""
+		}
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetEscapeHTML(false)
+	return enc.Encode(ledger.Entries(ds, label))
 }
 
 // flagCmd appends a decision the user says was wrong to flagged.jsonl, as
