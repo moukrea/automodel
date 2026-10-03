@@ -623,6 +623,13 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		if capped && tier.Rank > work.Rank {
 			tier = work
 		}
+		// A prompt nobody typed (another session's message, a scheduled
+		// task's) holds its floor and goes above it only on a sure reading
+		// (live: a release-queue loop's status prompts read xhigh at
+		// confidence 0 and ran CI babysitting at xhigh over low work).
+		if req.Peer && floor != nil && tier.Rank > floor.Rank && rd.conf < f.WarmMinConfidence && !x.more && req.MinTier == "" {
+			tier = floor
+		}
 	}
 	tier = policy.Constrain(c, req.Scope, tier, rp, req.Context) // within the repo's bounds
 	mode := ""

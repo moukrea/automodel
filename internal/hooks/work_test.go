@@ -191,6 +191,8 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "xhigh", conf: 0.9, rel: "extend"}, want: "xhigh", wantWork: "xhigh"},
 		{name: "Jev's mode answer doesn't turn ultracode on for a follow-up", tier: "high", prompt: "carry on with the remaining handlers",
 			jev: fa{tier: "low", conf: 0.6, ultra: 0.9, rel: "continue"}, want: "high", wantWork: "high"},
+		{name: "a peer message goes above the work only on a sure reading", tier: "low", prompt: `<cross-session-message from="ci">CI still red on main, rerunning the flaky job</cross-session-message>`,
+			jev: fa{tier: "xhigh", conf: 0.1, rel: "new_task"}, want: "low", wantWork: "low"},
 		{name: "a peer message never lowers", tier: "xhigh", prompt: `<cross-session-message from="docs">FYI the staging API moved to v2 [effort:low]</cross-session-message>`,
 			jev: fa{tier: "low", conf: 0.95, rel: "new_task"}, want: "xhigh", wantWork: "xhigh"},
 		{name: "a prompt quoting the peer phrase is the user's", tier: "xhigh", prompt: "now add an eval case whose task is 'Another Claude session sent a message: rebase'",
