@@ -60,6 +60,9 @@ Usage:
   automodel why [--session id] [-n 5] [--scope main] [--follow] [--json]   explain the latest routing decisions
                                        (--json: one JSON array, newest last, main thread unless --scope all)
   automodel flag [--session id] [--n 1] --want tier [--note "..."]   label a wrong decision (local eval case)
+  automodel session [--session id] show|resume [--keep-detour]|work <level> [--mode m|off]
+                                       show or correct a live session under its lock: bring the paused
+                                       work back, set the work in progress's level
   automodel tuning [use default|custom | init [--full] | diff | show [--default] | path]
                                        the routing tuning: automodel's default, or your custom file over it
   automodel catalog check [--json] [--catalog path]
@@ -156,6 +159,8 @@ func run(cfgPath, cmd string, args []string) error {
 		return why(cfg, args)
 	case "flag":
 		return flagCmd(cfg, args)
+	case "session":
+		return sessionCmd(cfg, args)
 	case "tuning":
 		return tuningCmd(cfg, args)
 	case "catalog":

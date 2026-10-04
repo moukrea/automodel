@@ -560,7 +560,13 @@ automodel report [--since 7d] [--json] [--baseline xhigh]
 automodel eval [--catalog path] [--format score|choice]    # Jev on labeled cases: accuracy, confidence, calibration
 automodel eval --catalog path --answers run.json   # the same answers (a saved --json run) under another policy, without Jev
 automodel flag [--session id] [--n 1] --want xhigh [--note "..."]  # that pick was wrong
+automodel session [--session id] show|resume|work <level>  # see or correct a live session's work
 ```
+
+`session` corrects a live session under its lock, from its next prompt:
+`resume` brings the paused work back as the work in progress (the detour is
+dropped, or waits with `--keep-detour`), `work high [--mode off]` sets the
+work's level, keeping its goal.
 
 `flag` turns a decision (default: the session's latest main decision) into
 a labeled case in `~/.local/state/automodel/flagged.jsonl`, with the routing

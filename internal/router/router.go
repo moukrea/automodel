@@ -110,12 +110,13 @@ type Request struct {
 	// prompt): a prompt that follows it up keeps at least its tier, its
 	// mode and its model. Paused is the work a detour set aside, which the
 	// prompt may go back to. MidTurn: the prompt came in while Claude was
-	// still working; Peer: another Claude session sent it. Neither lowers
-	// the effort. FollowUp is why the prompt follows the work up without
+	// still working; Peer: another Claude session or a scheduled task sent
+	// it (Scheduled: the latter). Neither lowers the effort, except a
+	// scheduled prompt Jev reads apart from the work (see holdAt). FollowUp is why the prompt follows the work up without
 	// asking Jev (a go-ahead to a proposal, a compaction).
-	Work, Paused  *state.Work
-	MidTurn, Peer bool
-	FollowUp      string
+	Work, Paused             *state.Work
+	MidTurn, Peer, Scheduled bool
+	FollowUp                 string
 	// ProposalGoAhead: a bare go-ahead to what the assistant asked or
 	// offered, asked the relation question: after a detour (paused work,
 	// resume offered unless it is a kept detour), or once a wrap-up closed
@@ -531,6 +532,12 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	if req.GoAhead && hold == nil && top == catalog.RelationNewTask && work != nil {
 		top = catalog.RelationAside
 	}
+	// A scheduled task's prompt Jev reads apart from the work (a status
+	// check) runs at its own level, answered alone: it neither starts,
+	// closes nor pauses the work.
+	if req.Scheduled && hold == nil && work != nil {
+		top = catalog.RelationSideQuestion
+	}
 	// Separate new work (or a first prompt): its own level, mode and model.
 	fresh := work == nil || (hold == nil && top == catalog.RelationNewTask)
 	// A wrap-up, a side question or an aside is answered alone: without the
@@ -538,7 +545,7 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	// work: "open the draft PR" after a sweep still reads as the sweep);
 	// not a go-ahead that goes back to the paused work, nor one to a
 	// proposal that holds the work.
-	alone := thisTurn(top) && !req.MidTurn && !req.Peer && !back && !(req.ProposalGoAhead && hold != nil)
+	alone := thisTurn(top) && !req.MidTurn && (!req.Peer || (req.Scheduled && hold == nil)) && !back && !(req.ProposalGoAhead && hold != nil)
 	// A go-ahead that stays on a detour while bigger work waits runs at
 	// the detour's level at most, on its mode: the bare words carry no
 	// level, and Jev's level and mode answers lean on the paused work
@@ -880,6 +887,12 @@ func (rd Reading) separate() float64 {
 		}
 	}
 	return p
+}
+
+// ownLevel is the probability that the prompt takes its own level, not
+// the work's: a separate relation or a side question.
+func (rd Reading) ownLevel() float64 {
+	return rd.separate() + rd.relation[catalog.RelationSideQuestion]
 }
 
 // relationTop is the most likely relation and its probability.
@@ -1259,7 +1272,7 @@ func SetupLog(stateDir, name string) func() {
 // shortWhy names a kept decision's reason in a word or two for the status
 // line.
 func shortWhy(reason string) string {
-	for _, w := range []string{"go-ahead", "mid-turn", "peer", "compaction", "pinned"} {
+	for _, w := range []string{"go-ahead", "mid-turn", "peer", "scheduled", "compaction", "pinned"} {
 		if strings.Contains(reason, w) {
 			return w
 		}

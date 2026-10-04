@@ -640,7 +640,9 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	// prompt the user typed: like another session's message it never
 	// lowers the work nor replaces it (live: a status check every 30 min
 	// read as new low work each time and kept the real work paused).
-	req.Peer = transcript.IsPeer(in.Prompt) || (tr != nil && tr.IsScheduled(in.Prompt))
+	// One that isn't more of the work (a status check) takes its own level.
+	req.Scheduled = !transcript.IsPeer(in.Prompt) && tr != nil && tr.IsScheduled(in.Prompt)
+	req.Peer = transcript.IsPeer(in.Prompt) || req.Scheduled
 	req.GoAhead = !req.Peer && goAhead(in.Prompt)
 	if !req.Peer {
 		// What the user may ask for in words: Jev tells a request from a mention;
