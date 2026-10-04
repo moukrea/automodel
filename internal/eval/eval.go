@@ -122,6 +122,11 @@ func (c Case) holds() bool {
 	if wip, _ := c.State["work_in_progress"].(map[string]any); wip["done"] == true {
 		return c.Relation == catalog.RelationContinue || c.Relation == catalog.RelationExtend || c.Relation == catalog.RelationResume
 	}
+	if c.State["scheduled"] == true {
+		// A status check takes its own level; a loop that carries the work
+		// on keeps it.
+		return c.Relation == catalog.RelationContinue || c.Relation == catalog.RelationExtend || c.Relation == catalog.RelationResume
+	}
 	return FollowUp(c.Relation) || c.State["mid_turn"] == true || transcript.IsPeer(task)
 }
 
@@ -240,7 +245,7 @@ func Run(ctx context.Context, env *router.Env, cases []Case, format string, para
 func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 	st := make(map[string]any, len(c.State))
 	for k, v := range c.State {
-		if k != "mid_turn" {
+		if k != "mid_turn" && k != "scheduled" {
 			st[k] = v
 		}
 	}
@@ -273,7 +278,9 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 			}
 		}
 	}
-	req.Peer = transcript.IsPeer(task)
+	// scheduled: a prompt a task the session scheduled sent (CronCreate).
+	req.Scheduled = c.State["scheduled"] == true && !transcript.IsPeer(task)
+	req.Peer = transcript.IsPeer(task) || req.Scheduled
 	req.GoAhead = !req.Peer && router.GoAhead(task)
 	if !req.Peer {
 		req.Explicit = router.ExplicitRequests(cat, model)

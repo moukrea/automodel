@@ -74,6 +74,30 @@ func shellTranscript(t *testing.T) string {
 	return p
 }
 
+const (
+	schedCheck = "run the status script and report in one line if nothing is flagged"
+	schedLoop  = "carry on with the next batch of the migration, then stop"
+)
+
+// scheduledTranscript is an idle session whose assistant set up two
+// scheduled tasks (CronCreate) sending schedCheck and schedLoop.
+func scheduledTranscript(t *testing.T) string {
+	p := filepath.Join(t.TempDir(), "scheduled.jsonl")
+	cron := func(id, prompt string) string {
+		return `{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"` + id + `","name":"CronCreate","input":{"cron":"17,47 * * * *","prompt":"` + prompt + `"}}]}}`
+	}
+	os.WriteFile(p, []byte(strings.Join([]string{
+		`{"type":"user","message":{"role":"user","content":"Find why checkouts hand the same connection to two workers under load, and fix it"}}`,
+		cron("c1", schedCheck),
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c1","content":"ok"}]}}`,
+		cron("c2", schedLoop),
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c2","content":"ok"}]}}`,
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Scheduled."}]}}`,
+		`{"type":"system","subtype":"turn_duration"}`,
+	}, "\n")+"\n"), 0o600)
+	return p
+}
+
 // The work in progress (router.Judge): a follow-up keeps at least its tier
 // and mode, separate work gets its own level, requests in words win, and a
 // prompt typed mid-turn or sent by another session never lowers anything.
@@ -81,6 +105,7 @@ func TestWorkInProgress(t *testing.T) {
 	fj := &fakeJev{}
 	env := setup(t, fj)
 	busy, started, shell := busyTranscript(t), startedTranscript(t), shellTranscript(t)
+	sched := scheduledTranscript(t)
 	x := func(kv ...any) map[string]float64 {
 		m := map[string]float64{}
 		for i := 0; i < len(kv); i += 2 {
@@ -193,6 +218,19 @@ func TestWorkInProgress(t *testing.T) {
 			jev: fa{tier: "low", conf: 0.6, ultra: 0.9, rel: "continue"}, want: "high", wantWork: "high"},
 		{name: "a peer message goes above the work only on a sure reading", tier: "low", prompt: `<cross-session-message from="ci">CI still red on main, rerunning the flaky job</cross-session-message>`,
 			jev: fa{tier: "xhigh", conf: 0.1, rel: "new_task"}, want: "low", wantWork: "low"},
+		// A scheduled prompt that isn't more of the work (a status check)
+		// takes its own level, answered alone; the work stays as it is. One
+		// that carries the work on keeps the work's level.
+		{name: "a scheduled status check takes its own level", tier: "xhigh", mode: "ultracode", transcript: sched, prompt: schedCheck,
+			jev: fa{tier: "low", conf: 0.9, ultra: 0.9, rel: "side_question"}, want: "low", wantWork: "xhigh", wantWorkMode: "ultracode"},
+		{name: "a scheduled status check read as new work starts none", tier: "high", transcript: sched, prompt: schedCheck,
+			jev: fa{tier: "low", conf: 0.9, rel: "new_task", relP: 0.6}, want: "low", wantWork: "high"},
+		{name: "a scheduled status check closes nothing", tier: "high", transcript: sched, prompt: schedCheck,
+			jev: fa{tier: "low", conf: 0.9, rel: "wrap_up"}, want: "low", wantWork: "high"},
+		{name: "a scheduled loop on the work keeps its level", tier: "xhigh", transcript: sched, prompt: schedLoop,
+			jev: fa{tier: "low", conf: 0.9, rel: "continue"}, want: "xhigh", wantWork: "xhigh"},
+		{name: "a scheduled prompt leaning to the work keeps its level", tier: "high", transcript: sched, prompt: schedCheck,
+			jev: fa{tier: "low", conf: 0.9, rel: "continue", relP: 0.4}, want: "high", wantWork: "high"},
 		{name: "a peer message never lowers", tier: "xhigh", prompt: `<cross-session-message from="docs">FYI the staging API moved to v2 [effort:low]</cross-session-message>`,
 			jev: fa{tier: "low", conf: 0.95, rel: "new_task"}, want: "xhigh", wantWork: "xhigh"},
 		{name: "a prompt quoting the peer phrase is the user's", tier: "xhigh", prompt: "now add an eval case whose task is 'Another Claude session sent a message: rebase'",

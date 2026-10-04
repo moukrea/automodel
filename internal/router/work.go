@@ -136,6 +136,14 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 		return nil, ""
 	case req.MidTurn && running != nil:
 		return running, "mid-turn"
+	case req.Peer && running != nil && req.Scheduled && rd.ownLevel() >= e.Catalog.Meta.RelationSeparateThreshold() && !Blind(req):
+		// A scheduled prompt that isn't more of the work (a status check)
+		// takes its own level; a loop that carries the work on keeps it
+		// (live: a status check every 30 min over high work ran at high
+		// each round while Jev read it low at 0.9, apart at 0.6-0.97).
+		return nil, ""
+	case req.Peer && running != nil && req.Scheduled:
+		return running, "scheduled prompt"
 	case req.Peer && running != nil:
 		return running, "peer message"
 	case req.FollowUp != "" && !done:
