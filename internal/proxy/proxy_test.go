@@ -45,6 +45,9 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u.betas = append(u.betas, strings.Join(r.Header.Values(HeaderBeta), ","))
 	reply, chunk := u.reply, u.chunk
 	u.mu.Unlock()
+	w.Header().Set("Anthropic-Ratelimit-Unified-5h-Utilization", "0.42")
+	w.Header().Set("Anthropic-Ratelimit-Unified-7d-Utilization", "0.13")
+	w.Header().Set("Anthropic-Ratelimit-Unified-Grace-7d-Utilization", "0.5")
 	if reply == "" {
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, sse)
@@ -152,7 +155,8 @@ func TestRewriteMainFromDecision(t *testing.T) {
 		return strings.Count(string(b), `"kind":"usage"`) == 3
 	})
 	b, _ := os.ReadFile(p.Cfg.Ledger)
-	if !strings.Contains(string(b), `"output_tokens":42`) || !strings.Contains(string(b), `"cache_read_input_tokens":5000`) {
+	if !strings.Contains(string(b), `"output_tokens":42`) || !strings.Contains(string(b), `"cache_read_input_tokens":5000`) ||
+		!strings.Contains(string(b), `"limits":{"5h":0.42,"7d":0.13}`) {
 		t.Errorf("ledger = %s", b)
 	}
 	waitFor(t, func() bool {

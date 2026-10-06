@@ -49,8 +49,36 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 			return err
 		}
 	}
-	resp.Body = &tap{ReadCloser: resp.Body, p: p, rt: rt, status: resp.StatusCode, sse: sse}
+	resp.Body = &tap{ReadCloser: resp.Body, p: p, rt: rt, status: resp.StatusCode, sse: sse, limits: limits(resp.Header)}
 	return nil
+}
+
+const limitPrefix, limitSuffix = "Anthropic-Ratelimit-Unified-", "-Utilization"
+
+// limits reads the subscription's usage per window from the response
+// headers (nil: none, e.g. an API key).
+func limits(h http.Header) map[string]float64 {
+	var m map[string]float64
+	for k, v := range h {
+		k = http.CanonicalHeaderKey(k)
+		w, ok := strings.CutPrefix(k, limitPrefix)
+		if !ok || !strings.HasSuffix(w, limitSuffix) || len(v) == 0 {
+			continue
+		}
+		w = strings.ToLower(strings.TrimSuffix(w, limitSuffix))
+		if strings.HasPrefix(w, "grace-") || strings.HasPrefix(w, "overage") || strings.HasPrefix(w, "slow-") {
+			continue
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(v[0]), 64)
+		if err != nil {
+			continue
+		}
+		if m == nil {
+			m = map[string]float64{}
+		}
+		m[w] = f
+	}
+	return m
 }
 
 // servedAs names the custom model as the one that answered, in the
@@ -157,6 +185,8 @@ type tap struct {
 	rt     *route
 	status int
 	sse    bool
+
+	limits map[string]float64 // subscription usage per window, from the headers
 
 	line []byte       // partial SSE line
 	buf  bytes.Buffer // JSON body (bounded)
@@ -270,6 +300,7 @@ func (t *tap) record() {
 		Routed: rt.routed, Tier: rt.tier, Model: rt.model, Effort: rt.effort, Status: t.status,
 		InputTokens: t.u.InputTokens, OutputTokens: t.u.OutputTokens,
 		CacheReadInputTokens: t.u.CacheReadInputTokens, CacheCreationInputTokens: t.u.CacheCreationInputTokens,
+		Limits: t.limits,
 	})
 	if err != nil {
 		log.Printf("ledger: %v", err)
