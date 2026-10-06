@@ -455,7 +455,10 @@ func TestSmallWindowTierOutgrown(t *testing.T) {
 	if m := up.last(t); m["model"] != "claude-haiku-4-5-20251001" || m["thinking"] != nil || m["output_config"] != nil {
 		t.Errorf("Haiku request = %v", m)
 	}
-	p.bg.Wait() // the first response's usage lands first
+	// The first response's usage lands first (its tap may still be
+	// finishing when the client has read the whole stream).
+	waitFor(t, func() bool { s, _ := p.State.Load("sess-1"); return s.ContextTokens == 5252 })
+	p.bg.Wait()
 	p.State.Update("sess-1", func(s *state.Session) bool { s.ContextTokens = 160_000; return true })
 	post(t, ps.URL, map[string]string{HeaderSession: "sess-1"}, mainBody)
 	if m := up.last(t); m["model"] != "claude-opus-5-5" || m["output_config"].(map[string]any)["effort"] != "low" {
