@@ -132,6 +132,15 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 		running = cur
 	}
 	switch {
+	case work == nil && cur != nil && (req.MidTurn || (req.Peer && !req.Scheduled)):
+		// No work recorded (a first prompt's turn, a pinned stretch): a
+		// prompt typed mid-turn or sent by another session still doesn't
+		// lower the turn (live: a remark typed mid-turn after a pin was
+		// handed back started new low work under a medium turn).
+		if req.MidTurn {
+			return cur, "mid-turn"
+		}
+		return cur, "peer message"
 	case work == nil:
 		return nil, ""
 	case req.MidTurn && running != nil:

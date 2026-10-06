@@ -112,11 +112,13 @@ type Request struct {
 	// prompt may go back to. MidTurn: the prompt came in while Claude was
 	// still working; Peer: another Claude session or a scheduled task sent
 	// it (Scheduled: the latter). Neither lowers the effort, except a
-	// scheduled prompt Jev reads apart from the work (see holdAt). FollowUp is why the prompt follows the work up without
-	// asking Jev (a go-ahead to a proposal, a compaction).
-	Work, Paused             *state.Work
-	MidTurn, Peer, Scheduled bool
-	FollowUp                 string
+	// scheduled prompt Jev reads apart from the work (see holdAt).
+	// Released: the prompt hands a pin back ([effort:auto], [model:auto]).
+	// FollowUp is why the prompt follows the work up without asking Jev (a
+	// go-ahead to a proposal, a compaction).
+	Work, Paused                       *state.Work
+	MidTurn, Peer, Scheduled, Released bool
+	FollowUp                           string
 	// ProposalGoAhead: a bare go-ahead to what the assistant asked or
 	// offered, asked the relation question: after a detour (paused work,
 	// resume offered unless it is a kept detour), or once a wrap-up closed
@@ -526,6 +528,17 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	var why []string
 	hold, reason := e.holdAt(req, rd, work, cur)
 	top, _ := rd.relationTop()
+	// A prompt that hands a pin back asks the router to judge the work
+	// again: the level it ran at was the user's call, now withdrawn, so
+	// more of the work doesn't hold it, and the level decided becomes the
+	// work's (live: "[effort:auto] medium isn't right for this work" read
+	// alone, as new low work). A prompt typed mid-turn still doesn't lower
+	// the turn it came in.
+	rejudge := req.Released && hold != nil && !req.Peer && !e.resumes(req, rd) &&
+		(top == catalog.RelationContinue || top == catalog.RelationExtend || top == catalog.RelationInform)
+	if rejudge && !req.MidTurn {
+		hold, reason = nil, "pin handed back: the work judged again"
+	}
 	// A bare go-ahead starts no work of its own: read as separate new work
 	// (live, after a compaction: "yes" read new_task 0.36 and became the
 	// work's goal, below the work), it is answered alone, as an aside.
@@ -611,8 +624,8 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 			// level Jev gives is its scored one: "take your time" on a typo
 			// fix Jev rates low is medium, not one rank above Haiku.
 			base := higher(work, cur)
-			if hold == nil {
-				base = scored
+			if hold == nil && !rejudge {
+				base = scored // handing a pin back: above the level withdrawn
 			}
 			more := e.above(req.Scope, base)
 			if hold != nil && (top != catalog.RelationExtend || rd.conf < f.WarmMinConfidence) {
@@ -762,6 +775,9 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		}
 		if u := v.Work; u != nil && u.Kind == WorkDone && req.Paused != nil && req.Paused.Kept {
 			v.Work = &WorkUpdate{Kind: WorkDetourDone}
+		}
+		if rejudge {
+			v.Work = &WorkUpdate{Kind: WorkSet, Tier: workTier.ID, Mode: v.Mode, Model: workModel}
 		}
 		// More thinking read from the words alone raises this turn only:
 		// the work in progress is what it would be without it.
