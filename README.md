@@ -598,7 +598,14 @@ a go-ahead that brought the work's tier back counts as a switch),
 fallback rate, confidence, cache hit rate for routed vs unrouted
 sessions, Jev cost, tokens per tier, and shadow-mode agreement (when
 `jev_shadow_model` is set). Raw data: `~/.local/state/automodel/ledger.jsonl`;
-hook logs: `hooks.log` next to it.
+hook logs: `hooks.log` next to it. On a subscription, each usage line also
+carries `limits`, the plan's usage per window after that response (`5h`,
+`7d`, 0–1), to measure what a model or an effort costs in quota.
+
+A routed response names the custom model (`jev`) rather than the model
+that served it, so `claude --resume` brings a session back on the custom
+model: Claude Code restores the model of a session's last answer. The
+model served is in the ledger and `automodel why`.
 
 ## Known limits
 
