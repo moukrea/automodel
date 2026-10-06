@@ -1057,3 +1057,41 @@ func TestDetachedInputFile(t *testing.T) {
 		t.Errorf("input file left behind")
 	}
 }
+
+// Handing a pin back judges the work done while pinned again, which
+// routing never recorded: its goal comes from the recent prompts, and
+// the remark about the level is no new work (live: "[effort:auto] medium
+// isn't right for this work" started new low work).
+func TestPinHandBackJudgesTheWork(t *testing.T) {
+	fj := &fakeJev{}
+	env := setup(t, fj)
+	sid := "s1"
+	markJev(t, env, sid)
+	cwd := t.TempDir()
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	hard := "Compare the three caching strategies on the replay traces and recommend one with numbers"
+	os.WriteFile(tp, []byte(strings.Join([]string{
+		`{"type":"user","message":{"role":"user","content":"[effort:medium] ` + hard + `"}}`,
+		`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Replaying the traces."}]}}`,
+		`{"type":"system","subtype":"turn_duration"}`,
+	}, "\n")+"\n"), 0o600)
+	prompt := func(p string) {
+		run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": cwd, "transcript_path": tp})
+	}
+	prompt("[effort:medium] " + hard)
+	if s, _ := env.State.Load(sid); s.Pin != "medium" || s.WorkInProgress() != nil {
+		t.Fatalf("pinned first prompt: pin %q, work %+v", s.Pin, s.WorkInProgress())
+	}
+	fj.answers = []fa{{tier: "xhigh", conf: 0.9, rel: "extend", relP: 0.8}}
+	prompt("[effort:auto] medium isn't right for this work")
+	if q := fj.last().Questions; q[jev.QRelation].Type != "choice" {
+		t.Fatalf("no relation question: the work done while pinned wasn't shown")
+	}
+	s, _ := env.State.Load(sid)
+	if s.Pin != "" || s.Main.Tier != "xhigh" {
+		t.Fatalf("decision %+v (pin %q), want xhigh", s.Main, s.Pin)
+	}
+	if w := s.Work; w == nil || w.Tier != "xhigh" || !strings.Contains(w.Goal, "caching strategies") {
+		t.Fatalf("work %+v, want xhigh with the pinned stretch's goal", w)
+	}
+}

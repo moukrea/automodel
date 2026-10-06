@@ -108,6 +108,9 @@ type route struct {
 	model     string
 	effort    string
 	path      string
+	// asked is the custom model ID the request named ("": another model):
+	// the response says it served that model (see servedAs).
+	asked string
 
 	plainBody   []byte // the request without per-turn effort, for retryTransport
 	perTurnBeta string
@@ -195,6 +198,9 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 
 	var dec *state.Decision
 	custom := strings.TrimSuffix(model, "[1m]") == p.Cfg.CustomModelID
+	if custom {
+		rt.asked = p.Cfg.CustomModelID
+	}
 	switch {
 	case custom:
 		if rt.scope == catalog.ScopeMain && !countTokens {

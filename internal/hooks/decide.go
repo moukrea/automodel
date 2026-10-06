@@ -150,6 +150,7 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	var work *router.WorkUpdate // what the decision makes of the work in progress
 	var asked *router.Asked     // an effort or a model the prompt asked for in words
 	var goalFor string          // a goal named from the recent prompts for a work that has none
+	var handedBack *state.Work  // the work done while pinned, when the pin is handed back
 	turnOnly := false           // answered alone, without the mode the work keeps
 	spawnTrigger := ""          // Jev timed out: decide again in the background
 	// A pin keeps the ultracode mode unless its effort is below the mode's.
@@ -226,8 +227,27 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if signals == nil {
 			signals = repo.Signals(ctx, in.Cwd)
 		}
-		req := mainRequest(env, in, sess, tr, signals, trigger)
+		// Handing a pin back: the work done while pinned was never recorded
+		// (routing was off). It is what the recent prompts asked, at the
+		// level it ran at, so Jev relates this prompt to it (router.Judge
+		// then judges that work again).
+		released := (etag == "auto" || mtag == "auto") && sess.Pin != ""
+		reqSess := sess
+		if released && sess.WorkInProgress() == nil && sess.Main != nil && tr != nil {
+			if g := recentGoal(tr.UserPrompts, in.Prompt); g != "" {
+				t := env.Catalog.Tier(catalog.ScopeMain, sess.Main.Tier)
+				if t == nil {
+					t = env.Catalog.DefaultTier(catalog.ScopeMain)
+				}
+				handedBack = &state.Work{Tier: t.ID, Goal: g, Since: now}
+				s := *sess
+				s.Work = handedBack
+				reqSess = &s
+			}
+		}
+		req := mainRequest(env, in, reqSess, tr, signals, trigger)
 		req.FollowUp, req.ProposalGoAhead, req.BackFirst = followUp, proposalGoAhead, backFirst
+		req.Released = released
 		if req.Work != nil && (sess.Work == nil || sess.Work.Goal == "") {
 			goalFor = req.Work.Goal
 		}
@@ -302,6 +322,9 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		}
 		if !synthetic {
 			s.Pin, s.PinModel, s.PinSource = pin, pinModel, pinSource
+		}
+		if s.Work == nil && handedBack != nil {
+			s.Work = handedBack
 		}
 		if s.Work == nil && (dec != nil || work != nil) {
 			s.Work = s.WorkInProgress() // a session from before: the decision in force was its work

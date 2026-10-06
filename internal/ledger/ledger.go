@@ -97,6 +97,11 @@ type Usage struct {
 	OutputTokens             int       `json:"output_tokens"`
 	CacheReadInputTokens     int       `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens int       `json:"cache_creation_input_tokens"`
+	// Limits is the subscription's usage after this response, per window
+	// (anthropic-ratelimit-unified-<window>-utilization, 0-1: "5h", "7d",
+	// and any per-model window the API sends), to measure what each model
+	// and effort costs in quota.
+	Limits map[string]float64 `json:"limits,omitempty"`
 }
 
 type Ledger struct{ Path string }

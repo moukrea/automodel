@@ -6,6 +6,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,15 +38,144 @@ func (p *Proxy) modifyResponse(resp *http.Response) error {
 		return nil
 	}
 	ct := resp.Header.Get("Content-Type")
-	t := &tap{ReadCloser: resp.Body, p: p, rt: rt, status: resp.StatusCode}
-	switch {
-	case strings.HasPrefix(ct, "text/event-stream"):
-		t.sse = true
-	case strings.HasPrefix(ct, "application/json"):
-	default:
+	sse := strings.HasPrefix(ct, "text/event-stream")
+	if !sse && !strings.HasPrefix(ct, "application/json") {
 		return nil
 	}
-	resp.Body = t
+	if rt.asked != "" && resp.StatusCode < 300 {
+		if sse {
+			resp.Body = &servedAs{ReadCloser: resp.Body, to: rt.asked}
+		} else if err := servedAsJSON(resp, rt.asked); err != nil {
+			return err
+		}
+	}
+	resp.Body = &tap{ReadCloser: resp.Body, p: p, rt: rt, status: resp.StatusCode, sse: sse, limits: limits(resp.Header)}
+	return nil
+}
+
+const limitPrefix, limitSuffix = "Anthropic-Ratelimit-Unified-", "-Utilization"
+
+// limits reads the subscription's usage per window from the response
+// headers (nil: none, e.g. an API key).
+func limits(h http.Header) map[string]float64 {
+	var m map[string]float64
+	for k, v := range h {
+		k = http.CanonicalHeaderKey(k)
+		w, ok := strings.CutPrefix(k, limitPrefix)
+		if !ok || !strings.HasSuffix(w, limitSuffix) || len(v) == 0 {
+			continue
+		}
+		w = strings.ToLower(strings.TrimSuffix(w, limitSuffix))
+		if strings.HasPrefix(w, "grace-") || strings.HasPrefix(w, "overage") || strings.HasPrefix(w, "slow-") {
+			continue
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(v[0]), 64)
+		if err != nil {
+			continue
+		}
+		if m == nil {
+			m = map[string]float64{}
+		}
+		m[w] = f
+	}
+	return m
+}
+
+// servedAs names the custom model as the one that answered, in the
+// message_start event of a routed stream (the model the request was
+// routed to stays in the ledger). Claude Code records a response's model
+// in the transcript and a resumed session restores the model of its last
+// answer: the served one took the session off routing (live: every
+// session resumed after a reboot ran unrouted on Opus until /model jev).
+// Only the first event is buffered, line by line; the rest streams as is.
+type servedAs struct {
+	io.ReadCloser
+	to   string
+	done bool
+	in   []byte // a partial line, before the first event
+	out  []byte // bytes ready, not yet returned
+	err  error  // the upstream error, returned once out is drained
+}
+
+func (s *servedAs) Read(b []byte) (int, error) {
+	for !s.done && len(s.out) == 0 && s.err == nil {
+		buf := make([]byte, 32<<10)
+		n, err := s.ReadCloser.Read(buf)
+		s.in = append(s.in, buf[:n]...)
+		for !s.done {
+			i := bytes.IndexByte(s.in, '\n')
+			if i < 0 {
+				break
+			}
+			line := s.in[:i+1]
+			if bytes.HasPrefix(line, []byte("data:")) {
+				line, s.done = renameModel(line, s.to), true
+			}
+			s.out = append(s.out, line...)
+			s.in = s.in[i+1:]
+		}
+		if s.done || err != nil || len(s.in) > 1<<20 {
+			s.out, s.in, s.done = append(s.out, s.in...), nil, true
+		}
+		s.err = err
+	}
+	if len(s.out) > 0 {
+		n := copy(b, s.out)
+		s.out = s.out[n:]
+		return n, nil
+	}
+	if s.err != nil {
+		err := s.err
+		s.err = nil
+		return 0, err
+	}
+	return s.ReadCloser.Read(b)
+}
+
+var modelField = regexp.MustCompile(`"model"\s*:\s*"[^"]*"`)
+
+// renameModel names the model in a message_start event's data line.
+func renameModel(line []byte, to string) []byte {
+	if !bytes.Contains(line, []byte(`"message_start"`)) {
+		return line
+	}
+	done := false
+	return modelField.ReplaceAllFunc(line, func(m []byte) []byte {
+		if done {
+			return m
+		}
+		done = true
+		q, _ := json.Marshal(to)
+		return append([]byte(`"model":`), q...)
+	})
+}
+
+// servedAsJSON names the custom model in a whole (non-streamed) message.
+func servedAsJSON(resp *http.Response, to string) error {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONTap+1))
+	if err != nil {
+		resp.Body.Close()
+		return err
+	}
+	if len(body) <= maxJSONTap {
+		var m map[string]json.RawMessage
+		var model string
+		if json.Unmarshal(body, &m) == nil && json.Unmarshal(m["model"], &model) == nil {
+			m["model"], _ = json.Marshal(to)
+			if nb, err := json.Marshal(m); err == nil {
+				body = nb
+			}
+		}
+	}
+	rest := resp.Body
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(body), rest), rest}
+	if len(body) <= maxJSONTap {
+		resp.ContentLength = int64(len(body))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	}
 	return nil
 }
 
@@ -54,6 +185,8 @@ type tap struct {
 	rt     *route
 	status int
 	sse    bool
+
+	limits map[string]float64 // subscription usage per window, from the headers
 
 	line []byte       // partial SSE line
 	buf  bytes.Buffer // JSON body (bounded)
@@ -167,6 +300,7 @@ func (t *tap) record() {
 		Routed: rt.routed, Tier: rt.tier, Model: rt.model, Effort: rt.effort, Status: t.status,
 		InputTokens: t.u.InputTokens, OutputTokens: t.u.OutputTokens,
 		CacheReadInputTokens: t.u.CacheReadInputTokens, CacheCreationInputTokens: t.u.CacheCreationInputTokens,
+		Limits: t.limits,
 	})
 	if err != nil {
 		log.Printf("ledger: %v", err)

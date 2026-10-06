@@ -122,6 +122,10 @@ func (c Case) holds() bool {
 	if wip, _ := c.State["work_in_progress"].(map[string]any); wip["done"] == true {
 		return c.Relation == catalog.RelationContinue || c.Relation == catalog.RelationExtend || c.Relation == catalog.RelationResume
 	}
+	if us, _ := c.State["user_signals"].(map[string]any); us["released_pin"] == true {
+		// Handing a pin back: the work is judged again, up or down.
+		return c.Relation == catalog.RelationResume
+	}
 	if c.State["scheduled"] == true {
 		// A status check takes its own level; a loop that carries the work
 		// on keeps it.
@@ -281,6 +285,11 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 	// scheduled: a prompt a task the session scheduled sent (CronCreate).
 	req.Scheduled = c.State["scheduled"] == true && !transcript.IsPeer(task)
 	req.Peer = transcript.IsPeer(task) || req.Scheduled
+	// user_signals.released_pin: the prompt hands a pin back (the work in
+	// progress is the one done while pinned, as the hooks name it).
+	if us, _ := c.State["user_signals"].(map[string]any); us["released_pin"] == true {
+		req.Released = true
+	}
 	req.GoAhead = !req.Peer && router.GoAhead(task)
 	if !req.Peer {
 		req.Explicit = router.ExplicitRequests(cat, model)

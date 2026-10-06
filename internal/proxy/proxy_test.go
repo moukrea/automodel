@@ -31,6 +31,10 @@ type upstream struct {
 	bodies [][]byte
 	auth   []string
 	betas  []string
+	// reply, when set, is sent instead of sse, in chunks of chunk bytes
+	// (0: at once), as JSON unless it starts with "event:".
+	reply string
+	chunk int
 }
 
 func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -39,9 +43,31 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	u.bodies = append(u.bodies, b)
 	u.auth = append(u.auth, r.Header.Get("Authorization"))
 	u.betas = append(u.betas, strings.Join(r.Header.Values(HeaderBeta), ","))
+	reply, chunk := u.reply, u.chunk
 	u.mu.Unlock()
+	w.Header().Set("Anthropic-Ratelimit-Unified-5h-Utilization", "0.42")
+	w.Header().Set("Anthropic-Ratelimit-Unified-7d-Utilization", "0.13")
+	w.Header().Set("Anthropic-Ratelimit-Unified-Grace-7d-Utilization", "0.5")
+	if reply == "" {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, sse)
+		return
+	}
+	if !strings.HasPrefix(reply, "event:") {
+		w.Header().Set("Content-Type", "application/json")
+		io.WriteString(w, reply)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
-	io.WriteString(w, sse)
+	for len(reply) > 0 {
+		n := len(reply)
+		if chunk > 0 && chunk < n {
+			n = chunk
+		}
+		io.WriteString(w, reply[:n])
+		w.(http.Flusher).Flush()
+		reply = reply[n:]
+	}
 }
 
 func (u *upstream) last(t *testing.T) map[string]any {
@@ -129,7 +155,8 @@ func TestRewriteMainFromDecision(t *testing.T) {
 		return strings.Count(string(b), `"kind":"usage"`) == 3
 	})
 	b, _ := os.ReadFile(p.Cfg.Ledger)
-	if !strings.Contains(string(b), `"output_tokens":42`) || !strings.Contains(string(b), `"cache_read_input_tokens":5000`) {
+	if !strings.Contains(string(b), `"output_tokens":42`) || !strings.Contains(string(b), `"cache_read_input_tokens":5000`) ||
+		!strings.Contains(string(b), `"limits":{"5h":0.42,"7d":0.13}`) {
 		t.Errorf("ledger = %s", b)
 	}
 	waitFor(t, func() bool {
@@ -498,5 +525,38 @@ func TestPerTurnEffortThreads(t *testing.T) {
 	}
 	if s, _ := p.State.Load("sess-t"); s.EffortBase != "xhigh" || len(s.EffortMarks) != 2 {
 		t.Errorf("state: %+v", s)
+	}
+}
+
+// A routed response names the custom model, so the transcript records the
+// session's model and a resumed session stays routed; the model served
+// stays in the ledger, and other responses are untouched.
+func TestResponseNamesTheCustomModel(t *testing.T) {
+	p, up, ps := setup(t)
+	p.State.Update("sess-1", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh"}
+		return true
+	})
+	served := strings.Replace(sse, `"message":{`, `"message":{"model":"claude-opus-5-5","id":"msg_1",`, 1)
+	up.reply, up.chunk = served, 7 // lines split across reads
+	got := post(t, ps.URL, map[string]string{HeaderSession: "sess-1"}, mainBody)
+	if want := strings.Replace(served, `"model":"claude-opus-5-5"`, `"model":"jev"`, 1); got != want {
+		t.Errorf("stream:\n%q\nwant\n%q", got, want)
+	}
+	waitFor(t, func() bool {
+		b, _ := os.ReadFile(p.Cfg.Ledger)
+		return strings.Contains(string(b), `"model":"claude-opus-5-5"`) && strings.Contains(string(b), `"output_tokens":42`)
+	})
+	// Not routed: the model served is named.
+	body := strings.Replace(mainBody, `"jev"`, `"claude-opus-5-5"`, 1)
+	if got := post(t, ps.URL, map[string]string{HeaderSession: "sess-1"}, body); got != served {
+		t.Errorf("passthrough stream altered:\n%q", got)
+	}
+	// A whole message.
+	up.reply = `{"id":"msg_2","type":"message","model":"claude-opus-5-5","content":[{"type":"text","text":"model: x"}],"usage":{"input_tokens":3,"output_tokens":4}}`
+	got = post(t, ps.URL, map[string]string{HeaderSession: "sess-1"}, strings.Replace(mainBody, `"stream":true,`, "", 1))
+	var m map[string]any
+	if err := json.Unmarshal([]byte(got), &m); err != nil || m["model"] != "jev" || m["id"] != "msg_2" {
+		t.Errorf("message = %s (%v)", got, err)
 	}
 }
