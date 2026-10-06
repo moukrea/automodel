@@ -587,7 +587,9 @@ func TestWorkflowHook(t *testing.T) {
 	src := "export const meta = {name: 'x', description: 'y'}\n" +
 		"const a = await agent('list files', {label: 'ls'})\n" +
 		"const b = await agent('judge', {model: 'opus', effort: 'max'})\n" +
-		"const c = await agent(`fix ${a}`)\n"
+		"const c = await agent(`fix ${a}`)\n" +
+		"const DIMS = [{key: 'races', p: 'Hunt for data races in the scheduler and the pool: lock order, shared maps, goroutines that outlive their context.'}, {key: 'leaks', p: 'Find resource leaks: files, sockets and timers not closed on every error path of the importer.'}]\n" +
+		"const found = await parallel(DIMS.map(d => () => agent(BASE + '\\n\\n' + d.p, {label: 'review:' + d.key})))\n"
 	out := run(t, env, "workflow", map[string]any{"session_id": "s6", "tool_name": "Workflow", "cwd": t.TempDir(),
 		"tool_input": map[string]any{"script": src, "args": []string{"x"}}})
 	if out == nil {
@@ -597,14 +599,28 @@ func TestWorkflowHook(t *testing.T) {
 	for _, want := range []string{
 		`agent('list files', {model: "opus", effort: "low", ...({label: 'ls'})})`,
 		`agent('judge', {model: 'opus', effort: 'max'})`,
-		"agent(`fix ${a}`, {model: \"opus\", effort: \"low\"})",
+		// Built from another agent's output: nothing to read, the session's
+		// model and effort.
+		"agent(`fix ${a}`)",
+		// Built from the script's data: Jev reads the array it ranges over.
+		`agent(BASE + '\n\n' + d.p, {model: "opus", effort: "low", ...({label: 'review:' + d.key})})`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in\n%s", want, got)
 		}
 	}
 	if fj.calls() != 2 {
-		t.Errorf("jev calls = %d (explicit site must be skipped)", fj.calls())
+		t.Errorf("jev calls = %d (explicit and unreadable sites must be skipped)", fj.calls())
+	}
+	shown := false
+	fj.mu.Lock()
+	for _, r := range fj.requests {
+		b, _ := json.Marshal(r.State)
+		shown = shown || strings.Contains(string(b), "Hunt for data races") && strings.Contains(string(b), "d ranges over DIMS")
+	}
+	fj.mu.Unlock()
+	if !shown {
+		t.Error("the stage's data wasn't shown to Jev")
 	}
 	if out.HookSpecificOutput.UpdatedInput["args"] == nil {
 		t.Error("other inputs must be preserved")

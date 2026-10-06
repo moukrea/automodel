@@ -72,12 +72,24 @@ func Workflow(ctx context.Context, env *router.Env, in *Input) (*Output, error) 
 	decisions := make([]*state.Decision, len(sites))
 	var wg sync.WaitGroup
 	for _, i := range todo {
+		s := sites[i]
+		task := "Workflow stage prompt (JavaScript source):\n" + s.Args[0]
+		if literalChars(s.Args[0]) < blindChars && len(refs(s.Args[0])) > 0 {
+			// A prompt built from the script's data says too little on its
+			// own: Jev reads what it refers to, else the stage keeps the
+			// session's model and effort (no guess on an unseen task).
+			ctx := stageContext(script, s, min((budget-800)*3, maxStageContext))
+			if literalChars(ctx) < blindChars {
+				continue
+			}
+			task += "\n\nWhat it reads from the script:\n" + ctx
+		}
 		wg.Add(1)
-		go func(i int) {
+		go func(i int, task string) {
 			defer wg.Done()
 			s := sites[i]
 			st := map[string]any{
-				"task":          tokens.Truncate("Workflow stage prompt (JavaScript source):\n"+s.Args[0], budget-800),
+				"task":          tokens.Truncate(task, budget-800),
 				"subagent_type": "workflow-agent",
 			}
 			if len(s.Args) == 2 {
@@ -92,7 +104,7 @@ func Workflow(ctx context.Context, env *router.Env, in *Input) (*Output, error) 
 			}
 			decisions[i], _ = env.Decide(ctx, router.Request{SessionID: in.SessionID, Scope: catalog.ScopeSubagent,
 				Trigger: "workflow", AgentType: "workflow", Label: label, State: st, RepoDir: in.Cwd})
-		}(i)
+		}(i, task)
 	}
 	wg.Wait()
 
