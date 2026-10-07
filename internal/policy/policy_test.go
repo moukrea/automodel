@@ -48,9 +48,13 @@ func TestConstrain(t *testing.T) {
 	if got := Constrain(c, "main", c.Tier("main", "max"), rp, 0).ID; got != "xhigh" {
 		t.Errorf("ceiling: %s", got)
 	}
-	// Haiku's 200K window can't hold a 300K context.
-	if got := Constrain(c, "subagent", c.Tier("subagent", "haiku"), RepoPolicy{}, 300_000).ID; got != "sonnet-low" {
+	// The main Haiku tier (Haiku 4.5, max_context 150K) can't hold a 300K
+	// context; the subagent one (Haiku 5.5, 1M) can.
+	if got := Constrain(c, "main", c.Tier("main", "haiku"), RepoPolicy{}, 300_000).ID; got != "low" {
 		t.Errorf("context: %s", got)
+	}
+	if got := Constrain(c, "subagent", c.Tier("subagent", "haiku"), RepoPolicy{}, 300_000).ID; got != "haiku" {
+		t.Errorf("1M subagent Haiku: %s", got)
 	}
 	if got := Constrain(c, "subagent", c.Tier("subagent", "haiku"), rp, 0).ID; got != "opus-low" {
 		t.Errorf("subagent floor: %s", got)

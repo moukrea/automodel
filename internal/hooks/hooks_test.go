@@ -865,9 +865,13 @@ func TestModelTagPins(t *testing.T) {
 	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5-5" || s.Main.Effort != "high" {
 		t.Fatalf("effort on a pinned model: %+v", s.Main)
 	}
-	prompt("[model:haiku] quick one") // 200K window: can't run a main session
+	prompt("[model:claude-haiku-4-5] quick one") // 200K window: can't run a main session
 	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-sonnet-5-5" {
-		t.Fatalf("haiku pinned for the main session: %+v", s.Main)
+		t.Fatalf("Haiku 4.5 pinned for the main session: %+v", s.Main)
+	}
+	prompt("[model:haiku] quick one") // Haiku 5.5, 1M: it can
+	if s, _ = env.State.Load("s1"); s.Main.Model != "claude-haiku-5-5" || s.PinModel != "claude-haiku-5-5" {
+		t.Fatalf("haiku (5.5) not pinned: %+v", s.Main)
 	}
 	prompt("[model:opus] [effort:xhigh] back to opus") // a model and effort a tier runs: pinned as that tier
 	if s, _ = env.State.Load("s1"); s.Main.Tier != "xhigh" || s.PinModel != "claude-opus-5-5" {

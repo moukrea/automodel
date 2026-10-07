@@ -135,18 +135,41 @@ sources = [
 [models.claude-haiku-4-5]
 label = "Haiku 4.5"
 status = "active"
-reason = "Cheapest subagent config for mechanical work. Routed Haiku runs without thinking (the proxy strips it), so the index v4.3.2 reasoning-variant cost (0.28) does not apply; the tier is priced as it runs (tier cost 0.14, from prices and the ledger)."
+reason = "Kept for the main session's asked Haiku tier only, pending a real-session check that Haiku 5.5 takes a conversation with another model's thinking blocks (it rejects changes before a replayed thinking block). Subagents moved to Haiku 5.5, which beats it at a tenth of its prices. Routed Haiku 4.5 runs without thinking (the proxy strips it); the tier is priced as it runs (0.14). Availability guaranteed until 2026-10-15."
 api_id = "claude-haiku-4-5-20251001"
-alias = "haiku"
+# The "haiku" alias is Haiku 5.5 since Claude Code 2.1.293.
 context = 200_000
 max_output = 64_000
 efforts = []
 price = { input = 1.0, output = 5.0, cache_read = 0.10, cache_write_5m = 1.25, cache_write_1h = 2.0 }
-scopes = ["main", "subagent"]
+scopes = ["main"]
 verified_at = "2026-09-27"
 sources = [
   "https://platform.claude.com/docs/en/about-claude/pricing",
   "https://artificialanalysis.ai/models/releases/comparisons/claude-opus-5-5-vs-claude-4-5-haiku",
+]
+
+[models.claude-haiku-5-5]
+label = "Haiku 5.5"
+status = "active"
+reason = "Subagent Haiku tier at medium (Anthropic's advice: low skips searches and checks on agent prompts, medium halves that). Dominates Haiku 4.5 everywhere: a tenth of its prices, Terminal-Bench 4.0 12.7-39.2 vs 0.0, SWE-bench Multilingual 83.7 vs 67.4. CursorBench 4.0: on the frontier at every effort, medium 36.9 at $0.17 vs Sonnet 5.5 low 35.8 at $0.50, high 42.3 at $0.32 vs Sonnet high 47.8 at $1.67, at 2-4x the steps. Behind Sonnet 5.5 from medium up on Anthropic's Terminal-Bench (high 24.8 vs 43.0) and below Opus low on FrontierCode at its best (46 vs 47): no tier above mechanical work until AA publishes it (provisional, released 2026-10-07). Prices step up 5x on a request whose prompt passes 100k tokens (0.50/2.50/0.05); the catalog keeps the lower ones, subagent prompts stay well below."
+api_id = "claude-haiku-5-5"
+alias = "haiku"
+context = 1_000_000
+long_context = "native"
+max_output = 128_000
+efforts = ["low", "medium", "high", "xhigh", "max"]
+default_effort = "medium"
+per_turn_effort = true
+price = { input = 0.10, output = 0.50, cache_read = 0.01, cache_write_5m = 0.125, cache_write_1h = 0.20 }
+scopes = ["subagent"]
+verified_at = "2026-10-07"
+sources = [
+  "https://platform.claude.com/docs/en/about-claude/pricing",
+  "https://www.anthropic.com/claude-haiku-5-5 (chart data)",
+  "https://cursor.com/cursorbench",
+  "Claude Haiku 5.5 system card (2026-10-07)",
+  "Claude Code 2.1.293 embedded model catalog (alias haiku, native_1m, per_turn_effort, rejects_disabled_thinking)",
 ]
 
 [models.claude-sonnet-5]
@@ -789,6 +812,51 @@ benchmark_version = "cursorbench-4.0"
 measured_at = "2026-09-28"
 source = "https://cursor.com/cursorbench (costs: Anthropic's estimates, Sonnet 5.5 system card 8.8)"
 
+[[measurements]]
+model = "claude-haiku-5-5"
+effort = "low"
+index = 30.9
+cost_per_task = 0.08
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-10-07"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-haiku-5-5"
+effort = "medium"
+index = 36.9
+cost_per_task = 0.17
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-10-07"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-haiku-5-5"
+effort = "high"
+index = 42.3
+cost_per_task = 0.32
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-10-07"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-haiku-5-5"
+effort = "xhigh"
+index = 44.3
+cost_per_task = 0.56
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-10-07"
+source = "https://cursor.com/cursorbench"
+
+[[measurements]]
+model = "claude-haiku-5-5"
+effort = "max"
+index = 48.4
+cost_per_task = 1.12
+benchmark_version = "cursorbench-4.0"
+measured_at = "2026-10-07"
+source = "https://cursor.com/cursorbench"
+
 # Artificial Analysis Coding Agent Index v1.5, Sonnet 5.5 in Claude Code
 # 2.1.280 (a pre-release endpoint, "claude-beignet-eap"), results of
 # 2026-09-28. Opus 5.5 is only listed at max, so no per-effort comparison.
@@ -1237,11 +1305,11 @@ no = "Work one assistant does well alone: a single feature, bug, question, or re
 
 [tiers.subagent.haiku]
 rank = 1
-model = "claude-haiku-4-5"
-# Priced as it runs (no thinking): a quarter of Opus 5.5's per-token prices
-# × Opus low's cost per task (0.55). Ledger 2026-09-27: 115 routed Haiku
-# subagent requests averaged 429 output tokens and $0.011 each, vs about
-# $0.05 for Opus low subagent requests.
+model = "claude-haiku-5-5"
+effort = "medium"
+# CursorBench 4.0: Haiku 5.5 medium $0.17 vs Sonnet 5.5 low $0.50, scaled
+# to the index's Sonnet low ($0.42): 0.14, the Haiku 4.5 tier's cost. No
+# AA index result yet (2026-10-07): revisit once published.
 cost = 0.14
 criteria = "Mechanical, fully specified work: finding files, listing or extracting facts, grepping, applying an explicit edit, one-line answers."
 
