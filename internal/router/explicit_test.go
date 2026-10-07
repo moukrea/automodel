@@ -24,10 +24,11 @@ func testCatalog(t *testing.T) *catalog.Catalog {
 func TestExplicitRequests(t *testing.T) {
 	c := testCatalog(t)
 	for _, tc := range []struct{ model, want string }{
-		{"claude-opus-5-5", "effort_low effort_medium effort_high effort_xhigh effort_max effort_more mode_ultracode mode_off model_claude-fable-5-1 model_claude-sonnet-5-5"},
-		{"claude-sonnet-5-5", "effort_low effort_medium effort_high effort_xhigh effort_max effort_more mode_ultracode mode_off model_claude-fable-5-1 model_claude-opus-5-5"},
-		// Haiku can't run a main session: never a model request; its efforts map to the default tiers.
-		{"claude-haiku-4-5", "effort_low effort_medium effort_high effort_xhigh effort_max effort_more mode_ultracode mode_off model_claude-fable-5-1 model_claude-opus-5-5 model_claude-sonnet-5-5"},
+		{"claude-opus-5-5", "effort_low effort_medium effort_high effort_xhigh effort_max effort_more mode_ultracode mode_off model_claude-fable-5-1 model_claude-haiku-5-5 model_claude-sonnet-5-5"},
+		{"claude-sonnet-5-5", "effort_low effort_medium effort_high effort_xhigh effort_max effort_more mode_ultracode mode_off model_claude-fable-5-1 model_claude-haiku-5-5 model_claude-opus-5-5"},
+		// Haiku 4.5 can't run a main session (200K): never a model request; its
+		// efforts map to the default tiers. Haiku 5.5 (1M) can.
+		{"claude-haiku-4-5", "effort_low effort_medium effort_high effort_xhigh effort_max effort_more mode_ultracode mode_off model_claude-fable-5-1 model_claude-haiku-5-5 model_claude-opus-5-5 model_claude-sonnet-5-5"},
 	} {
 		var got []string
 		for _, x := range ExplicitRequests(c, tc.model) {
