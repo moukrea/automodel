@@ -294,6 +294,7 @@ func setup(cat *catalog.Catalog, c Case) (map[string]any, router.Request) {
 		req.Released = true
 	}
 	req.GoAhead = !req.Peer && router.GoAhead(task)
+	req.EndsGoAhead = !req.Peer && router.EndsWithGoAhead(task)
 	if !req.Peer {
 		req.Explicit = router.ExplicitRequests(cat, model)
 		if t := router.EffortTier(cat, model, "xhigh"); t != nil && router.Ultrathink(task) {

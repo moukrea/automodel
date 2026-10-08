@@ -204,8 +204,9 @@ proposed copy. In a scheduled/unattended run, stop at the report.
    - Tune on `--split train` only. A held-out set is one nobody has read
      while tuning: never look at its per-case rows, run it once at the end.
      The 2026-09-30 `test` split is no longer held out (its cases were read
-     while tuning warm routing v2): held-out numbers need a fresh set
-     written apart. New cases go to train unless you add a batch big
+     while tuning warm routing v2), nor is `heldout4` (2026-10-08, run
+     once with its aggregates read, then kept for tuning): held-out
+     numbers need a fresh set written apart. New cases go to train unless you add a batch big
      enough to split; a conversation (cases sharing a work goal, a paused
      work, the last assistant message or the recent prompts) stays in one
      split, with labels balanced across splits.

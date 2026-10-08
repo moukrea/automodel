@@ -656,10 +656,15 @@ func TestRequestsInWords(t *testing.T) {
 			t.Errorf("effort question = %q", q.Instructions)
 		}
 	}
-	// An effort above the work needs only meta.explicit_threshold.
+	// An effort above the work needs meta.explicit_effort_threshold (0.9:
+	// remarks that a level was too low read more thinking up to 0.85).
 	workSession(t, env, "up", "medium", "", "medium")
-	if s := decide("up", "fais la suite en xhigh", fa{tier: "medium", conf: 0.9, rel: "extend", x: map[string]float64{"effort_xhigh": 0.85}}); s.Main.Tier != "xhigh" || s.Work.Tier != "xhigh" {
-		t.Errorf("raise at 0.85: %s, work %s", s.Main.Tier, s.Work.Tier)
+	if s := decide("up", "fais la suite en xhigh", fa{tier: "medium", conf: 0.9, rel: "extend", x: map[string]float64{"effort_xhigh": 0.92}}); s.Main.Tier != "xhigh" || s.Work.Tier != "xhigh" {
+		t.Errorf("raise at 0.92: %s, work %s", s.Main.Tier, s.Work.Tier)
+	}
+	workSession(t, env, "up2", "medium", "", "medium")
+	if s := decide("up2", "medium won't do for this, it needs real digging", fa{tier: "medium", conf: 0.9, rel: "extend", x: map[string]float64{"effort_more": 0.85}}); s.Main.Tier != "medium" {
+		t.Errorf("more thinking at 0.85: %s, work %s", s.Main.Tier, s.Work.Tier)
 	}
 
 	// Asked for a wrap-up or a side question: that answer only.

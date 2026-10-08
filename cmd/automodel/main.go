@@ -265,7 +265,7 @@ func evalCmd(cfg *config.Config, args []string) error {
 	parallel := fs.Int("parallel", 8, "concurrent Jev calls")
 	catPath := fs.String("catalog", "", "catalog to evaluate (default: the configured one)")
 	repeat := fs.Int("repeat", 1, "ask every case this many times (Jev varies a little between calls)")
-	split := fs.String("split", "all", "cases to run: train, test (held out) or all")
+	split := fs.String("split", "all", "cases to run: a split (train, test, heldout4) or all")
 	summary := fs.Bool("summary", false, "print the summary only, without the per-case table")
 	answers := fs.String("answers", "", "re-judge the answers of a saved --json run with this catalog, without asking Jev")
 	check := fs.Bool("check", false, "fail unless the main scope passes the regression gate (exact accuracy, recall per tier, tier share vs label share, rank error, the mode's on/off recall, no follow-up below its work, no request confirmed where none was made)")

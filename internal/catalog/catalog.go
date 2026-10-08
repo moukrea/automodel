@@ -196,8 +196,11 @@ type Meta struct {
 	// words (an effort, more thinking, a mode) counts; ExplicitModelP the
 	// one for a model, stricter (a model is mentioned far more often than
 	// asked for, and a wrong one runs the whole work).
-	ExplicitP      float64 `toml:"explicit_threshold" json:"explicit_threshold,omitempty"`
-	ExplicitModelP float64 `toml:"explicit_model_threshold" json:"explicit_model_threshold,omitempty"`
+	// ExplicitEffortP is the one for an effort or more thinking (unset:
+	// ExplicitP).
+	ExplicitP       float64 `toml:"explicit_threshold" json:"explicit_threshold,omitempty"`
+	ExplicitEffortP float64 `toml:"explicit_effort_threshold" json:"explicit_effort_threshold,omitempty"`
+	ExplicitModelP  float64 `toml:"explicit_model_threshold" json:"explicit_model_threshold,omitempty"`
 	// ContinuesThresholdP and InformsThresholdP belonged to the questions
 	// the relation question replaced: parsed, ignored.
 	ContinuesThresholdP float64 `toml:"continues_threshold" json:"continues_threshold,omitempty"`
@@ -245,6 +248,15 @@ func (m Meta) ExplicitThreshold() float64 {
 		return m.ExplicitP
 	}
 	return 0.8
+}
+
+// ExplicitEffortThreshold returns meta.explicit_effort_threshold, else
+// the explicit threshold.
+func (m Meta) ExplicitEffortThreshold() float64 {
+	if m.ExplicitEffortP > 0 {
+		return m.ExplicitEffortP
+	}
+	return m.ExplicitThreshold()
 }
 
 // ExplicitModelThreshold returns meta.explicit_model_threshold or 0.9.

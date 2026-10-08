@@ -146,6 +146,9 @@ type Features struct {
 	// ReworkKeepsLevel: a follow-up that says the last work was left undone
 	// or botched doesn't go below the level the turn ran at.
 	ReworkKeepsLevel bool `toml:"rework_keeps_level"`
+	// TrailingGoAhead: a prompt that ends by telling Claude to carry on
+	// ("just curious, carry on") follows the work up, whatever comes first.
+	TrailingGoAhead bool `toml:"trailing_go_ahead"`
 }
 
 func Default() *Config {
@@ -175,7 +178,7 @@ func Default() *Config {
 			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
-			ReworkKeepsLevel: true,
+			ReworkKeepsLevel: true, TrailingGoAhead: true,
 		},
 	}
 }

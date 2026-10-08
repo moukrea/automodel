@@ -185,6 +185,11 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 			return nil, ""
 		}
 		return work, fmt.Sprintf("%s (%s %.2f)", FollowUpProposal, top, p)
+	case req.EndsGoAhead && !done && e.Cfg.Features.TrailingGoAhead && !req.MidTurn && !req.Peer:
+		// "is xhigh the default or did you pick it? just curious. carry on"
+		// read aside 0.73 and ran the investigation it carries on at low:
+		// whatever comes first, the last words go on with the work.
+		return work, HoldEndsGoAhead
 	case rd.separate() >= e.Catalog.Meta.RelationSeparateThreshold() && !Blind(req):
 		return nil, ""
 	case done && top != catalog.RelationContinue && top != catalog.RelationExtend:
@@ -251,6 +256,10 @@ const (
 	FollowUpProposal   = "go-ahead to a proposal"
 	FollowUpCompaction = "compaction"
 )
+
+// HoldEndsGoAhead is why a prompt that ends by telling Claude to carry on
+// follows the work up (Request.EndsGoAhead).
+const HoldEndsGoAhead = "ends with a go-ahead"
 
 // HigherWork is the work that needs more of a and b (either may be nil):
 // the higher tier, then the one with a mode; a on a tie.

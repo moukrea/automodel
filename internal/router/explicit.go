@@ -117,8 +117,11 @@ func (rd *Reading) unconfirmedMore(prompt string, cs []Candidate) {
 // ExplicitThreshold is the yes-probability from which a request of kind
 // counts.
 func ExplicitThreshold(c *catalog.Catalog, kind string) float64 {
-	if kind == jev.ExplicitModel {
+	switch kind {
+	case jev.ExplicitModel:
 		return c.Meta.ExplicitModelThreshold()
+	case jev.ExplicitEffort:
+		return c.Meta.ExplicitEffortThreshold()
 	}
 	return c.Meta.ExplicitThreshold()
 }

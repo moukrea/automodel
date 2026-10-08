@@ -119,7 +119,7 @@ func TestGate(t *testing.T) {
 
 func TestRelationAndExplicitMetrics(t *testing.T) {
 	c := testCatalog(t)
-	c.Meta.ExplicitP, c.Meta.ExplicitModelP = 0.8, 0.9
+	c.Meta.ExplicitP, c.Meta.ExplicitEffortP, c.Meta.ExplicitModelP = 0.8, 0, 0.9 // an effort at explicit_threshold
 	rel := func(top string, p float64) map[string]float64 {
 		m := map[string]float64{}
 		for _, r := range catalog.Relations {

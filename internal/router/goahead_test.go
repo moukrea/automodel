@@ -46,3 +46,31 @@ func TestProposes(t *testing.T) {
 }
 
 const long = "The fix takes the lock before reading the lease and releases it once the connection is handed over; the pool's tests now run the checkout path under the race detector with 50 workers, and the benchmark shows no measurable change in throughput on the hot path."
+
+// EndsWithGoAhead: a remark or a question, then a go-ahead as the last
+// clause, also after a task ("then continue": the work's level is a floor);
+// not a go-ahead alone, nor one that asks, nor words inside a sentence.
+func TestEndsWithGoAhead(t *testing.T) {
+	for _, tc := range []struct {
+		prompt string
+		want   bool
+	}{
+		{"is xhigh the default for these or did you pick it? just curious. carry on", true},
+		{"out of curiosity, why is the status line orange? anyway, carry on", true},
+		{"est-ce que sonnet aurait suffi ? bref, continue", true},
+		{"no need for max this time. keep going", true},
+		{"sans ultracode ça aurait pris trois jours, bien joué. continue", true},
+		{"looks right to me, go ahead.", true},
+		{"continue", false},   // a go-ahead alone (GoAhead)
+		{"oui, vas-y", false}, // idem
+		{"should I just continue?", false},
+		{"fix the parser, then continue", true},
+		{"what does continue do in a for loop?", false},
+		{"explain what's going on", false},
+		{"", false},
+	} {
+		if got := EndsWithGoAhead(tc.prompt); got != tc.want {
+			t.Errorf("EndsWithGoAhead(%q) = %v, want %v", tc.prompt, got, tc.want)
+		}
+	}
+}
