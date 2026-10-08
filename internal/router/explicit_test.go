@@ -47,7 +47,8 @@ func TestExplicitRequests(t *testing.T) {
 }
 
 // An effort below the work in progress needs LowerEffortP at least; above
-// it, or with no work, meta.explicit_threshold; a model its own threshold.
+// it, or with no work, meta.explicit_effort_threshold; a mode
+// meta.explicit_threshold; a model its own threshold.
 func TestRequestThreshold(t *testing.T) {
 	c := testCatalog(t)
 	xhigh := c.Tier(catalog.ScopeMain, "xhigh")
@@ -59,7 +60,8 @@ func TestRequestThreshold(t *testing.T) {
 			t.Errorf("%s without work: %.2f", x.ID(), got)
 		}
 	}
-	if th["effort_low"] != max(c.Meta.ExplicitThreshold(), LowerEffortP) || th["effort_max"] != c.Meta.ExplicitThreshold() || th["model_claude-sonnet-5-5"] != c.Meta.ExplicitModelThreshold() {
+	if th["effort_low"] != max(c.Meta.ExplicitEffortThreshold(), LowerEffortP) || th["effort_max"] != c.Meta.ExplicitEffortThreshold() ||
+		th["mode_ultracode"] != c.Meta.ExplicitThreshold() || th["model_claude-sonnet-5-5"] != c.Meta.ExplicitModelThreshold() {
 		t.Errorf("thresholds = %v", th)
 	}
 }

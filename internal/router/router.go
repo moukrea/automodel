@@ -143,6 +143,9 @@ type Request struct {
 	// It carries no task of its own: read as new work, it is answered
 	// alone and starts no work ("yes" is no goal).
 	GoAhead bool
+	// EndsGoAhead: the prompt says something first and ends by telling
+	// Claude to carry on (EndsWithGoAhead), typed by the user.
+	EndsGoAhead bool
 	// Explicit are the requests the prompt's words may make, for Jev to
 	// confirm.
 	Explicit []Candidate
@@ -548,6 +551,11 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	// work's goal, below the work), it is answered alone, as an aside.
 	if req.GoAhead && hold == nil && top == catalog.RelationNewTask && work != nil {
 		top = catalog.RelationAside
+	}
+	// A prompt that ends by telling Claude to carry on goes on with the work
+	// (holdAt), on its mode, whatever its first words read as.
+	if reason == HoldEndsGoAhead {
+		top = catalog.RelationContinue
 	}
 	// A scheduled task's prompt Jev reads apart from the work (a status
 	// check) runs at its own level, answered alone: it neither starts,

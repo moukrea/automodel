@@ -194,7 +194,7 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 	for _, t := range []struct {
 		name string
 		v    float64
-	}{{"relation_separate_threshold", m.RelationSeparateP}, {"detour_offer_threshold", m.DetourOfferP}, {"rework_threshold", m.ReworkP}, {"explicit_threshold", m.ExplicitP}, {"explicit_model_threshold", m.ExplicitModelP}} {
+	}{{"relation_separate_threshold", m.RelationSeparateP}, {"detour_offer_threshold", m.DetourOfferP}, {"rework_threshold", m.ReworkP}, {"explicit_threshold", m.ExplicitP}, {"explicit_effort_threshold", m.ExplicitEffortP}, {"explicit_model_threshold", m.ExplicitModelP}} {
 		if t.v < 0 || t.v > 1 {
 			errf("meta.%s must be between 0 and 1", t.name)
 		}

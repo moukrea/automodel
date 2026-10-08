@@ -46,6 +46,46 @@ func GoAhead(prompt string) bool {
 	return goAheads[normGoAhead(prompt)]
 }
 
+// EndsWithGoAhead reports a prompt that says something first (a question,
+// a remark, a fact) and ends by telling Claude to carry on: "is xhigh the
+// default or did you pick it? just curious. carry on", "bref, continue".
+// The go-ahead is its last clause, after a connector at most ("anyway,
+// carry on", "fix the parser, then continue"); a prompt ending on a
+// question mark asks ("…, continue?"), and a go-ahead alone is GoAhead.
+func EndsWithGoAhead(prompt string) bool {
+	p := strings.TrimSpace(prompt)
+	if strings.HasSuffix(p, "?") || len(p) > 2000 || GoAhead(p) {
+		return false
+	}
+	parts := clauseRE.Split(p, -1)
+	var clauses []string
+	for _, c := range parts {
+		if c = strings.TrimSpace(c); c != "" {
+			clauses = append(clauses, c)
+		}
+	}
+	if len(clauses) < 2 {
+		return false
+	}
+	last := normGoAhead(clauses[len(clauses)-1])
+	if goAheads[last] {
+		return true
+	}
+	if f := strings.Fields(last); len(f) > 1 && connectors[f[0]] {
+		return goAheads[strings.Join(f[1:], " ")]
+	}
+	return false
+}
+
+var (
+	// clauseRE splits a prompt into clauses: sentences, and the parts a
+	// comma or a semicolon separates.
+	clauseRE = regexp.MustCompile(`[.!?;,\n…]+`)
+	// connectors may open the closing go-ahead ("anyway carry on").
+	connectors = map[string]bool{"anyway": true, "so": true, "and": true, "but": true, "then": true,
+		"bref": true, "sinon": true, "et": true, "donc": true, "mais": true, "puis": true, "enfin": true, "bon": true}
+)
+
 // Proposes reports whether the assistant's last message puts a question or
 // an offer on the table at its end ("Want me to fix it?", "Should I push
 // the branch? It would also push the typo fix.", "dis-moi si j'applique le

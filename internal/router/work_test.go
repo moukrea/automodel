@@ -121,3 +121,28 @@ func TestReworkKeepsTheLevelInForce(t *testing.T) {
 		t.Error("asked with the turn at the work's level")
 	}
 }
+
+// A prompt that ends by telling Claude to carry on follows the work up,
+// whatever its first words read as (live-like: a routing question, then
+// "carry on", read aside 0.73 and ran the investigation at low).
+func TestTrailingGoAheadHoldsTheWork(t *testing.T) {
+	e := testEnv(t)
+	cur := e.Catalog.Tier(catalog.ScopeMain, "xhigh")
+	req := Request{Scope: catalog.ScopeMain, Warm: true, Current: &state.Decision{Tier: "xhigh", Effort: "xhigh"},
+		Work: &state.Work{Tier: "xhigh", Goal: "find why the inventory counts drift"}, EndsGoAhead: true}
+	rd := Reading{probs: map[string]float64{"low": 0.8, "xhigh": 0.2}, conf: 0.8, top: "low",
+		relation: map[string]float64{catalog.RelationAside: 0.73, catalog.RelationContinue: 0.24, catalog.RelationSideQuestion: 0.03}}
+	p := policy.Params{Penalty: 1.5, Scale: 1}
+	if v := e.Judge(req, rd, cur, policy.RepoPolicy{}, p); v.Tier.ID != "xhigh" || !strings.Contains(v.Hold, HoldEndsGoAhead) || v.TurnOnly != "" {
+		t.Errorf("trailing go-ahead: %s, hold %q, turn only %q", v.Tier.ID, v.Hold, v.TurnOnly)
+	}
+	e.Cfg.Features.TrailingGoAhead = false
+	if v := e.Judge(req, rd, cur, policy.RepoPolicy{}, p); v.Tier.ID == "xhigh" {
+		t.Errorf("feature off: %s, hold %q", v.Tier.ID, v.Hold)
+	}
+	e.Cfg.Features.TrailingGoAhead = true
+	req.Work.Done = true
+	if v := e.Judge(req, rd, cur, policy.RepoPolicy{}, p); strings.Contains(v.Hold, HoldEndsGoAhead) {
+		t.Errorf("done work held: %s, hold %q", v.Tier.ID, v.Hold)
+	}
+}

@@ -77,6 +77,9 @@ rejudge_on_pin_release = true
 # A follow-up that says the last work was left undone or botched keeps the
 # level the turn ran at instead of going back to the work's.
 rework_keeps_level = true
+# A prompt that ends by telling Claude to carry on ("just curious, carry on")
+# follows the work up at its level, whatever comes before.
+trailing_go_ahead = true
 
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.

@@ -671,6 +671,7 @@ func mainRequest(env *router.Env, in *Input, sess *state.Session, tr *transcript
 	req.Scheduled = !transcript.IsPeer(in.Prompt) && tr != nil && tr.IsScheduled(in.Prompt)
 	req.Peer = transcript.IsPeer(in.Prompt) || req.Scheduled
 	req.GoAhead = !req.Peer && goAhead(in.Prompt)
+	req.EndsGoAhead = !req.Peer && router.EndsWithGoAhead(in.Prompt)
 	if !req.Peer {
 		// What the user may ask for in words: Jev tells a request from a mention;
 		// ultrathink is a keyword, a floor at xhigh.
