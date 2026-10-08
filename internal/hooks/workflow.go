@@ -55,7 +55,7 @@ func Workflow(ctx context.Context, env *router.Env, in *Input) (*Output, error) 
 			continue
 		}
 		if len(s.Args) == 2 && (hasKey(s.Args[1], "model") || hasKey(s.Args[1], "effort")) &&
-			env.Cfg.RespectExplicitSubagentModel {
+			respectsNamedModel(env, sess) {
 			continue
 		}
 		todo = append(todo, i)
@@ -123,6 +123,10 @@ func Workflow(ctx context.Context, env *router.Env, in *Input) (*Output, error) 
 		var args string
 		if len(s.Args) == 2 {
 			args = fmt.Sprintf("%s, {%s, ...(%s)}", s.Args[0], inject, s.Args[1])
+			if hasKey(s.Args[1], "model") || hasKey(s.Args[1], "effort") {
+				// A model or effort Claude named: the decision overrides it.
+				args = fmt.Sprintf("%s, {...(%s), %s}", s.Args[0], s.Args[1], inject)
+			}
 		} else {
 			args = fmt.Sprintf("%s, {%s}", s.Args[0], inject)
 		}

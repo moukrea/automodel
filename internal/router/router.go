@@ -983,6 +983,13 @@ func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Par
 			params.Scale = 1
 		}
 		pk := policy.Best(c, req.Scope, rd.probs, cur, sc, params)
+		// The costliest tier only on Jev's own reading: the underprovision
+		// penalty must not settle a split reading there (live: a subagent
+		// read high 0.43 / max 0.42 ran at max for five days, 17% of a
+		// week's subagent spend).
+		if top := c.TiersByRank(req.Scope); len(top) > 1 && pk.Tier.ID == top[len(top)-1].ID && rd.top != pk.Tier.ID {
+			pk.Tier = top[len(top)-2]
+		}
 		return pk.Tier, &pk
 	}
 	th := policy.Thresholds{Act: e.Cfg.ThetaAct, Low: e.Cfg.ThetaLow}
