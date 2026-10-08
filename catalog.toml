@@ -66,6 +66,12 @@ relation_separate_threshold = 0.55
 # closing questions and offers to go back still at most 0.20. 0.27: the
 # middle of the 0.20-0.34 gap.
 detour_offer_threshold = 0.27
+# A follow-up while the turn runs above the work's level (a raise for one
+# turn) is asked whether it says the last work fell short ([questions.rework],
+# built-in wording); from this probability it keeps the level in force.
+# Train (2026-10-08, 3 runs): complaints 0.96 to 0.98, other follow-ups 0.02
+# to 0.12; test: complaints 0.82 to 0.98, others 0.03 to 0.07. 0.5: the gap.
+rework_threshold = 0.5
 # A request in the prompt's words (an effort, more thinking, ultracode or
 # its refusal) counts from this yes-probability; an effort below the work
 # in progress needs 0.9 (router.LowerEffortP). Train split (two runs of

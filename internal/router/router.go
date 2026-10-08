@@ -199,6 +199,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	metadata := rp.Privacy == PrivacyMetadata || e.Cfg.Privacy == PrivacyMetadata
 	backFirst := req.BackFirst && !req.MidTurn && !req.Peer
 	ask.Offer = ask.Relation && backFirst && !metadata
+	ask.Rework = ask.Relation && !metadata && e.reworkAsked(req)
 	task, _ := req.State["task"].(string)
 	if metadata {
 		req.State = MetadataOnly(req.State)
@@ -384,6 +385,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	rec.Relation = rd.relation
 	if _, ok := ans[jev.QOffer]; ok {
 		rec.OfferP = &rd.offer
+	}
+	if _, ok := ans[jev.QRework]; ok {
+		rec.ReworkP = &rd.rework
 	}
 	for id, p := range rd.explicit {
 		if rec.Explicit == nil {
@@ -610,6 +614,14 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		if t := c.Tier(req.Scope, req.MinTier); t != nil {
 			floor = higher(floor, t)
 			why = append(why, "ultrathink")
+		}
+		if hold != nil && cur != nil && cur.Rank > hold.Rank && e.reworks(req, rd) {
+			// A complaint that the last work fell short doesn't go back
+			// below the level it ran at (live: "the alternate paths aren't
+			// done, you have the game data, figure it out" over high work
+			// that had run at xhigh read high 0.66 and went back to high).
+			floor = higher(floor, cur)
+			why = append(why, fmt.Sprintf("the last work fell short (%.2f): not below %s", rd.rework, cur.ID))
 		}
 		if x.more {
 			// More thinking is one rank above what runs: on a follow-up, the
@@ -891,6 +903,8 @@ type Reading struct {
 	// offer: after a detour, the yes-probability that the assistant offered
 	// one more thing for it, which the go-ahead accepts (0: not asked).
 	offer float64
+	// rework: the prompt says the last work was left undone or botched.
+	rework float64
 }
 
 // separate is the probability that the prompt is separate from the work in
@@ -956,6 +970,9 @@ func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Readin
 	}
 	if a, ok := ans[jev.QOffer]; ok && a.Noul != nil {
 		rd.offer = *a.Noul
+	}
+	if a, ok := ans[jev.QRework]; ok && a.Noul != nil {
+		rd.rework = *a.Noul
 	}
 	for id, a := range ans {
 		switch {
@@ -1301,4 +1318,22 @@ func shortWhy(reason string) string {
 		}
 	}
 	return "kept"
+}
+
+// ReworkAsked says whether a prompt gets the rework question: a follow-up
+// typed by the user while the turn runs above the work's level, the only
+// case where going back to the work's level lowers it.
+func (e *Env) ReworkAsked(req Request) bool { return e.reworkAsked(req) }
+
+func (e *Env) reworkAsked(req Request) bool {
+	if !e.Cfg.Features.ReworkKeepsLevel || req.Work == nil || req.Work.Done || req.MidTurn || req.Peer || !req.Warm || req.Current == nil {
+		return false
+	}
+	cur, work := e.Catalog.Tier(req.Scope, req.Current.Tier), e.Catalog.Tier(req.Scope, req.Work.Tier)
+	return cur != nil && work != nil && cur.Rank > work.Rank
+}
+
+// reworks reports a follow-up that says the last work fell short.
+func (e *Env) reworks(req Request, rd Reading) bool {
+	return e.reworkAsked(req) && rd.rework >= e.Catalog.Meta.ReworkThreshold()
 }

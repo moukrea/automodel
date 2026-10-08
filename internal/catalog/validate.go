@@ -162,6 +162,9 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 	if o := c.Questions.Offer; o != nil && (o.Question == "" || o.Yes == "" || o.No == "") {
 		errf("questions.offer: question, yes and no are required")
 	}
+	if o := c.Questions.Rework; o != nil && (o.Question == "" || o.Yes == "" || o.No == "") {
+		errf("questions.rework: question, yes and no are required")
+	}
 	if c.Questions.Explicit != nil {
 		warnf("questions.explicit: deprecated, ignored (questions.explicit_effort, explicit_mode and explicit_model replaced it)")
 	}
@@ -191,7 +194,7 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 	for _, t := range []struct {
 		name string
 		v    float64
-	}{{"relation_separate_threshold", m.RelationSeparateP}, {"detour_offer_threshold", m.DetourOfferP}, {"explicit_threshold", m.ExplicitP}, {"explicit_model_threshold", m.ExplicitModelP}} {
+	}{{"relation_separate_threshold", m.RelationSeparateP}, {"detour_offer_threshold", m.DetourOfferP}, {"rework_threshold", m.ReworkP}, {"explicit_threshold", m.ExplicitP}, {"explicit_model_threshold", m.ExplicitModelP}} {
 		if t.v < 0 || t.v > 1 {
 			errf("meta.%s must be between 0 and 1", t.name)
 		}

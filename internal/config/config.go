@@ -143,6 +143,9 @@ type Features struct {
 	// RejudgeOnPinRelease: handing a pin back judges the work done while
 	// pinned again, instead of reading the prompt alone.
 	RejudgeOnPinRelease bool `toml:"rejudge_on_pin_release"`
+	// ReworkKeepsLevel: a follow-up that says the last work was left undone
+	// or botched doesn't go below the level the turn ran at.
+	ReworkKeepsLevel bool `toml:"rework_keeps_level"`
 }
 
 func Default() *Config {
@@ -172,6 +175,7 @@ func Default() *Config {
 			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
+			ReworkKeepsLevel: true,
 		},
 	}
 }

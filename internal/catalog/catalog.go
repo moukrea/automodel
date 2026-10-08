@@ -58,6 +58,11 @@ type Questions struct {
 	// the detour, which the go-ahead accepts? (Else the go-ahead goes back
 	// to the paused work.)
 	Offer *Noul `toml:"offer" json:"offer,omitempty"`
+	// Rework is the yes/no asked of a follow-up while the turn runs above
+	// the work's level: does the prompt say the assistant's last work on it
+	// was left undone, wrong or botched? (Then it doesn't go below the
+	// level in force.)
+	Rework *Noul `toml:"rework" json:"rework,omitempty"`
 	// Continues and Informs are the warm-turn yes/no questions the relation
 	// question replaced: still parsed (older custom tunings), never asked.
 	Continues *Noul `toml:"continues" json:"continues,omitempty"`
@@ -183,6 +188,10 @@ type Meta struct {
 	// more; under it the go-ahead goes back to the paused work, as a bare
 	// go-ahead does.
 	DetourOfferP float64 `toml:"detour_offer_threshold" json:"detour_offer_threshold,omitempty"`
+	// ReworkP is the yes-probability of the rework question from which a
+	// follow-up that complains the work was left undone or botched keeps
+	// the level in force instead of going back to the work's.
+	ReworkP float64 `toml:"rework_threshold" json:"rework_threshold,omitempty"`
 	// ExplicitP is the yes-probability from which a request in the prompt's
 	// words (an effort, more thinking, a mode) counts; ExplicitModelP the
 	// one for a model, stricter (a model is mentioned far more often than
@@ -211,6 +220,14 @@ func (m Meta) RelationSeparateThreshold() float64 {
 		return m.RelationSeparateP
 	}
 	return 0.6
+}
+
+// ReworkThreshold returns meta.rework_threshold or 0.5.
+func (m Meta) ReworkThreshold() float64 {
+	if m.ReworkP > 0 {
+		return m.ReworkP
+	}
+	return 0.5
 }
 
 // DetourOfferThreshold returns meta.detour_offer_threshold or 0.8.

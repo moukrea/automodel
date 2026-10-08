@@ -85,6 +85,7 @@ const (
 	QLevel       = "level"
 	QRelation    = "relation"
 	QOffer       = "offer"
+	QRework      = "rework"
 	QExplicitPfx = "explicit_"
 	QTierPfx     = "tier_"
 	QModePfx     = "mode_"
@@ -107,6 +108,10 @@ type Ask struct {
 	// that the go-ahead accepts (a bare go-ahead after a detour whose
 	// paused work needs more).
 	Offer bool
+	// Rework: whether the prompt says the assistant's last work was left
+	// undone, wrong or botched (a follow-up while the turn runs above the
+	// work's level).
+	Rework bool
 	// Explicit: every request the prompt could make, asked as one Choice
 	// per kind (Jev tells a request from a mention, and which one).
 	Explicit []Explicit
@@ -164,6 +169,9 @@ func Questions(c *catalog.Catalog, scope string, a Ask) (map[string]Question, []
 	if a.Offer && scope == catalog.ScopeMain {
 		qs[QOffer] = OfferQuestion(c)
 	}
+	if a.Rework && scope == catalog.ScopeMain {
+		qs[QRework] = ReworkQuestion(c)
+	}
 	for id, q := range ExplicitQuestions(c, a.Explicit) {
 		qs[id] = q
 	}
@@ -197,6 +205,17 @@ func RelationQuestion(c *catalog.Catalog, resume bool) Question {
 func OfferQuestion(c *catalog.Catalog) Question {
 	w := DefaultOffer
 	if o := c.Questions.Offer; o != nil && o.Question != "" {
+		w = *o
+	}
+	return Question{Type: "noul", Instructions: w.Question, Criteria: map[string]string{"true": w.Yes, "false": w.No}}
+}
+
+// ReworkQuestion is the yes/no on a complaint that the last work was left
+// undone or botched: the catalog's wording (questions.rework) over the
+// built-in one.
+func ReworkQuestion(c *catalog.Catalog) Question {
+	w := DefaultRework
+	if o := c.Questions.Rework; o != nil && o.Question != "" {
 		w = *o
 	}
 	return Question{Type: "noul", Instructions: w.Question, Criteria: map[string]string{"true": w.Yes, "false": w.No}}
@@ -355,6 +374,11 @@ var (
 		Question: "The new prompt `task` is a go-ahead after a detour (`work_in_progress.goal`) that set bigger work aside (`paused_work.goal`). Does the assistant's last message (`last_assistant`) offer or ask to do one more specific thing for the detour itself, which that go-ahead accepts?",
 		Yes:      "Near its end the message names one more specific thing it would do for the detour, and the go-ahead says yes to it: a wrap-up step of the detour ('Shall I open a PR for it?', 'Je pousse la branche ?') or more of it ('The same null check is missing in the export handler: want me to add it there too?', 'Je fais pareil dans le module d'import ?'), also when a remark follows the offer ('Shall I push the branch? CI takes about ten minutes.'), when the offer has no question mark ('dis-moi si je lance aussi le linter'), or when the go-ahead is only an acknowledgement ('ok', 'perfect', 'lgtm', 'super', 'top', 'nickel', 'parfait'): right after an offer, it accepts it.",
 		No:       "The message names nothing more to do for the detour: it reports the detour done or where it stands and closes on a general question or a check that names no step of it ('Anything else?', 'Is that OK?', 'Can I go on?', 'Autre chose ?'); or it offers to go back to the paused work ('Shall I get back to the migration?', 'On reprend la migration ?'); or the go-ahead answers something else. The message decides, whatever the go-ahead's words.",
+	}
+	DefaultRework = catalog.Noul{
+		Question: "Does the new prompt `task` say that what the assistant did last for the work in progress (`last_assistant`, `recent_prompts`) is left undone, incomplete, wrong or botched, and send it back to do it properly?",
+		Yes:      "The prompt complains that the assistant's last work falls short and wants it done properly: parts it skipped or left out ('the edge cases still aren't handled', 'half the screens are missing'), a result that doesn't work or is wrong ('it still crashes on the second run', 'that's not what I asked for, redo it'), or work done carelessly or with too little effort ('you didn't even look at the logs', 'you have all the data, figure it out', 'c'est bâclé, refais-le correctement'), also angry or sarcastic.",
+		No:       "Anything else: a new requirement, case or step the earlier work never covered, a change of mind or a preference ('make the button blue instead', 'let's use Postgres after all'), a regression or a side effect found later, a go-ahead, a question, praise or an acknowledgement, a remark about the assistant's pace or reports, a complaint about something other than the assistant's work (a tool, CI, a colleague, automodel's routing).",
 	}
 	DefaultExplicitEffort = catalog.Relation{
 		Question: "Does the new prompt `task` ask the assistant itself to work at a given reasoning effort, or to think more than usual, for its own work (this prompt, a part of it, or the rest of the work in progress)? Pick the level the prompt names, more when it asks to think more without naming one, or none. The request can take any wording, in any language. Only when it names no level but a step from the current one ('one notch lower', 'un cran au-dessus') is it the level next to `current.effort`, in the order low, medium, high, xhigh, max.",
