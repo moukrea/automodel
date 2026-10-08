@@ -84,6 +84,10 @@ trailing_go_ahead = true
 # for it, weighed against rewriting its warm cache, instead of the level of
 # whoever spawned it. Forks keep their parent's model.
 resumed_agents_own_level = true
+# A workflow agent the workflow hook didn't route (a stage built from the
+# script's data, a saved or resumed run) gets its own subagent decision from
+# the prompt it was actually sent, instead of the session's model and effort.
+workflow_agents_own_level = true
 
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.

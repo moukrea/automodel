@@ -154,6 +154,11 @@ type Features struct {
 	// warm cache, instead of the level of whoever spawned it (an agent
 	// resumed after a restart asks for the session's model).
 	ResumedAgentsOwnLevel bool `toml:"resumed_agents_own_level"`
+	// WorkflowAgentsOwnLevel: a workflow agent that asks for the session's
+	// model (a stage the workflow hook didn't route: built from the script's
+	// data, a saved or resumed run, a hook that didn't run) gets its own
+	// subagent decision from the prompt it was actually sent.
+	WorkflowAgentsOwnLevel bool `toml:"workflow_agents_own_level"`
 }
 
 func Default() *Config {
@@ -184,6 +189,7 @@ func Default() *Config {
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
 			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true,
+			WorkflowAgentsOwnLevel: true,
 		},
 	}
 }

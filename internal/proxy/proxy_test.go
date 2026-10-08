@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/moukrea/automodel/internal/catalog"
 	"github.com/moukrea/automodel/internal/config"
+	"github.com/moukrea/automodel/internal/router"
 	"github.com/moukrea/automodel/internal/state"
 )
 
@@ -592,5 +594,63 @@ func TestResponseNamesTheCustomModel(t *testing.T) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(got), &m); err != nil || m["model"] != "jev" || m["id"] != "msg_2" {
 		t.Errorf("message = %s (%v)", got, err)
+	}
+}
+
+func TestWorkflowAgentOwnLevel(t *testing.T) {
+	p, up, ps := setup(t)
+	var asked []string
+	p.Decide = func(_ context.Context, c *catalog.Catalog, req router.Request) *state.Decision {
+		asked = append(asked, req.State["task"].(string))
+		tier := "sonnet-high"
+		if strings.Contains(req.State["task"].(string), "tiny") {
+			tier = "haiku"
+		}
+		t := c.Tier(catalog.ScopeSubagent, tier)
+		return &state.Decision{Scope: "subagent", Tier: t.ID, Model: t.Model, Effort: t.Effort, Trigger: "workflow"}
+	}
+	p.State.Update("sess-w", func(s *state.Session) bool {
+		s.Main = &state.Decision{Tier: "xhigh", Model: "claude-opus-5-5", Effort: "xhigh"}
+		return true
+	})
+	body := `{"model":"jev","output_config":{"effort":"xhigh"},"thinking":{"type":"adaptive"},` +
+		`"messages":[{"role":"user","content":[{"type":"text","text":"<system-reminder>ctx</system-reminder>"},` +
+		`{"type":"text","text":"[Workflow harness — user request] The harness relays the user request:\n  ship it"},` +
+		`{"type":"text","text":"[Workflow harness — computed task] The computed task text follows:\n  Review the diff of the parser\n  for off-by-one errors."}]}]}`
+	wf := map[string]string{HeaderSession: "sess-w", HeaderAgent: "wf-1", HeaderAgentType: AgentTypeWorkflow}
+	post(t, ps.URL, wf, body)
+	if m := up.last(t); m["model"] != "claude-sonnet-5-5" || m["output_config"].(map[string]any)["effort"] != "high" {
+		t.Errorf("workflow agent not routed on its own: %v %v", m["model"], m["output_config"])
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "parser\nfor off-by-one") || strings.Contains(asked[0], "ctx") || strings.Contains(asked[0], "ship it") {
+		t.Errorf("task sent to Jev = %q", asked)
+	}
+	// Its later requests keep the decision, without asking again.
+	post(t, ps.URL, wf, strings.Replace(body, `"messages":[`, `"messages":[{"role":"user","content":"x"},{"role":"assistant","content":"y"},`, 1))
+	if m := up.last(t); m["model"] != "claude-sonnet-5-5" || len(asked) != 1 {
+		t.Errorf("binding lost or decided again: %v, %d asks", m["model"], len(asked))
+	}
+	// A mechanical stage gets the cheap tier (Haiku 5.5 has the main thread's window).
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-w", HeaderAgent: "wf-2", HeaderAgentType: AgentTypeWorkflow},
+		strings.Replace(body, "Review the diff of the parser", "a tiny lookup", 1))
+	if m := up.last(t); m["model"] != "claude-haiku-5-5" {
+		t.Errorf("mechanical workflow agent = %v", m["model"])
+	}
+	// Other agents asking for the session's model (forks) follow the main thread.
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-w", HeaderAgent: "fork-1", HeaderAgentType: "fork"}, body)
+	if m := up.last(t); m["model"] != "claude-opus-5-5" || m["output_config"].(map[string]any)["effort"] != "xhigh" || len(asked) != 2 {
+		t.Errorf("fork rerouted: %v %v", m["model"], m["output_config"])
+	}
+	// Off, or in a pinned session, the workflow agent keeps the session's model.
+	p.Cfg.Features.WorkflowAgentsOwnLevel = false
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-w", HeaderAgent: "wf-3", HeaderAgentType: AgentTypeWorkflow}, body)
+	if m := up.last(t); m["model"] != "claude-opus-5-5" || len(asked) != 2 {
+		t.Errorf("switch off ignored: %v", m["model"])
+	}
+	p.Cfg.Features.WorkflowAgentsOwnLevel = true
+	p.State.Update("sess-w", func(s *state.Session) bool { s.PinModel = "claude-opus-5-5"; return true })
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-w", HeaderAgent: "wf-4", HeaderAgentType: AgentTypeWorkflow}, body)
+	if len(asked) != 2 {
+		t.Errorf("pinned session rerouted a workflow agent")
 	}
 }

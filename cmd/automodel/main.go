@@ -220,6 +220,16 @@ func serve(cfg *config.Config, args []string) error {
 	}
 	p.Debug = *debug
 	p.Version = version
+	if env, err := router.New(cfg); err == nil {
+		p.Decide = func(ctx context.Context, c *catalog.Catalog, req router.Request) *state.Decision {
+			e := *env
+			e.Catalog = c
+			d, _ := e.Decide(ctx, req)
+			return d
+		}
+	} else {
+		log.Printf("workflow agents keep the session's model: %v", err)
+	}
 	log.Printf("automodel %s listening on %s → %s (model %q, catalog %s)", version, cfg.Listen, cfg.Upstream, cfg.CustomModelID, store.Source())
 	afterUpdate(cfg)
 	exe := install.Self()

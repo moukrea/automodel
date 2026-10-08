@@ -65,7 +65,12 @@ type Proxy struct {
 	touched map[string]time.Time // session -> last state write
 	// clientEffort is the last effort Claude Code sent per session (pins).
 	clientEffort map[string]string
-	tried        map[string]bool // agent IDs whose first message was matched against pending Agent calls
+	tried        map[string]bool          // agent IDs whose first message was matched against pending Agent calls
+	wfDeciding   map[string]chan struct{} // workflow agents whose decision is being taken
+
+	// Decide takes a subagent decision (nil: workflow agents the hook didn't
+	// route keep the session's model).
+	Decide Decider
 }
 
 func New(cfg *config.Config, cat *catalog.Store) (*Proxy, error) {
@@ -213,6 +218,9 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 				log.Printf("client effort %s: %q (top-level %s)", short(rt.sessionID), ce, string(fields["output_config"]))
 			}
 			p.observeClientEffort(cat, rt.sessionID, ce)
+		}
+		if rt.agentID != "" && !countTokens && r.Header.Get(HeaderAgentType) == AgentTypeWorkflow {
+			p.workflowAgent(r.Context(), cat, rt, fields)
 		}
 		dec = p.decisionFor(cat, rt, fields, len(body))
 		rt.routed = true
