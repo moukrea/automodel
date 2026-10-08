@@ -181,6 +181,9 @@ type Result struct {
 	// yes-probability that the assistant offered one more thing for the
 	// detour (router.Request.BackFirst).
 	OfferP *float64 `json:"offer_p,omitempty"`
+	// ReworkP: a follow-up while the turn runs above the work's level,
+	// Jev's yes-probability that the last work fell short.
+	ReworkP *float64 `json:"rework_p,omitempty"`
 	// FastPath is how the hooks took the prompt without the relation
 	// question (fastPath): RelP is then asked apart, only to diagnose; the
 	// decision and the relation metrics don't use it.
@@ -368,6 +371,7 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 		_, back := proposalGoAhead(env, c, req)
 		ask.Offer = ask.Relation && back
 	}
+	ask.Rework = ask.Relation && env.ReworkAsked(req)
 	for _, x := range req.Explicit {
 		ask.Explicit = append(ask.Explicit, x.Explicit)
 	}
@@ -399,6 +403,10 @@ func one(ctx context.Context, env *router.Env, c Case, format string) Result {
 	if a, ok := ans[jev.QOffer]; ok && a.Noul != nil {
 		p := *a.Noul
 		r.OfferP = &p
+	}
+	if a, ok := ans[jev.QRework]; ok && a.Noul != nil {
+		p := *a.Noul
+		r.ReworkP = &p
 	}
 	if fp != "" {
 		// The relation the hooks don't ask, alone in its own call (the
@@ -555,6 +563,10 @@ func Rejudge(env *router.Env, rs []Result) []Result {
 		if r.OfferP != nil {
 			p := *r.OfferP
 			ans[jev.QOffer] = jev.Answer{Type: "noul", Noul: &p}
+		}
+		if r.ReworkP != nil {
+			p := *r.ReworkP
+			ans[jev.QRework] = jev.Answer{Type: "noul", Noul: &p}
 		}
 		for _, n := range []struct {
 			pfx string

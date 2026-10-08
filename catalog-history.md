@@ -337,3 +337,9 @@
     - re-runs of their work.
   - AA's Haiku costs with the 5x rate, and Opus below max on the Coding Agent Index.
   - Tier costs come from list prices on short prompts; this owner's relative costs differ (open questions in the research doc).
+
+## 2026-10-08 — Rework question: a complaint that the last work fell short keeps the level in force
+- Trigger: live misroute. A follow-up complaining that the work was left undone ("the alternate routes aren't done, you have the data, figure it out"), over high work whose last turn ran at xhigh, read high 0.66 and went back to high.
+- Changes: `[questions.rework]` (built-in wording), asked only of a user's follow-up while the turn runs above the work's level; `meta.rework_threshold = 0.5`; feature `rework_keeps_level` (on by default). From the threshold, the follow-up doesn't go below the level in force; the work's level is unchanged.
+- Reasons: 20 invented cases (12 train, 8 test). Yes-probabilities: complaints 0.82–0.98, other follow-ups 0.02–0.12. Decisions acceptable (3 runs): train 21/36 → 36/36, test 15/24 → 24/24. Existing cases are untouched (none runs above its work's level), and the gate items that fail are the same as on main (pre-existing).
+- Still to verify: on the ledger, how often the question is asked, and how often it says yes.

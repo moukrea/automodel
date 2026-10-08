@@ -217,6 +217,9 @@ func workLine(d Decision, o WhyOptions) string {
 	if d.OfferP != nil {
 		parts = append(parts, fmt.Sprintf("offered more of the detour: %.2f", *d.OfferP))
 	}
+	if d.ReworkP != nil {
+		parts = append(parts, fmt.Sprintf("last work fell short: %.2f", *d.ReworkP))
+	}
 	// Every prompt is asked about every request: only the likely ones say
 	// something.
 	likely := map[string]float64{}

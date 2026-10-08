@@ -87,3 +87,37 @@ func TestMaxOnlyOnJevsReading(t *testing.T) {
 		t.Errorf("Jev's own max reading picked %s", got.ID)
 	}
 }
+
+// A follow-up that says the last work fell short doesn't go back below the
+// level the turn ran at (live: "the alternate paths aren't done, you have
+// the game data" over high work that had run at xhigh went back to high);
+// any other follow-up does, and the question is only asked when the turn
+// runs above the work.
+func TestReworkKeepsTheLevelInForce(t *testing.T) {
+	e := testEnv(t)
+	cur := e.Catalog.Tier(catalog.ScopeMain, "xhigh")
+	req := Request{Scope: catalog.ScopeMain, Warm: true, Current: &state.Decision{Tier: "xhigh", Effort: "xhigh"},
+		Work: &state.Work{Tier: "high", Goal: "port the desert tracks"}}
+	rd := Reading{probs: map[string]float64{"high": 0.7, "xhigh": 0.3}, conf: 0.7, top: "high",
+		relation: map[string]float64{catalog.RelationExtend: 0.95, catalog.RelationContinue: 0.05}, rework: 0.96}
+	p := policy.Params{Penalty: 1.5, Scale: 1}
+	if !e.ReworkAsked(req) {
+		t.Fatal("rework not asked over a turn above the work")
+	}
+	if v := e.Judge(req, rd, cur, policy.RepoPolicy{}, p); v.Tier.ID != "xhigh" || !strings.Contains(v.Hold, "fell short") {
+		t.Errorf("complaint: %s, hold %q", v.Tier.ID, v.Hold)
+	}
+	rd.rework = 0.05
+	if v := e.Judge(req, rd, cur, policy.RepoPolicy{}, p); v.Tier.ID != "high" {
+		t.Errorf("other follow-up: %s", v.Tier.ID)
+	}
+	e.Cfg.Features.ReworkKeepsLevel = false
+	if rd.rework = 0.96; e.ReworkAsked(req) {
+		t.Error("asked with the feature off")
+	}
+	e.Cfg.Features.ReworkKeepsLevel = true
+	req.Current = &state.Decision{Tier: "high", Effort: "high"}
+	if e.ReworkAsked(req) {
+		t.Error("asked with the turn at the work's level")
+	}
+}
