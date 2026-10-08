@@ -534,7 +534,7 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 	// work's (live: "[effort:auto] medium isn't right for this work" read
 	// alone, as new low work). A prompt typed mid-turn still doesn't lower
 	// the turn it came in.
-	rejudge := req.Released && hold != nil && !req.Peer && !e.resumes(req, rd) &&
+	rejudge := e.Cfg.Features.RejudgeOnPinRelease && req.Released && hold != nil && !req.Peer && !e.resumes(req, rd) &&
 		(top == catalog.RelationContinue || top == catalog.RelationExtend || top == catalog.RelationInform)
 	if rejudge && !req.MidTurn {
 		hold, reason = nil, "pin handed back: the work judged again"
@@ -987,7 +987,7 @@ func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Par
 		// penalty must not settle a split reading there (live: a subagent
 		// read high 0.43 / max 0.42 ran at max for five days, 17% of a
 		// week's subagent spend).
-		if top := c.TiersByRank(req.Scope); len(top) > 1 && pk.Tier.ID == top[len(top)-1].ID && rd.top != pk.Tier.ID {
+		if top := c.TiersByRank(req.Scope); e.Cfg.Features.MaxOnJevReading && len(top) > 1 && pk.Tier.ID == top[len(top)-1].ID && rd.top != pk.Tier.ID {
 			pk.Tier = top[len(top)-2]
 		}
 		return pk.Tier, &pk

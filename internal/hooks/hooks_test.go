@@ -580,6 +580,11 @@ func TestAgentHook(t *testing.T) {
 	if out := run(t, env, "agent", fork); out != nil {
 		t.Errorf("a fork was routed: %+v", out)
 	}
+	env.Cfg.Features.ForksInherit = false // the switch routes forks like any agent
+	if out := run(t, env, "agent", fork); out == nil {
+		t.Error("forks_inherit = false: the fork wasn't routed")
+	}
+	env.Cfg.Features.ForksInherit = true
 
 	// A model Claude named on its own is routed; one the user asked for
 	// (a model pin, or a model asked in words for the work) is kept.

@@ -51,6 +51,29 @@ warm_min_confidence = 0.8
 warm_timeout = "4s"
 # Prompts a switch is expected to serve, when weighed against a cache rebuild.
 switch_horizon_prompts = 3
+# Everything below is on by default; set a key to false (or "") to turn it off.
+# Subagents keep their prompt cache this long (Claude Code's default is 5m,
+# so a subagent idle for longer writes its whole context again). "" leaves
+# Claude Code's default. Written to settings.json by install.
+subagent_cache_ttl = "1h"
+# The costliest tier (max) only when Jev's own answer is max, never on a
+# split reading the underprovision penalty would settle there.
+max_on_jev_reading = true
+# Route subagents whose caller (Claude) named a model, unless you asked for
+# a model yourself ([model:X] or in words).
+route_named_subagent_models = true
+# Forks keep their parent's model and effort, so they read its cache.
+forks_inherit = true
+# A scheduled prompt read apart from the work (a status check) takes its own
+# level instead of the work's.
+scheduled_own_level = true
+# Show Jev what a workflow stage built from the script's data reads (else
+# such a stage keeps the session's model and effort).
+blind_stage_context = true
+# Name the custom model in routed responses, so claude --resume stays routed.
+name_custom_model = true
+# Handing a pin back ([effort:auto]) judges the work done while pinned again.
+rejudge_on_pin_release = true
 
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.
