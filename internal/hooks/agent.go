@@ -42,6 +42,12 @@ func Agent(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	if m, _ := input["model"].(string); m != "" && respectsNamedModel(env, sess) {
 		return nil, nil
 	}
+	// A fork carries the parent's whole conversation: it must stay on the
+	// parent's model to read its cache (another model writes that context
+	// again, often hundreds of thousands of tokens).
+	if t, _ := input["subagent_type"].(string); t == "fork" {
+		return nil, nil
+	}
 	prompt, _ := input["prompt"].(string)
 	agentType, _ := input["subagent_type"].(string)
 	description, _ := input["description"].(string)
