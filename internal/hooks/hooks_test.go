@@ -570,7 +570,7 @@ func TestAgentHook(t *testing.T) {
 	if len(sess.PendingAgents) != 1 || sess.PendingAgents[0].Prompt != "List all Go files" || sess.PendingAgents[0].Decision.Tier != "haiku" {
 		t.Errorf("pending = %+v", sess.PendingAgents)
 	}
-	if q := fj.last().Questions[jev.QLevel]; q.Type != "score" || len(q.Criteria.([]any)) != 8 {
+	if q := fj.last().Questions[jev.QLevel]; q.Type != "score" || len(q.Criteria.([]any)) != 6 {
 		t.Errorf("subagent question = %+v", q)
 	}
 
@@ -581,7 +581,7 @@ func TestAgentHook(t *testing.T) {
 }
 
 func TestWorkflowHook(t *testing.T) {
-	fj := &fakeJev{answers: []fa{answer("opus-low", 0.9)}}
+	fj := &fakeJev{answers: []fa{answer("sonnet-high", 0.9)}}
 	env := setup(t, fj)
 	markJev(t, env, "s6")
 	src := "export const meta = {name: 'x', description: 'y'}\n" +
@@ -597,13 +597,13 @@ func TestWorkflowHook(t *testing.T) {
 	}
 	got := out.HookSpecificOutput.UpdatedInput["script"].(string)
 	for _, want := range []string{
-		`agent('list files', {model: "opus", effort: "low", ...({label: 'ls'})})`,
+		`agent('list files', {model: "sonnet", effort: "high", ...({label: 'ls'})})`,
 		`agent('judge', {model: 'opus', effort: 'max'})`,
 		// Built from another agent's output: nothing to read, the session's
 		// model and effort.
 		"agent(`fix ${a}`)",
 		// Built from the script's data: Jev reads the array it ranges over.
-		`agent(BASE + '\n\n' + d.p, {model: "opus", effort: "low", ...({label: 'review:' + d.key})})`,
+		`agent(BASE + '\n\n' + d.p, {model: "sonnet", effort: "high", ...({label: 'review:' + d.key})})`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in\n%s", want, got)
@@ -936,7 +936,7 @@ func TestAskedTier(t *testing.T) {
 	markJev(t, env, "a1")
 	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.97}}
 	decide("a1", "What does HTTP 409 mean?")
-	if s := main("a1"); s.Main.Tier != "haiku" || s.Main.Model != "claude-haiku-4-5" || s.Main.Effort != "" {
+	if s := main("a1"); s.Main.Tier != "haiku" || s.Main.Model != "claude-haiku-5-5" || s.Main.Effort != "low" {
 		t.Fatalf("initial trivial prompt: %+v", s.Main)
 	}
 	if q := fj.last().Questions[jev.QTierPfx+"haiku"]; q.Type != "noul" {
@@ -973,10 +973,11 @@ func TestAskedTier(t *testing.T) {
 	if s := main("a4"); s.Main.Model != "claude-opus-5-5" || s.Main.Effort != "high" || s.Pin != "high" {
 		t.Errorf("effort tag on a Haiku session: %+v pin %q", s.Main, s.Pin)
 	}
-	// ...and a session outgrowing Haiku's window moves up.
+	// ...and a session outgrowing the tier's max_context (Haiku 5.5's
+	// price step) moves up.
 	warmSession(t, env, "a3", "haiku", 10_000)
 	env.State.Update("a3", func(s *state.Session) bool {
-		s.Main.Model, s.Main.Effort, s.ContextTokens = "claude-haiku-4-5", "", 160_000
+		s.Main.Model, s.Main.Effort, s.ContextTokens = "claude-haiku-5-5", "low", 160_000
 		return true
 	})
 	fj.answers = []fa{{tier: "low", conf: 0.95, asked: 0.97}}

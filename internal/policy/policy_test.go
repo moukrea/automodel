@@ -41,22 +41,22 @@ func TestChoose(t *testing.T) {
 
 func TestConstrain(t *testing.T) {
 	c := cat(t)
-	rp := RepoPolicy{MinTier: "high", MaxTier: "xhigh", MinSubagentTier: "opus-low"}
+	rp := RepoPolicy{MinTier: "high", MaxTier: "xhigh", MinSubagentTier: "sonnet-high"}
 	if got := Constrain(c, "main", c.Tier("main", "low"), rp, 0).ID; got != "high" {
 		t.Errorf("floor: %s", got)
 	}
 	if got := Constrain(c, "main", c.Tier("main", "max"), rp, 0).ID; got != "xhigh" {
 		t.Errorf("ceiling: %s", got)
 	}
-	// The main Haiku tier (Haiku 4.5, max_context 150K) can't hold a 300K
-	// context; the subagent one (Haiku 5.5, 1M) can.
+	// The main Haiku tier (max_context 100K, Haiku 5.5's price step) can't
+	// hold a 300K context; the subagent one (Haiku 5.5, 1M) can.
 	if got := Constrain(c, "main", c.Tier("main", "haiku"), RepoPolicy{}, 300_000).ID; got != "low" {
 		t.Errorf("context: %s", got)
 	}
 	if got := Constrain(c, "subagent", c.Tier("subagent", "haiku"), RepoPolicy{}, 300_000).ID; got != "haiku" {
 		t.Errorf("1M subagent Haiku: %s", got)
 	}
-	if got := Constrain(c, "subagent", c.Tier("subagent", "haiku"), rp, 0).ID; got != "opus-low" {
+	if got := Constrain(c, "subagent", c.Tier("subagent", "haiku"), rp, 0).ID; got != "sonnet-high" {
 		t.Errorf("subagent floor: %s", got)
 	}
 }
@@ -75,11 +75,11 @@ func TestLoadRepoPolicy(t *testing.T) {
 func TestCosts(t *testing.T) {
 	c := cat(t)
 	m := Costs(c, catalog.ScopeMain)
-	if m["low"] != 0.55 || m["xhigh"] != 3.46 {
+	if m["low"] != 0.551 || m["xhigh"] != 3.459 || m["haiku"] != 0.024 {
 		t.Errorf("measured costs: %v", m)
 	}
 	s := Costs(c, catalog.ScopeSubagent)
-	if s["haiku"] != 0.14 || s["opus-low"] != 0.55 {
+	if s["haiku"] != 0.14 || s["sonnet-high"] != 0.884 || s["sonnet-xhigh"] != 2.012 {
 		t.Errorf("subagent costs: %v", s)
 	}
 }

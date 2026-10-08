@@ -56,4 +56,4 @@ switch_horizon_prompts = 3
 # usd_per_day = 0                             # 0 = off
 # usd_per_session = 0
 # max_tier_when_over = "medium"
-# max_subagent_tier_when_over = "opus-medium"
+# max_subagent_tier_when_over = "sonnet-xhigh"

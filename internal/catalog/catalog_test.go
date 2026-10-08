@@ -47,13 +47,26 @@ func TestRepoCatalogIsValid(t *testing.T) {
 	if by := dom.Dominators["claude-sonnet-5@medium"]; len(by) == 0 {
 		t.Error("sonnet medium should be dominated")
 	}
-	for _, e := range []string{"low", "high"} {
+	// Sonnet 5.5 at the $0.10 cache read: low to high on the list-price
+	// frontier; xhigh under Opus high there (on the owner's long contexts it
+	// is not: docs/research/2026-10-model-mix.md).
+	for _, e := range []string{"low", "medium", "high"} {
 		if by := dom.Dominators["claude-sonnet-5-5@"+e]; len(by) > 0 {
 			t.Errorf("sonnet 5.5 %s should be on the frontier, dominated by %v", e, by)
 		}
 	}
-	if by := dom.Dominators["claude-sonnet-5-5@medium"]; len(by) == 0 {
-		t.Error("sonnet 5.5 medium should be dominated (by opus low)")
+	if by := dom.Dominators["claude-sonnet-5-5@xhigh"]; len(by) == 0 {
+		t.Error("sonnet 5.5 xhigh should be dominated at list prices (by opus high)")
+	}
+	ids = ids[:0]
+	for _, tr := range c.TiersByRank(ScopeSubagent) {
+		ids = append(ids, tr.ID)
+	}
+	if got := strings.Join(ids, ","); got != "haiku,sonnet-low,sonnet-high,sonnet-xhigh,opus-xhigh,opus-max" {
+		t.Errorf("subagent tiers by rank = %s", got)
+	}
+	if got := c.DefaultTier(ScopeSubagent).ID; got != "sonnet-xhigh" {
+		t.Errorf("default subagent tier = %s", got)
 	}
 }
 

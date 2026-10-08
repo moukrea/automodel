@@ -111,10 +111,14 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		curModel, curEffort, curMode = sess.Main.Model, sess.Main.Effort, sess.Main.Mode
 	}
 	pin, pinModel, pinSource := sess.Pin, sess.PinModel, sess.PinSource
-	// An effort on a model without efforts (a session on Haiku) means the
-	// default model at that effort: [effort:high] must not be ignored.
-	if m := env.Catalog.Model(curModel); etag != "" && etag != "auto" && sess.PinModel == "" && m != nil && len(m.Efforts) == 0 {
-		curModel = env.Catalog.DefaultTier(catalog.ScopeMain).Model
+	// An effort on a session that routing put on an asked tier (Haiku) or on
+	// a model without that effort among the tiers means the default model at
+	// that effort: [effort:high] must not be ignored, nor pin the asked tier.
+	// A model a work asked for in words keeps the tag (below).
+	if etag != "" && etag != "auto" && sess.PinModel == "" && (sess.Work == nil || sess.Work.Model != curModel) {
+		if t := env.Catalog.TierFor(catalog.ScopeMain, curModel, etag); t == nil || t.Asked() {
+			curModel = env.Catalog.DefaultTier(catalog.ScopeMain).Model
+		}
 	}
 	switch {
 	case etag == "auto" || mtag == "auto":

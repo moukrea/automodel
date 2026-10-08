@@ -126,8 +126,18 @@ If any of these change, the proxy or hooks need updating: say so in the report.
   generations; compare cost per task, not price per million tokens.
 - **Mixing benchmark versions.** Never compare measurements from different
   index versions; frontier.py ignores other versions and says so.
-- **Cache read parity.** When cache reads cost the same on two models (Sonnet 5
-  and Opus 5.5: $0.20/M), the cheaper model's real advantage in long Claude
-  Code sessions — dominated by cache reads — shrinks further.
+- **Cache reads decide long sessions.** Claude Code agents and main sessions
+  pay mostly for cache reads (this owner: median subagent request 279k
+  tokens, 88% past 100k). A model's cache-read price matters more than its
+  input and output prices there: Sonnet 5.5 at $0.10/M (since 2026-10-07,
+  half of Opus 5.5) is much cheaper than its list-price benchmark costs say,
+  and two models with the same read price differ less than their list prices
+  say (Sonnet 5 vs Opus 5.5). Price candidates on the ledger
+  (`scripts/replay.py`), not on benchmark costs alone.
+- **Prices by prompt length.** Haiku 5.5 pays 5x on a whole request whose
+  prompt passes 100k tokens. AA's Haiku 5.5 costs ignore it (AA's own note),
+  Anthropic's charts and the Coding Agent Index seem to apply it, CursorBench
+  doesn't say. Claude Code 2.1.294 applies it in `/cost` but still prices
+  Sonnet 5.5 cache reads at $0.20.
 - **The index is not Claude Code.** It mixes knowledge work and terminal
   agentic tasks. Let the ledger confirm or correct.
