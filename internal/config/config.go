@@ -149,6 +149,11 @@ type Features struct {
 	// TrailingGoAhead: a prompt that ends by telling Claude to carry on
 	// ("just curious, carry on") follows the work up, whatever comes first.
 	TrailingGoAhead bool `toml:"trailing_go_ahead"`
+	// ResumedAgentsOwnLevel: a subagent sent a new message (SendMessage)
+	// gets its own subagent decision for it, weighed against rewriting its
+	// warm cache, instead of the level of whoever spawned it (an agent
+	// resumed after a restart asks for the session's model).
+	ResumedAgentsOwnLevel bool `toml:"resumed_agents_own_level"`
 }
 
 func Default() *Config {
@@ -178,7 +183,7 @@ func Default() *Config {
 			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
-			ReworkKeepsLevel: true, TrailingGoAhead: true,
+			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true,
 		},
 	}
 }

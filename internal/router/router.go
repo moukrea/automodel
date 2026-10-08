@@ -93,6 +93,7 @@ type Request struct {
 	Scope     string
 	Trigger   string // initial|compact|cold|warm (main) or agent|workflow (subagent)
 	AgentType string
+	AgentID   string // a subagent sent a new message (SendMessage)
 	State     map[string]any
 	RepoDir   string
 	RepoRoot  string // recorded in the ledger (report suggestions)
@@ -220,7 +221,7 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	}
 	rec := ledger.Decision{
 		TS: start, Kind: "decision", ID: ledger.NewID(), SessionID: req.SessionID, Scope: req.Scope, Trigger: req.Trigger,
-		AgentType: req.AgentType, Label: req.Label, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
+		AgentType: req.AgentType, AgentID: req.AgentID, Label: req.Label, StateTokens: stateTokens, JevModel: c.Meta.JevModel, Warm: req.Warm,
 		Signals: req.Signals, Repo: req.RepoRoot,
 	}
 	if cur != nil {

@@ -227,6 +227,34 @@ func TestSubagentEffortBinding(t *testing.T) {
 	if m := up.last(t); m["output_config"].(map[string]any)["effort"] != "high" {
 		t.Errorf("unbound agent rewritten: %v", m["output_config"])
 	}
+
+	// Sent a new message, the agent was decided again (the message hook):
+	// the new decision applies at once, model included, to its alias
+	// requests and to those asking for the session's model.
+	p.State.Update("sess-2", func(s *state.Session) bool {
+		s.Agents["agent-1"] = &state.Decision{Scope: "subagent", Tier: "sonnet-xhigh", Model: "claude-sonnet-5-5",
+			APIID: "claude-sonnet-5-5", Effort: "xhigh", Trigger: TriggerResumeAgent}
+		s.Agents["agent-3"] = &state.Decision{Scope: "subagent", Tier: "sonnet-high", Model: "claude-sonnet-5-5",
+			APIID: "claude-sonnet-5-5", Effort: "high", Trigger: TriggerResumeAgent}
+		return true
+	})
+	post(t, ps.URL, h, later)
+	if m := up.last(t); m["model"] != "claude-sonnet-5-5" || m["output_config"].(map[string]any)["effort"] != "xhigh" {
+		t.Errorf("resume decision not applied to an alias request: %v %v", m["model"], m["output_config"])
+	}
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-2", HeaderAgent: "agent-3"}, strings.Replace(later, `"claude-opus-5-5"`, `"jev"`, 1))
+	if m := up.last(t); m["model"] != "claude-sonnet-5-5" || m["output_config"].(map[string]any)["effort"] != "high" {
+		t.Errorf("resume decision not applied to a request for the session's model: %v %v", m["model"], m["output_config"])
+	}
+	// A tier the catalog retired still applies: the agent keeps what it was given.
+	p.State.Update("sess-2", func(s *state.Session) bool {
+		s.Agents["agent-3"] = &state.Decision{Scope: "subagent", Tier: "opus-retired", Model: "claude-opus-5-5", APIID: "claude-opus-5-5", Effort: "high"}
+		return true
+	})
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-2", HeaderAgent: "agent-3"}, strings.Replace(later, `"claude-opus-5-5"`, `"jev"`, 1))
+	if m := up.last(t); m["model"] != "claude-opus-5-5" || m["output_config"].(map[string]any)["effort"] != "high" {
+		t.Errorf("binding on a retired tier lost: %v %v", m["model"], m["output_config"])
+	}
 }
 
 func TestApplyEffortStripsForModelsWithoutEffort(t *testing.T) {

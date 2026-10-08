@@ -31,6 +31,7 @@ type Decision struct {
 	Trigger     string             `json:"trigger"`
 	Cause       string             `json:"cause,omitempty"`
 	AgentType   string             `json:"agent_type,omitempty"`
+	AgentID     string             `json:"agent_id,omitempty"`
 	StateTokens int                `json:"state_tokens"`
 	Probs       map[string]float64 `json:"probs,omitempty"`
 	Confidence  float64            `json:"confidence"`
