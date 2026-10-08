@@ -32,6 +32,10 @@ const (
 	HeaderAgent   = "X-Claude-Code-Agent-Id"
 	HeaderBeta    = "Anthropic-Beta"
 
+	// TriggerResumeAgent marks a subagent decision taken when the agent was
+	// sent a new message (hooks.TriggerResumeAgent).
+	TriggerResumeAgent = "resume_agent"
+
 	maxBody       = 64 << 20
 	stateThrottle = 20 * time.Second
 	maxBindings   = 50000
@@ -61,7 +65,7 @@ type Proxy struct {
 	touched map[string]time.Time // session -> last state write
 	// clientEffort is the last effort Claude Code sent per session (pins).
 	clientEffort map[string]string
-	bindings     map[string]*state.Decision // agent ID -> decision (nil: none)
+	tried        map[string]bool // agent IDs whose first message was matched against pending Agent calls
 }
 
 func New(cfg *config.Config, cat *catalog.Store) (*Proxy, error) {
@@ -71,7 +75,7 @@ func New(cfg *config.Config, cat *catalog.Store) (*Proxy, error) {
 	}
 	p := &Proxy{
 		Cfg: cfg, Catalog: cat, State: state.Store{Dir: cfg.StateDir}, Ledger: ledger.Ledger{Path: cfg.Ledger},
-		upstream: up, touched: map[string]time.Time{}, bindings: map[string]*state.Decision{},
+		upstream: up, touched: map[string]time.Time{}, tried: map[string]bool{},
 	}
 	p.rp = &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -222,12 +226,15 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 		}
 	case rt.agentID != "" && rt.sessionID != "":
 		// A subagent whose model the agent hook set by alias: only the
-		// effort, which the Agent tool can't carry, is ours to apply.
+		// effort, which the Agent tool can't carry, is ours to apply. A
+		// decision taken when the agent was sent a new message applies
+		// whole: the alias it was spawned with is no longer its level.
 		b := p.binding(rt.sessionID, rt.agentID, fields)
-		if b == nil || b.APIID != model {
+		if b == nil || (b.APIID != model && b.Trigger != TriggerResumeAgent) || cat.Model(b.Model) == nil {
 			return nil, false
 		}
 		dec = b
+		rt.routed = b.APIID != model
 	default:
 		return nil, false
 	}
@@ -281,7 +288,9 @@ func (p *Proxy) decisionFor(cat *catalog.Catalog, rt *route, fields map[string]j
 		sess, _ = p.State.Load(rt.sessionID)
 	}
 	if rt.agentID != "" && sess != nil {
-		if b := p.binding(rt.sessionID, rt.agentID, fields); b != nil && cat.Tier(catalog.ScopeSubagent, b.Tier) != nil {
+		// Its own decision, even on a tier the catalog has since retired:
+		// the agent keeps the model and effort it was given.
+		if b := p.binding(rt.sessionID, rt.agentID, fields); b != nil && cat.Model(b.Model) != nil {
 			return b
 		}
 	}
@@ -436,14 +445,23 @@ func (p *Proxy) sessionID(r *http.Request, fields map[string]json.RawMessage) st
 }
 
 // binding returns the subagent decision bound to agentID, binding it on the
-// first request whose opening message contains a pending Agent prompt.
+// first request whose opening message contains a pending Agent prompt. The
+// bound decision is read from the session state on every request: the
+// message hook decides again when the agent is sent a new message.
 func (p *Proxy) binding(sessionID, agentID string, fields map[string]json.RawMessage) *state.Decision {
-	p.mu.Lock()
-	b, seen := p.bindings[agentID]
-	p.mu.Unlock()
-	if seen {
-		return b
+	if s, err := p.State.Load(sessionID); err == nil {
+		if d, ok := s.Agents[agentID]; ok && d != nil {
+			cp := *d
+			return &cp
+		}
 	}
+	p.mu.Lock()
+	tried := p.tried[agentID]
+	p.mu.Unlock()
+	if tried {
+		return nil // its first message matched no pending Agent call
+	}
+	var b *state.Decision
 	first := state.NormalizePrompt(strings.Join(firstUserTexts(fields), "\n"))
 	_, err := p.State.Update(sessionID, func(s *state.Session) bool {
 		if d, ok := s.Agents[agentID]; ok {
@@ -469,12 +487,16 @@ func (p *Proxy) binding(sessionID, agentID string, fields map[string]json.RawMes
 		return nil
 	}
 	p.mu.Lock()
-	if len(p.bindings) > maxBindings {
-		p.bindings = map[string]*state.Decision{} // reloaded from state on demand
+	if len(p.tried) > maxBindings {
+		p.tried = map[string]bool{}
 	}
-	p.bindings[agentID] = b
+	p.tried[agentID] = true
 	p.mu.Unlock()
-	return b
+	if b == nil {
+		return nil
+	}
+	cp := *b
+	return &cp
 }
 
 // touch applies a throttled state update for a session.

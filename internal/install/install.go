@@ -168,6 +168,7 @@ var hookEvents = []struct{ event, matcher, name string }{
 	{"UserPromptSubmit", "", "decide"},
 	{"PreToolUse", "Agent|Task", "agent"},
 	{"PreToolUse", "Workflow", "workflow"},
+	{"PreToolUse", "SendMessage", "message"},
 	{"PreCompact", "", "precompact"},
 	{"SessionStart", "", "session-start"},
 	{"PostModelSwitch", "", "model-switch"},

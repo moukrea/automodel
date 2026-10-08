@@ -80,6 +80,10 @@ rework_keeps_level = true
 # A prompt that ends by telling Claude to carry on ("just curious, carry on")
 # follows the work up at its level, whatever comes before.
 trailing_go_ahead = true
+# A subagent sent a new message (SendMessage) gets its own subagent decision
+# for it, weighed against rewriting its warm cache, instead of the level of
+# whoever spawned it. Forks keep their parent's model.
+resumed_agents_own_level = true
 
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.

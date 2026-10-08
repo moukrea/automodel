@@ -67,10 +67,11 @@ var handlers = map[string]handler{
 	"precompact":    PreCompact,
 	"session-start": SessionStart,
 	"model-switch":  ModelSwitch,
+	"message":       Message,
 }
 
 func Names() []string {
-	return []string{"decide", "agent", "workflow", "precompact", "session-start", "model-switch"}
+	return []string{"decide", "agent", "workflow", "precompact", "session-start", "model-switch", "message"}
 }
 
 // Run executes a hook by name. It returns an error only for usage mistakes.

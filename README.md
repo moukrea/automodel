@@ -365,7 +365,10 @@ keep it off).
 
 **Subagents**: the Agent tool only accepts an alias (`opus`, `haiku`…) and has
 no effort field. The hook sets the alias, and the proxy binds the effort to
-the subagent (`X-Claude-Code-Agent-Id`) on its first request. **Workflows**:
+the subagent (`X-Claude-Code-Agent-Id`) on its first request. A subagent sent
+a new message (`SendMessage`) gets its own decision for that message, taken
+only when the turn ahead pays back rewriting its warm cache on another model
+or effort; forks keep their parent's model. **Workflows**:
 each `agent()` call site that sets no `model`/`effort` gets its own tier,
 injected as `{model, effort, ...(opts)}`, so the script's explicit options
 still win.
