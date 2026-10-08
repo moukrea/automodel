@@ -45,7 +45,7 @@ func Agent(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	// A fork carries the parent's whole conversation: it must stay on the
 	// parent's model to read its cache (another model writes that context
 	// again, often hundreds of thousands of tokens).
-	if t, _ := input["subagent_type"].(string); t == "fork" {
+	if t, _ := input["subagent_type"].(string); t == "fork" && env.Cfg.Features.ForksInherit {
 		return nil, nil
 	}
 	prompt, _ := input["prompt"].(string)
@@ -110,8 +110,11 @@ func head(s string, n int) string {
 // agents, about $1.3K a week): a named model is kept only when the user
 // asked for a model for this session or its work, in words or by tag.
 func respectsNamedModel(env *router.Env, sess *state.Session) bool {
-	if !env.Cfg.RespectExplicitSubagentModel {
+	switch {
+	case !env.Cfg.RespectExplicitSubagentModel:
 		return false
+	case !env.Cfg.Features.RouteNamedSubagentModels:
+		return true
 	}
 	return sess.PinModel != "" || (sess.Work != nil && sess.Work.Model != "")
 }

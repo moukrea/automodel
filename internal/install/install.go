@@ -266,8 +266,8 @@ func Preview(o Options, cfg *config.Config) ([]byte, error) {
 func merge(s *Object, o Options, cfg *config.Config) {
 	env := s.Obj("env")
 	env.Delete(firstPartyEnv) // re-added below only for a first-party upstream
-	if _, set := env.Get(subagentCacheTTL); !set {
-		env.Set(subagentCacheTTL, "1h") // before the owned entries, which Set moves last
+	if _, set := env.Get(subagentCacheTTL); !set && cfg.Features.SubagentCacheTTL != "" {
+		env.Set(subagentCacheTTL, cfg.Features.SubagentCacheTTL) // before the owned entries, which Set moves last
 	}
 	for _, kv := range envVars(cfg) {
 		env.Set(kv[0], kv[1])
@@ -438,7 +438,7 @@ func Remove(o Options) error {
 			env.Delete(kv[0])
 		}
 		env.Delete(firstPartyEnv)
-		if v, _ := env.Get(subagentCacheTTL); v == "1h" {
+		if v, _ := env.Get(subagentCacheTTL); v != "" && v == cfg.Features.SubagentCacheTTL {
 			env.Delete(subagentCacheTTL)
 		}
 		if env.Len() == 0 {

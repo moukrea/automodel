@@ -77,6 +77,11 @@ func TestMaxOnlyOnJevsReading(t *testing.T) {
 	if got, _ := e.pick(Request{Scope: catalog.ScopeSubagent}, split, nil, p); got.ID == "opus-max" {
 		t.Errorf("split reading picked %s", got.ID)
 	}
+	e.Cfg.Features.MaxOnJevReading = false
+	if got, _ := e.pick(Request{Scope: catalog.ScopeSubagent}, split, nil, p); got.ID != "opus-max" {
+		t.Logf("max_on_jev_reading = false: the penalty picks %s on that reading", got.ID)
+	}
+	e.Cfg.Features.MaxOnJevReading = true
 	sure := Reading{probs: map[string]float64{"opus-max": 0.8, "opus-xhigh": 0.2}, conf: 0.8, top: "opus-max"}
 	if got, _ := e.pick(Request{Scope: catalog.ScopeSubagent}, sure, nil, p); got.ID != "opus-max" {
 		t.Errorf("Jev's own max reading picked %s", got.ID)

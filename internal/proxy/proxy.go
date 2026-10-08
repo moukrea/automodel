@@ -198,7 +198,7 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 
 	var dec *state.Decision
 	custom := strings.TrimSuffix(model, "[1m]") == p.Cfg.CustomModelID
-	if custom {
+	if custom && p.Cfg.Features.NameCustomModel {
 		rt.asked = p.Cfg.CustomModelID
 	}
 	switch {

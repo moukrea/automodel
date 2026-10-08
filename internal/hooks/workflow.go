@@ -78,6 +78,9 @@ func Workflow(ctx context.Context, env *router.Env, in *Input) (*Output, error) 
 			// A prompt built from the script's data says too little on its
 			// own: Jev reads what it refers to, else the stage keeps the
 			// session's model and effort (no guess on an unseen task).
+			if !env.Cfg.Features.BlindStageContext {
+				continue // keeps the session's model and effort
+			}
 			ctx := stageContext(script, s, min((budget-800)*3, maxStageContext))
 			if literalChars(ctx) < blindChars {
 				continue

@@ -116,6 +116,33 @@ type Features struct {
 	// SwitchHorizonPrompts is how many prompts a switch is expected to serve
 	// when weighing it against a cache rebuild.
 	SwitchHorizonPrompts float64 `toml:"switch_horizon_prompts"`
+
+	// SubagentCacheTTL is the prompt-cache lifetime install sets for
+	// subagents (CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL; Claude Code's own
+	// default is 5m). "" leaves Claude Code's default.
+	SubagentCacheTTL string `toml:"subagent_cache_ttl"`
+	// MaxOnJevReading: the costliest tier only when Jev's own top answer is
+	// it, never on a split reading the underprovision penalty settles.
+	MaxOnJevReading bool `toml:"max_on_jev_reading"`
+	// RouteNamedSubagentModels routes subagents whose caller named a model
+	// unless the user asked for a model (respect_explicit_subagent_model
+	// false routes them all).
+	RouteNamedSubagentModels bool `toml:"route_named_subagent_models"`
+	// ForksInherit keeps forks on their parent's model and effort, which
+	// lets them read its prompt cache.
+	ForksInherit bool `toml:"forks_inherit"`
+	// ScheduledOwnLevel: a scheduled prompt read apart from the work (a
+	// status check) takes its own level instead of the work's.
+	ScheduledOwnLevel bool `toml:"scheduled_own_level"`
+	// BlindStageContext shows Jev what a workflow stage built from the
+	// script's data reads (else such a stage keeps the session's model).
+	BlindStageContext bool `toml:"blind_stage_context"`
+	// NameCustomModel names the custom model in routed responses, so a
+	// resumed session (claude --resume) stays routed.
+	NameCustomModel bool `toml:"name_custom_model"`
+	// RejudgeOnPinRelease: handing a pin back judges the work done while
+	// pinned again, instead of reading the prompt alone.
+	RejudgeOnPinRelease bool `toml:"rejudge_on_pin_release"`
 }
 
 func Default() *Config {
@@ -143,6 +170,8 @@ func Default() *Config {
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
 			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,
+			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
+			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
 		},
 	}
 }
