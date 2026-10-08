@@ -102,6 +102,16 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      output, cache read and cache write prices, then apply the candidate's
      tokens/steps multiplier from the benchmarks. A lower list price that a
      1.2–1.6× step multiplier cancels is not a saving.
+     `python3 .claude/skills/refresh-model-catalog/scripts/replay.py`
+     does it on the ledger's real requests (`--configs`: every config's
+     cost on them; `--main`: a second main model with its switch costs;
+     `--basis pessimistic`), with each config's steps and tokens per task,
+     the context growth they bring and per-request price steps (Haiku 5.5
+     pays 5x for a whole request past 100k prompt tokens). When cache
+     reads dominate, the list-price frontier on short benchmark prompts is
+     not the user's: in 2026-10, Sonnet 5.5 xhigh cost 0.62 of Opus high on
+     the owner's subagents but $2.01 vs $1.82 on the index. Update the
+     script's step and token tables when the benchmarks change.
 
    **Admission rule for a new model or tier** (the owner's rule): a
    (model, effort) config earns a tier only if, with numbers, it sits on the
@@ -318,7 +328,9 @@ cheaper model eligible for the main scope. The one exception is a tier with
 `max_context` below its model's window (validation requires it, and the
 default tier can't have one): routing leaves it once the context passes
 `max_context`, and the proxy sends a request that outgrows it to the next
-tier that fits, within the turn. Keep a margin (150K on Haiku's 200K).
+tier that fits, within the turn. Keep a margin (150K on Haiku 4.5's 200K).
+`max_context` also marks a price step: the main Haiku tier stops at 100K,
+where Haiku 5.5 starts charging 5x for the whole request.
 
 Read `references/sources.md` before collecting data. In short: aggregators
 carry stale prices; compare (model, effort) pairs, not models at equal effort;

@@ -297,3 +297,43 @@
 - Reasons: Haiku 5.5 dominates Haiku 4.5 on every published figure at a tenth of its prices (Terminal-Bench 4.0 12.7–39.2 vs 0.0; SWE-bench Multilingual 83.7 vs 67.4). Medium rather than low: Anthropic reports low skips searches and checks on agent prompts, and medium halves that. CursorBench puts every Haiku 5.5 effort on the frontier (medium 36.9 at $0.17 vs Sonnet 5.5 low 35.8 at $0.50); Anthropic's Terminal-Bench and FrontierCode put it well behind Sonnet 5.5 from medium up, and AA has published nothing yet, so no other tier moves. The tier keeps its criteria and cost, so routing decisions are unchanged (subagent set, 201 answers re-judged: identical). Real-session check: a routed Opus turn with a thinking block, then the same conversation routed to Haiku 5.5, answered 200.
 - Sources: docs/research notes (scratchpad haiku55-research.md, 2026-10-07); https://platform.claude.com/docs/en/about-claude/pricing; https://www.anthropic.com/claude-haiku-5-5; https://cursor.com/cursorbench; Claude Haiku 5.5 system card; Claude Code 2.1.293 model catalog.
 - Still to verify: AA index and Coding Agent Index for Haiku 5.5 (1–3 days); Sonnet 5.5's cache read at $0.10 (announced, not yet in the pricing table); Haiku 5.5 for the main asked tier and for tiers above mechanical work; Haiku 4.5's deprecation.
+
+## 2026-10-08 — Model mix priced on the owner's traffic: Sonnet xhigh takes Opus medium and high subagent work; main Haiku on Haiku 5.5
+- Trigger: owner review ("routing sends ~99% of the work to Opus 5.5"); Sonnet 5.5's cache read cut to $0.10 (2026-10-07); Haiku 5.5's AA results; Haiku 4.5 only guaranteed until 2026-10-15.
+- Changes:
+  - Sonnet 5.5 cache read 0.20 → 0.10.
+  - Subagent tiers 8 → 6: haiku, sonnet-low, sonnet-high (also takes opus-low's small changes and checks), sonnet-xhigh (new: takes opus-medium's and opus-high's work), opus-xhigh, opus-max. `default_subagent_tier` and the default `budget.max_subagent_tier_when_over` move from opus-medium to sonnet-xhigh.
+  - Main asked Haiku tier: Haiku 4.5 → Haiku 5.5 at low, `max_context` 150K → 100K (its price step), cost 0.024. Haiku 5.5 gets the main scope. Haiku 4.5 is dominated.
+  - Main scored tiers unchanged (Opus 5.5 low → max).
+  - Measurements:
+    - AA index v4.3.2 re-read: Sonnet repriced, new times.
+    - Haiku 5.5's index under `v4.3.2-flat-price`: AA ignores its 5x rate above 100K, so the costs are lower bounds.
+    - CursorBench: Sonnet repriced, steps and tokens per task.
+    - Coding Agent Index: Haiku rows.
+    - Anthropic's and AA's Terminal-Bench: Sonnet at $0.10, Haiku rows.
+  - Eval: 57 subagent labels mapped onto the merged tiers; 7 new invented train cases.
+  - Code: `[effort:X]` on a session on the asked tier means Opus at X (Haiku 5.5 has efforts, so the tag was being ignored).
+  - Skill: `scripts/replay.py` prices the ledger's real requests under other configs.
+- Reasons: docs/research/2026-10-model-mix.md.
+  - **Replay of the last 7 days**, 1-hour TTL, steps and tokens per task from CursorBench 4.0.
+    - Cache reads dominate this owner's subagents: median request 279K tokens, 88.6% of requests past 100K.
+    - On those requests, with Opus high = 1:
+      - Sonnet high costs 0.33 and scores above Opus low (0.47) on all five per-effort coding benchmarks.
+      - Sonnet xhigh costs 0.62 (0.83 pessimistic). It scores at least Opus medium's (0.80) on four of five, and 1.7–2.9 points under Opus high's on four (about one Terminal-Bench standard error), 1.4–1.5x slower.
+      - Opus xhigh stays: Sonnet xhigh is 2.5–4.9 points under it on four. Opus max stays as well.
+      - Haiku stays at mechanical work: about half of Sonnet's cost at a given effort, but on the Claude Code benchmarks below Sonnet low from xhigh up.
+  - **Routed subagent spend** $3,745/week → $3,133 (−16%; −6% pessimistic); all subagents −10% (−4%). Spend-weighted quality −0.6 to −1.1 points on four benchmarks, +0.4 on AA's Terminal-Bench.
+  - **Main:** a Sonnet main tier for the low and medium levels saves at most 1.8% with a perfect switch oracle, and costs 9% more switching on every stretch. A switch writes the whole context again (median 556K, about $2.1), and those stretches last 10–11 requests.
+  - **Fable 5.1** is dominated on both bases.
+  - **Eval**, 3 runs:
+    - Train: main decision exact 92.6% → 92.7%. Subagent decisions all acceptable before and after; exact 85.4% → 84.6% on the same cases (one answer).
+    - Test: main 86.2% → 86.6%; subagents 87.2% → 88.5%.
+    - The regression gate fails on both catalogs for the explicit-request and follow-up failures the current catalog already has.
+- Sources: https://platform.claude.com/docs/en/about-claude/pricing; https://artificialanalysis.ai/models/claude-haiku-5-5 (and the sonnet-5-5, opus-5-5, fable-5-1 pages); https://artificialanalysis.ai/agents/coding-agents; https://cursor.com/cursorbench; https://www.anthropic.com/claude-haiku-5-5 (chart data); https://www.anthropic.com/claude-sonnet-5-5; https://www.anthropic.com/claude-opus-5-5; Claude Code 2.1.294 model catalog; the router ledger 2026-10-01 → 10-08.
+- Still to verify:
+  - **Before merging:** a real session in the isolated dev harness where a cold Haiku 5.5 turn with thinking hands over to Opus.
+  - **After a week of ledger data:**
+    - sonnet-xhigh agents' requests and cost per agent against this window's opus-high agents (the pessimistic case);
+    - re-runs of their work.
+  - AA's Haiku costs with the 5x rate, and Opus below max on the Coding Agent Index.
+  - Tier costs come from list prices on short prompts; this owner's relative costs differ (open questions in the research doc).

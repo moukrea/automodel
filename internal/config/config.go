@@ -139,7 +139,7 @@ func Default() *Config {
 		RouteWorkflowSteps:           true,
 		RecordStates:                 true,
 		Update:                       Update{Auto: true, Interval: Duration{6 * time.Hour}},
-		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "opus-medium"},
+		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "sonnet-xhigh"},
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
 			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,

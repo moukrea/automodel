@@ -295,7 +295,8 @@ turns `low` into Haiku. It is only taken when there is no conversation cache
 to lose (a new session, after /compact or a pause) or when the session is
 already on it; a warm Opus session never moves there for a side question (a
 Haiku turn on a warm cache costs about Opus low, and coming back rebuilds the
-context). Past `max_context` (150K of Haiku's 200K) the session moves to
+context). It runs Haiku 5.5 at low effort. Past `max_context` (100K, where
+Haiku 5.5's prices step up 5x for the whole request) the session moves to
 Opus, within the turn if needed.
 
 A bare go-ahead ("yes", "oui, vas-y", "ok, go", "let's go", "c'est parti")
@@ -449,7 +450,7 @@ Per repository, `.automodel.toml` at the repo root:
 ```toml
 min_tier = "high"               # floor / ceiling for the main session
 max_tier = "xhigh"
-min_subagent_tier = "opus-low"  # same for subagents
+min_subagent_tier = "sonnet-high"  # same for subagents
 disable_modes = ["ultracode"]
 privacy = "metadata"            # a repo can make privacy stricter, never looser
 ```
@@ -461,7 +462,7 @@ privacy = "metadata"            # a repo can make privacy stricter, never looser
 usd_per_day = 20               # 0 = off (the default)
 usd_per_session = 0            # optional, per session
 max_tier_when_over = "medium"  # the highest tier once a cap is reached
-max_subagent_tier_when_over = "opus-medium"
+max_subagent_tier_when_over = "sonnet-xhigh"
 ```
 
 The proxy prices every response with the catalog and keeps the day's total
