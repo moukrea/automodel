@@ -39,7 +39,7 @@ func Agent(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 	if err := json.Unmarshal(in.ToolInput, &input); err != nil {
 		return nil, fmt.Errorf("tool_input: %w", err)
 	}
-	if m, _ := input["model"].(string); m != "" && env.Cfg.RespectExplicitSubagentModel {
+	if m, _ := input["model"].(string); m != "" && respectsNamedModel(env, sess) {
 		return nil, nil
 	}
 	prompt, _ := input["prompt"].(string)
@@ -96,4 +96,16 @@ func head(s string, n int) string {
 		return s
 	}
 	return string(r[:n])
+}
+
+// respectsNamedModel reports whether a subagent model the caller named is
+// kept as is. Claude names models on its own (model: "opus" in an Agent
+// call or a workflow stage), and those agents escaped routing (live: 57
+// agents, about $1.3K a week): a named model is kept only when the user
+// asked for a model for this session or its work, in words or by tag.
+func respectsNamedModel(env *router.Env, sess *state.Session) bool {
+	if !env.Cfg.RespectExplicitSubagentModel {
+		return false
+	}
+	return sess.PinModel != "" || (sess.Work != nil && sess.Work.Model != "")
 }

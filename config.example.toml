@@ -14,6 +14,8 @@ jev_timeout = "4s"
 state_budget_tokens = 24000
 theta_act = 0.6
 theta_low = 0.35
+# A subagent model the caller names is kept only when you asked for a model
+# (a [model:X] pin, or a model asked in words for the work); false routes all.
 respect_explicit_subagent_model = true
 jev_shadow_model = ""            # set during a new Jev version's observation period
 # stale_days = 60                # catalog data older than this warns

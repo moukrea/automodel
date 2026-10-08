@@ -66,3 +66,19 @@ func TestDetourDoneRunsAtTheDetourLevel(t *testing.T) {
 		t.Errorf("ultrathink on the wrap-up closing the kept detour: %s", v.Tier.ID)
 	}
 }
+
+// The costliest tier only on Jev's own reading: a split reading the
+// underprovision penalty would settle at max stays one tier below (live: a
+// subagent read high 0.43 / max 0.42 ran at max for five days).
+func TestMaxOnlyOnJevsReading(t *testing.T) {
+	e := testEnv(t)
+	p := policy.Params{Penalty: 1.5, Scale: 1}
+	split := Reading{probs: map[string]float64{"opus-xhigh": 0.15, "opus-max": 0.42, "sonnet-xhigh": 0.43}, conf: 0.43, top: "sonnet-xhigh"}
+	if got, _ := e.pick(Request{Scope: catalog.ScopeSubagent}, split, nil, p); got.ID == "opus-max" {
+		t.Errorf("split reading picked %s", got.ID)
+	}
+	sure := Reading{probs: map[string]float64{"opus-max": 0.8, "opus-xhigh": 0.2}, conf: 0.8, top: "opus-max"}
+	if got, _ := e.pick(Request{Scope: catalog.ScopeSubagent}, sure, nil, p); got.ID != "opus-max" {
+		t.Errorf("Jev's own max reading picked %s", got.ID)
+	}
+}

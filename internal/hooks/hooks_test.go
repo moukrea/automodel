@@ -574,9 +574,15 @@ func TestAgentHook(t *testing.T) {
 		t.Errorf("subagent question = %+v", q)
 	}
 
+	// A model Claude named on its own is routed; one the user asked for
+	// (a model pin, or a model asked in words for the work) is kept.
 	in["tool_input"].(map[string]any)["model"] = "opus"
+	if out := run(t, env, "agent", in); out == nil || out.HookSpecificOutput.UpdatedInput["model"] != "haiku" {
+		t.Errorf("a model Claude named escaped routing: %+v", out)
+	}
+	env.State.Update("s5", func(s *state.Session) bool { s.PinModel = "claude-opus-5-5"; return true })
 	if out := run(t, env, "agent", in); out != nil {
-		t.Errorf("explicit model not respected: %+v", out)
+		t.Errorf("a model under the user's pin not respected: %+v", out)
 	}
 }
 
@@ -598,7 +604,8 @@ func TestWorkflowHook(t *testing.T) {
 	got := out.HookSpecificOutput.UpdatedInput["script"].(string)
 	for _, want := range []string{
 		`agent('list files', {model: "sonnet", effort: "high", ...({label: 'ls'})})`,
-		`agent('judge', {model: 'opus', effort: 'max'})`,
+		// Named by Claude, not the user: routed, the decision last so it wins.
+		`agent('judge', {...({model: 'opus', effort: 'max'}), model: "sonnet", effort: "high"})`,
 		// Built from another agent's output: nothing to read, the session's
 		// model and effort.
 		"agent(`fix ${a}`)",
@@ -609,8 +616,8 @@ func TestWorkflowHook(t *testing.T) {
 			t.Errorf("missing %s in\n%s", want, got)
 		}
 	}
-	if fj.calls() != 2 {
-		t.Errorf("jev calls = %d (explicit and unreadable sites must be skipped)", fj.calls())
+	if fj.calls() != 3 {
+		t.Errorf("jev calls = %d (unreadable sites must be skipped)", fj.calls())
 	}
 	shown := false
 	fj.mu.Lock()
