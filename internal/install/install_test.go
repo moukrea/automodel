@@ -51,6 +51,7 @@ func TestMergeRoundTrip(t *testing.T) {
 	for _, kv := range envVars(cfg) {
 		env.Delete(kv[0])
 	}
+	env.Delete(subagentCacheTTL)
 	removeOwnedHooks(s.Obj("hooks"))
 	sl := s.Obj("statusLine")
 	sl.Set("command", "bash agentline.sh")
@@ -71,6 +72,9 @@ func TestFirstPartyOnlyForAnthropicUpstream(t *testing.T) {
 	cfg := config.Default()
 	o := Options{Exe: "/x/automodel", ConfigPath: "/x/config.toml"}
 	merge(s, o, cfg)
+	if v, _ := s.Obj("env").Get(subagentCacheTTL); v != "1h" {
+		t.Errorf("%s = %v, want 1h", subagentCacheTTL, v)
+	}
 	if v, _ := s.Obj("env").Get(firstPartyEnv); v != "1" {
 		t.Fatalf("default upstream: %s = %v", firstPartyEnv, v)
 	}

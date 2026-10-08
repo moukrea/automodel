@@ -180,6 +180,14 @@ var hookEvents = []struct{ event, matcher, name string }{
 // proxy forwards to api.anthropic.com unchanged.
 const firstPartyEnv = "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL"
 
+// subagentCacheTTL keeps subagents' prompt cache for an hour, as Claude
+// Code does for the main thread of a subscriber. Its default for subagents
+// is 5 minutes: a subagent that waits longer on a build, a CI run or a
+// sleep writes its whole context again on its next request (ledger,
+// 2026-10-06/08: 87% of subagent cache writes, a third of all usage, came
+// after gaps under an hour). A value the user set is kept.
+const subagentCacheTTL = "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"
+
 func firstPartyUpstream(cfg *config.Config) bool {
 	u, err := url.Parse(cfg.Upstream)
 	return err == nil && u.Scheme == "https" && u.Host == "api.anthropic.com"
@@ -258,6 +266,9 @@ func Preview(o Options, cfg *config.Config) ([]byte, error) {
 func merge(s *Object, o Options, cfg *config.Config) {
 	env := s.Obj("env")
 	env.Delete(firstPartyEnv) // re-added below only for a first-party upstream
+	if _, set := env.Get(subagentCacheTTL); !set {
+		env.Set(subagentCacheTTL, "1h") // before the owned entries, which Set moves last
+	}
 	for _, kv := range envVars(cfg) {
 		env.Set(kv[0], kv[1])
 	}
@@ -427,6 +438,9 @@ func Remove(o Options) error {
 			env.Delete(kv[0])
 		}
 		env.Delete(firstPartyEnv)
+		if v, _ := env.Get(subagentCacheTTL); v == "1h" {
+			env.Delete(subagentCacheTTL)
+		}
 		if env.Len() == 0 {
 			settings.Delete("env")
 		}
