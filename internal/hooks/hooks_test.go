@@ -574,6 +574,13 @@ func TestAgentHook(t *testing.T) {
 		t.Errorf("subagent question = %+v", q)
 	}
 
+	// A fork stays on the parent's model, to read its cache.
+	fork := map[string]any{"session_id": "s5", "tool_name": "Agent", "cwd": t.TempDir(),
+		"tool_input": map[string]any{"description": "branch off", "prompt": "Try the other approach", "subagent_type": "fork"}}
+	if out := run(t, env, "agent", fork); out != nil {
+		t.Errorf("a fork was routed: %+v", out)
+	}
+
 	// A model Claude named on its own is routed; one the user asked for
 	// (a model pin, or a model asked in words for the work) is kept.
 	in["tool_input"].(map[string]any)["model"] = "opus"
