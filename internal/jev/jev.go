@@ -360,11 +360,11 @@ var (
 			},
 			catalog.RelationWrapUp: {
 				What:     "Wraps up work that is finished: a summary or a recap, a commit message, a PR description, a push, a changelog entry, or a question that only recalls or explains the finished work (what changed, how it works, why it was done that way). A go-ahead to such a step the assistant proposed once the work is done ('yes' to 'Want me to push the branch and open the PR?') is a wrap-up too, also when other work waits, paused ('yes' to 'Committed. Want me to push it?' after a detour).",
-				NotFor:   "Finishing or fixing the work itself (extend); a question while the work is still pending (side_question).",
+				NotFor:   "Finishing or fixing the work itself (extend); a question while the work is still pending (side_question); a new deliverable made from the finished work for other people, such as a presentation, a slide deck, a one-pager or a non-technical explainer (new_task).",
 				Examples: []string{"write the commit message", "summarize what you changed", "open the PR", "push it", "yes, push it and open the PR", "how does the new retry work, in two sentences?", "résume ce que tu as fait", "c'était quoi le problème, finalement ?", "fais le commit et pousse", "oui, vas-y pour la PR"},
 			},
 			catalog.RelationNewTask: {
-				What:     "Starts a separate piece of work (a change, a fix, a feature, an investigation) that the work in progress doesn't include, even one that repeats its pattern on another target (another endpoint, page or module).",
+				What:     "Starts a separate piece of work (a change, a fix, a feature, an investigation, a deliverable for other people such as a presentation or a one-pager) that the work in progress doesn't include, even one that repeats its pattern on another target (another endpoint, page or module).",
 				NotFor:   "More work on the work in progress itself, such as a test of what it added or one more file for the audit or the review it is, or a problem it caused, or one more small change asked along with it ('while you're at it', 'tant que tu y es') or a step queued for when it is done ('after the tests', 'quand t'as fini') (extend); carrying out what the assistant just proposed for it (continue); a question that starts no work (side_question, aside).",
 				Examples: []string{"now rename the config loader", "next: design how to shard the job queue", "now the same retry logic for the email sender", "unrelated, but the login page is slow", "autre chose : mets à jour le README", "passons au module de facturation"},
 			},
