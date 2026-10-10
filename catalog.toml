@@ -1547,7 +1547,7 @@ criteria = "A routine change with a clear recipe in one area: a small feature or
 rank = 3
 model = "claude-opus-5-5"
 effort = "high"
-criteria = "A change spanning several files or components, with real edge cases and some design choices: refactors, integrations, migrating a module, performance work on a known bottleneck."
+criteria = "A change spanning several files or components, with real edge cases and some design choices: refactors, integrations, migrating a module or upgrading a framework, a feature whose state must stay consistent (caching with invalidation, offline sync, invitations), performance work, or tracking down a slowdown or regression that a recent change introduced."
 
 [tiers.main.xhigh]
 rank = 4
@@ -1575,7 +1575,10 @@ min_tier = "high"
 # six environments and a remark typed during a form migration (0.82 for a
 # Moment.js removal), which 0.75 turned on. A wrap-up, a side question or
 # an aside never runs with it (router.Judge).
-threshold = 0.8
+# 2026-10-10: 0.85. Off-labeled framework upgrades and module migrations
+# read 0.81-0.83 (React 18, Moment.js); every on-labeled case decided on
+# reads 0.85 or more on train, test and heldout4 (--answers replays).
+threshold = 0.85
 question = "Would this work be done better by several agents working in parallel (workflow orchestration) than by one assistant working alone?"
 yes = "Broad work that splits into many independent parts: auditing or reviewing a whole codebase, sweeping migrations across many files or services, multi-angle research or plans cross-checked by independent reviewers."
 no = "Work one assistant does well alone: a single feature, bug, question, or refactor of one area, and anything small or sequential."

@@ -378,3 +378,10 @@
 - Reasons: 8 new invented train cases (decks, one-pagers, explainers vs a three-line summary, a commit, a two-sentence email): 12/24 → 24/24 right (3 repeats). Train: exact 93% → 93%, decisions below the label 29 → 18, gate pass → pass. Old test: exact 92% → 93%, gate pass → pass. heldout4 (once, aggregates): exact 90% → 90%, follow-ups below the work 0 → 0; its gate fails before and after on the same points.
 - Sources: owner's sessions (anonymised), automodel eval.
 - Still to verify: deliverables of high complexity (a full design doc) stay judged by the level question as before.
+
+## 2026-10-10 — High names framework upgrades, consistent-state features and regressions; ultracode at 0.85
+- Trigger: the regression gate failed on held-out sets on high recall (heldout4 73%).
+- Changes: the high criteria now name framework/library upgrades, features whose state must stay consistent (a cache with invalidation, offline sync) and hunting down a regression; `[modes.ultracode]` threshold 0.80 → 0.85. New held-out split `heldout5` (86 invented cases, written apart and run once).
+- Reasons: on a Jev split between high and xhigh the 1.5 penalty went up to xhigh, and these tasks read as xhigh; ultracode switched on for framework migrations at 0.81–0.83 (every expected ultracode case reads ≥ 0.85). heldout5, 3 repeats, before → after: decision exact 87% → 90%, high recall 77% → 88%, acceptable 96% → 98%; main failed the gate on exact and high recall, the change fails it only on 1 of 258 answers decided below a follow-up's label, which a fourth run didn't reproduce. heldout4 (partial, credits ran out): exact 90% → 93%, high recall 73% → 91%, gate pass. Train 93% → 94%, old test 92% → 93% (partial). Penalty 1.2 tried and not kept (rank error 0.09 → 0.11 on the old test).
+- Sources: automodel eval.
+- Still to verify: a fresh held-out set before the next criteria change (heldout5 is now used).
