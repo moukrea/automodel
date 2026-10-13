@@ -156,3 +156,33 @@ func TestAgentSwitchCostLongContext(t *testing.T) {
 		t.Errorf("switch to Haiku at 50k = $%.3f, want 0 (short-prompt prices)", got)
 	}
 }
+
+// A resumed agent on Opus max that Jev reads split between two Sonnet levels
+// moves down: the lower tier is surely enough even if no single level is
+// (live: teammates stayed on opus-max, read 0 by Jev, at confidence 0.53-0.79
+// with sonnet-xhigh or below at 0.84-0.85).
+func TestMessageHookCumulativeDown(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		fj := &fakeJev{answers: []fa{answer("sonnet-high", 0.5)}}
+		env := setup(t, fj)
+		env.Cfg.Features.CumulativeDownConfidence = on
+		sid := "s9"
+		markJev(t, env, sid)
+		env.State.Update(sid, func(s *state.Session) bool {
+			s.Main = &state.Decision{Scope: "main", Tier: "xhigh", Model: "claude-opus-5-5", APIID: "claude-opus-5-5", Effort: "xhigh"}
+			s.Agents = map[string]*state.Decision{"ae0000000000000009": {Scope: "subagent", Tier: "opus-max", Model: "claude-opus-5-5", APIID: "claude-opus-5-5", Effort: "max"}}
+			return true
+		})
+		root := t.TempDir()
+		dir := filepath.Join(root, sid, "subagents")
+		writeAgent(t, dir, "ae0000000000000009", "general-purpose", "render", 10, 300_000, "claude-opus-5-5", time.Now().Add(-5*time.Minute))
+		run(t, env, "message", map[string]any{"session_id": sid, "tool_name": "SendMessage", "cwd": root, "transcript_path": filepath.Join(root, sid+".jsonl"),
+			"tool_input": map[string]any{"to": "render", "message": "Port the bloom pass from the dumped shader."}})
+		sess, _ := env.State.Load(sid)
+		d := sess.Agents["ae0000000000000009"]
+		if moved := d != nil && d.Tier != "opus-max"; moved != on {
+			l, _ := os.ReadFile(env.Cfg.Ledger)
+			t.Errorf("cumulative %v: decision %+v\n%s", on, d, l)
+		}
+	}
+}

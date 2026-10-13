@@ -160,6 +160,11 @@ type Features struct {
 	// level of its own, and the prompt is related to it, instead of being
 	// read alone as a first prompt.
 	LateJoinContext bool `toml:"late_join_context"`
+	// CumulativeDownConfidence: a costly downgrade needs the probability
+	// that the lower tier is enough (that the work needs it or less) to
+	// reach warm_min_confidence, not Jev's confidence in one level: a split
+	// between two levels both below the tier in force is a sure downgrade.
+	CumulativeDownConfidence bool `toml:"cumulative_down_confidence"`
 }
 
 func Default() *Config {
@@ -190,6 +195,7 @@ func Default() *Config {
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
 			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true, LateJoinContext: true,
+			CumulativeDownConfidence: true,
 		},
 	}
 }

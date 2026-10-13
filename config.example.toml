@@ -89,6 +89,10 @@ resumed_agents_own_level = true
 # its recent prompts asked for gets its own level, and the prompt is related to
 # it, instead of being read alone as the session's first prompt.
 late_join_context = true
+# A downgrade that rewrites the cache needs the probability that the lower
+# tier is enough (the work needs it or less) to reach warm_min_confidence,
+# instead of Jev's confidence in a single level.
+cumulative_down_confidence = true
 
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.
