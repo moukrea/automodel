@@ -79,6 +79,9 @@ func (c *Catalog) Validate(now time.Time, staleDays int) Issues {
 			if md.Price == nil {
 				errf("model %s: active model needs price", id)
 			}
+			if lp := md.LongPrice; lp != nil && (lp.Above <= 0 || lp.CacheRead <= 0 || lp.Input <= 0) {
+				errf("model %s: long_price needs above, input and cache_read", id)
+			}
 		}
 		for _, s := range md.Scopes {
 			if !contains(Scopes, s) {

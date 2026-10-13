@@ -300,13 +300,16 @@ type Model struct {
 	// PerTurnEffort: the model accepts effort-only system messages mid
 	// conversation (meta.per_turn_effort_beta), so an effort change keeps
 	// the prompt cache.
-	PerTurnEffort bool     `toml:"per_turn_effort" json:"per_turn_effort,omitempty"`
-	DefaultEffort string   `toml:"default_effort" json:"default_effort,omitempty"`
-	Price         *Price   `toml:"price" json:"price,omitempty"`
-	Fast          *Fast    `toml:"fast" json:"fast,omitempty"`
-	Scopes        []string `toml:"scopes" json:"scopes,omitempty"`
-	VerifiedAt    string   `toml:"verified_at" json:"verified_at,omitempty"`
-	Sources       []string `toml:"sources" json:"sources,omitempty"`
+	PerTurnEffort bool   `toml:"per_turn_effort" json:"per_turn_effort,omitempty"`
+	DefaultEffort string `toml:"default_effort" json:"default_effort,omitempty"`
+	Price         *Price `toml:"price" json:"price,omitempty"`
+	// LongPrice: what a whole request pays once its prompt passes Above
+	// tokens (Haiku 5.5: 5x past 100k). Price stays the short-prompt one.
+	LongPrice  *LongPrice `toml:"long_price" json:"long_price,omitempty"`
+	Fast       *Fast      `toml:"fast" json:"fast,omitempty"`
+	Scopes     []string   `toml:"scopes" json:"scopes,omitempty"`
+	VerifiedAt string     `toml:"verified_at" json:"verified_at,omitempty"`
+	Sources    []string   `toml:"sources" json:"sources,omitempty"`
 }
 
 type Price struct {
@@ -315,6 +318,24 @@ type Price struct {
 	CacheRead    float64 `toml:"cache_read" json:"cache_read"`
 	CacheWrite5m float64 `toml:"cache_write_5m" json:"cache_write_5m"`
 	CacheWrite1h float64 `toml:"cache_write_1h" json:"cache_write_1h"`
+}
+
+// LongPrice is a model's price for requests whose prompt passes Above tokens.
+type LongPrice struct {
+	Above int `toml:"above" json:"above"`
+	Price
+}
+
+// PriceAt is the price a request with a prompt of n tokens pays (nil: no
+// price).
+func (m *Model) PriceAt(n int) *Price {
+	if m == nil {
+		return nil
+	}
+	if m.LongPrice != nil && m.LongPrice.Above > 0 && n > m.LongPrice.Above {
+		return &m.LongPrice.Price
+	}
+	return m.Price
 }
 
 type Fast struct {

@@ -101,3 +101,58 @@ func TestMessageHook(t *testing.T) {
 		}
 	}
 }
+
+// A teammate (agent teams) is keyed name@team in its requests, and a move
+// to Haiku past 100k tokens is not free: the whole context is written again
+// at 5x Haiku's list price (live: a 507k-context teammate on Opus max read
+// as a free move to Haiku on a 0.16-confidence reading, and the decision was
+// stored under its transcript's ID, where the proxy never looked).
+func TestMessageHookTeammate(t *testing.T) {
+	fj := &fakeJev{answers: []fa{answer("haiku", 0.16)}}
+	env := setup(t, fj)
+	sid := "s8"
+	markJev(t, env, sid)
+	key := "m01-physics@session-s8"
+	env.State.Update(sid, func(s *state.Session) bool {
+		s.Main = &state.Decision{Scope: "main", Tier: "xhigh", Model: "claude-opus-5-5", APIID: "claude-opus-5-5", Effort: "xhigh"}
+		s.Agents = map[string]*state.Decision{key: {Scope: "subagent", Tier: "opus-max", Model: "claude-opus-5-5", APIID: "claude-opus-5-5", Effort: "max"}}
+		return true
+	})
+	root := t.TempDir()
+	tp := filepath.Join(root, sid+".jsonl")
+	dir := filepath.Join(root, sid, "subagents")
+	now := time.Now()
+	id := "am01-physics-1c49b8837aaacc61"
+	writeAgent(t, dir, id, "m01-physics", "m01-physics", 10, 507_000, "claude-opus-5-5", now.Add(-5*time.Minute))
+	meta, _ := json.Marshal(map[string]any{"agentType": "m01-physics", "description": "Native kart physics solver", "name": "m01-physics",
+		"taskKind": "in_process_teammate", "teamName": "session-s8"})
+	os.WriteFile(filepath.Join(dir, "agent-"+id+".meta.json"), meta, 0o600)
+	run(t, env, "message", map[string]any{"session_id": sid, "tool_name": "SendMessage", "cwd": root, "transcript_path": tp,
+		"tool_input": map[string]any{"to": "m01-physics", "message": "Check the drift constants against the new trace."}})
+	sess, _ := env.State.Load(sid)
+	if d := sess.Agents[id]; d != nil {
+		t.Errorf("decision stored under the transcript ID, which the proxy never sees: %+v", d)
+	}
+	d := sess.Agents[key]
+	if d == nil || d.Trigger != TriggerResumeAgent {
+		t.Fatalf("teammate decision under %s = %+v", key, d)
+	}
+	if d.Model != "claude-opus-5-5" {
+		l, _ := os.ReadFile(env.Cfg.Ledger)
+		t.Errorf("an unsure reading moved a 507k-context teammate off Opus: %+v\n%s", d, l)
+	}
+}
+
+func TestAgentSwitchCostLongContext(t *testing.T) {
+	env := setup(t, &fakeJev{})
+	cur := &state.Decision{Model: "claude-opus-5-5", Effort: "max"}
+	sc := agentSwitchCost(env, cur, 507_000)
+	haiku := env.Catalog.Tier("subagent", "haiku")
+	// 1h writes: 507k × (1.00 − 0.20) / 1e6 past 100k, not 507k × (0.20 − 0.20).
+	if got := sc(haiku); got < 0.39 || got > 0.42 {
+		t.Errorf("switch to Haiku at 507k = $%.3f, want about $0.41", got)
+	}
+	if got := agentSwitchCost(env, cur, 50_000)(haiku); got != 0 {
+		t.Errorf("switch to Haiku at 50k = $%.3f, want 0 (short-prompt prices)", got)
+	}
+}

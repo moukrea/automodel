@@ -498,23 +498,23 @@ func switchCost(env *router.Env, s *state.Session) func(*catalog.Tier) float64 {
 		if t.Model == s.Main.Model && (t.Effort == s.Main.Effort || perTurnOK(env, s, t.Model)) {
 			return 0
 		}
-		m := cat.Model(t.Model)
-		if m == nil || m.Price == nil || cur == nil || cur.Price == nil {
+		mp, cp := cat.Model(t.Model).PriceAt(s.ContextTokens), cur.PriceAt(s.ContextTokens)
+		if mp == nil || cp == nil {
 			return 0
 		}
-		write := m.Price.CacheWrite5m
-		if env.Cfg.CacheTTL.Duration >= time.Hour && m.Price.CacheWrite1h > 0 {
-			write = m.Price.CacheWrite1h
+		write := mp.CacheWrite5m
+		if env.Cfg.CacheTTL.Duration >= time.Hour && mp.CacheWrite1h > 0 {
+			write = mp.CacheWrite1h
 		}
-		c := float64(s.ContextTokens) * (write - cur.Price.CacheRead) / 1e6
+		c := float64(s.ContextTokens) * (write - cp.CacheRead) / 1e6
 		// A tier with a small window is a stop on the way: the session
 		// comes back to the current model, and pays that rebuild too.
 		if t.MaxContext > 0 && t.Model != s.Main.Model {
-			back := cur.Price.CacheWrite5m
-			if env.Cfg.CacheTTL.Duration >= time.Hour && cur.Price.CacheWrite1h > 0 {
-				back = cur.Price.CacheWrite1h
+			back := cp.CacheWrite5m
+			if env.Cfg.CacheTTL.Duration >= time.Hour && cp.CacheWrite1h > 0 {
+				back = cp.CacheWrite1h
 			}
-			c += float64(s.ContextTokens) * (back - m.Price.CacheRead) / 1e6
+			c += float64(s.ContextTokens) * (back - mp.CacheRead) / 1e6
 		}
 		return c
 	}

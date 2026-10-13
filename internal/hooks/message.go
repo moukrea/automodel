@@ -82,7 +82,7 @@ func Message(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		st["repo_languages"] = sess.Repo.Languages
 	}
 	req := router.Request{SessionID: in.SessionID, Scope: catalog.ScopeSubagent, Trigger: TriggerResumeAgent,
-		AgentType: ag.Type, AgentID: ag.ID, State: st, RepoDir: in.Cwd, Context: ag.Context}
+		AgentType: ag.Type, AgentID: ag.Key, State: st, RepoDir: in.Cwd, Context: ag.Context}
 	// Its current level, as the subagent tier on the same model nearest in
 	// effort (an agent following the main decision runs a main tier).
 	if t := nearestTier(c, cur.Model, cur.Effort); t != nil && ag.Warm(env.Now(), subagentTTL(env)) {
@@ -105,7 +105,7 @@ func Message(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		if s.Agents == nil {
 			s.Agents = map[string]*state.Decision{}
 		}
-		s.Agents[ag.ID] = &d
+		s.Agents[ag.Key] = &d
 		return true
 	})
 	return nil, err
@@ -114,6 +114,7 @@ func Message(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 // agentInfo is what the hook knows of a subagent from its transcript.
 type agentInfo struct {
 	ID, Type, Description, Name string
+	Key                         string // the agent ID its requests carry (the proxy's key)
 	Model                       string // API model of its last answer ("" if none)
 	Context                     int    // prompt tokens of its last request
 	Last                        time.Time
@@ -141,6 +142,7 @@ func findAgent(transcriptPath, sessionID, to string) *agentInfo {
 			AgentType   string `json:"agentType"`
 			Description string `json:"description"`
 			Name        string `json:"name"`
+			TeamName    string `json:"teamName"`
 		}
 		b, err := os.ReadFile(p)
 		if err != nil || json.Unmarshal(b, &meta) != nil {
@@ -149,7 +151,13 @@ func findAgent(transcriptPath, sessionID, to string) *agentInfo {
 		if to != id && to != meta.Name && !(agentIDRe.MatchString(to) && strings.HasPrefix(id, to)) {
 			continue
 		}
-		a := &agentInfo{ID: id, Type: meta.AgentType, Description: meta.Description, Name: meta.Name}
+		a := &agentInfo{ID: id, Key: id, Type: meta.AgentType, Description: meta.Description, Name: meta.Name}
+		if meta.TeamName != "" && meta.Name != "" {
+			// A teammate's requests carry name@team as their agent ID, not
+			// its transcript's ID (live: a decision stored under the file's
+			// ID never reached the teammate it was for).
+			a.Key = meta.Name + "@" + meta.TeamName
+		}
 		readAgentTranscript(strings.TrimSuffix(p, ".meta.json")+".jsonl", a)
 		return a
 	}
@@ -239,7 +247,7 @@ func userText(raw json.RawMessage) bool {
 // as it answered (effort unknown).
 func agentCurrent(env *router.Env, sess *state.Session, ag *agentInfo) *state.Decision {
 	c := env.Catalog
-	if d, ok := sess.Agents[ag.ID]; ok && d != nil && c.Model(d.Model) != nil {
+	if d, ok := sess.Agents[ag.Key]; ok && d != nil && c.Model(d.Model) != nil {
 		cp := *d
 		return &cp
 	}
@@ -295,15 +303,18 @@ func agentSwitchCost(env *router.Env, cur *state.Decision, context int) func(*ca
 		if t.Model == cur.Model && (cur.Effort == "" || t.Effort == cur.Effort) {
 			return 0
 		}
-		m := c.Model(t.Model)
-		if m == nil || m.Price == nil || from == nil || from.Price == nil {
+		// At the agent's context: Haiku's write past 100k is 5x its list
+		// price (live: a 507k-context teammate on Opus max read as a free
+		// move to Haiku, so a 0.16-confidence reading took it there).
+		to, stay := c.Model(t.Model).PriceAt(context), from.PriceAt(context)
+		if to == nil || stay == nil {
 			return 0
 		}
-		write := m.Price.CacheWrite5m
-		if long && m.Price.CacheWrite1h > 0 {
-			write = m.Price.CacheWrite1h
+		write := to.CacheWrite5m
+		if long && to.CacheWrite1h > 0 {
+			write = to.CacheWrite1h
 		}
-		return float64(context) * (write - from.Price.CacheRead) / 1e6
+		return float64(context) * (write - stay.CacheRead) / 1e6
 	}
 }
 

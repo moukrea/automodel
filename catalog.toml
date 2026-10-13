@@ -177,6 +177,9 @@ efforts = ["low", "medium", "high", "xhigh", "max"]
 default_effort = "medium"
 per_turn_effort = true
 price = { input = 0.10, output = 0.50, cache_read = 0.01, cache_write_5m = 0.125, cache_write_1h = 0.20 }
+# The whole request at 5x once its prompt passes 100k tokens: what moving a
+# long-context agent here costs (its context written again at 1.00, not 0.20).
+long_price = { above = 100_000, input = 0.50, output = 2.50, cache_read = 0.05, cache_write_5m = 0.625, cache_write_1h = 1.00 }
 scopes = ["main", "subagent"]
 verified_at = "2026-10-08"
 sources = [
