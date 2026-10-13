@@ -750,10 +750,10 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		case tier.ID == cur.ID && mode == curMode && (v.Model == "" || v.Model == req.Current.Model):
 			v.Keep = "same tier"
 		case free || x.any() || req.MinTier != "":
-		case tier.Rank < cur.Rank && rd.conf < f.WarmMinConfidence:
+		case tier.Rank < cur.Rank && e.downConfidence(rd, req.Scope, tier) < f.WarmMinConfidence:
 			v.Tier = cur
 			if mode == curMode {
-				v.Keep = fmt.Sprintf("confidence %.2f below %.2f", rd.conf, f.WarmMinConfidence)
+				v.Keep = fmt.Sprintf("confidence %.2f below %.2f", e.downConfidence(rd, req.Scope, tier), f.WarmMinConfidence)
 			}
 		}
 	}
@@ -895,6 +895,24 @@ func (e *Env) asked(req Request, rd Reading, cur, tier *catalog.Tier, rp policy.
 		return nil
 	}
 	return a
+}
+
+// downConfidence is how sure a costly move down to t is: Jev's confidence,
+// or (cumulative_down_confidence) the probability that t is enough, the
+// levels at or below it summed (live: resumed agents stayed on opus-max that
+// Jev gave 0, at confidence 0.53-0.79, while sonnet-xhigh or below read
+// 0.84-0.85).
+func (e *Env) downConfidence(rd Reading, scope string, t *catalog.Tier) float64 {
+	if !e.Cfg.Features.CumulativeDownConfidence {
+		return rd.conf
+	}
+	var p float64
+	for _, x := range e.Catalog.TiersByRank(scope) {
+		if x.Rank <= t.Rank {
+			p += rd.probs[x.ID]
+		}
+	}
+	return max(p, rd.conf)
 }
 
 // Reading is Jev's answer mapped onto the catalog.
