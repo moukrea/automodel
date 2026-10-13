@@ -1135,3 +1135,74 @@ func TestPinHandBackJudgesTheWork(t *testing.T) {
 		t.Fatalf("work %+v, want xhigh with the pinned stretch's goal", w)
 	}
 }
+
+// A session first seen mid-conversation (switched to the routed model with
+// /model) is judged from its transcript: the work its prompts asked for gets
+// a level of its own, and a status ping follows it up instead of becoming a
+// low work of its own.
+func TestLateJoinJudgesTheTranscriptsWork(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		second   fa
+		wantMain string
+		wantWork string
+		goalHas  string
+	}{
+		{"status ping follows the work", fa{tier: "low", conf: 0.8, ultra: 0.05, rel: "continue", relP: 0.8}, "xhigh", "xhigh", "staging cluster"},
+		{"new task gets its own level", fa{tier: "low", conf: 0.9, ultra: 0.05, rel: "new_task", relP: 0.9}, "low", "low", "rename"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fj := &fakeJev{}
+			env := setup(t, fj)
+			sid := "s1"
+			markJev(t, env, sid)
+			cwd := t.TempDir()
+			tp := filepath.Join(t.TempDir(), "t.jsonl")
+			hard := "Migrate the staging cluster's object storage to the new S3 gateway and keep every attachment reachable"
+			next := map[bool]string{true: "how's it going?", false: "rename the helper to fetchAll"}[tc.wantMain == "xhigh"]
+			os.WriteFile(tp, []byte(strings.Join([]string{
+				`{"type":"user","message":{"role":"user","content":"` + hard + `"}}`,
+				`{"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Copying the buckets; 3 of 7 done."}]}}`,
+				`{"type":"system","subtype":"turn_duration"}`,
+				`{"type":"user","message":{"role":"user","content":"` + next + `"}}`,
+			}, "\n")+"\n"), 0o600)
+			fj.answers = []fa{{tier: "xhigh", conf: 0.9, ultra: 0.05}, tc.second}
+			run(t, env, "decide", map[string]any{"session_id": sid, "prompt": next, "cwd": cwd, "transcript_path": tp})
+			if n := len(fj.requests); n != 2 {
+				t.Fatalf("%d Jev calls, want 2 (the transcript's work, then the prompt)", n)
+			}
+			if b, _ := json.Marshal(fj.requests[0].State); !strings.Contains(string(b), "staging cluster") || strings.Contains(string(b), next) {
+				t.Fatalf("first call's state %s, want the transcript's work as the task", b)
+			}
+			if q := fj.last().Questions; q[jev.QRelation].Type != "choice" {
+				t.Fatalf("no relation question on the prompt")
+			}
+			s, _ := env.State.Load(sid)
+			if s.Main == nil || s.Main.Tier != tc.wantMain {
+				t.Fatalf("decision %+v, want %s", s.Main, tc.wantMain)
+			}
+			if w := s.Work; w == nil || w.Tier != tc.wantWork {
+				t.Fatalf("work %+v, want %s", w, tc.wantWork)
+			}
+			if !strings.Contains(s.Work.Goal, tc.goalHas) {
+				t.Fatalf("work goal %q, want it to name %q", s.Work.Goal, tc.goalHas)
+			}
+		})
+	}
+}
+
+// Without a prompt before it in the transcript, a first prompt is a first
+// prompt: one Jev call.
+func TestFirstPromptIsNoLateJoin(t *testing.T) {
+	fj := &fakeJev{answers: []fa{answer("medium", 0.9)}}
+	env := setup(t, fj)
+	sid := "s1"
+	markJev(t, env, sid)
+	tp := filepath.Join(t.TempDir(), "t.jsonl")
+	p := "Add a --dry-run flag to the export command"
+	os.WriteFile(tp, []byte(`{"type":"user","message":{"role":"user","content":"`+p+`"}}`+"\n"), 0o600)
+	run(t, env, "decide", map[string]any{"session_id": sid, "prompt": p, "cwd": t.TempDir(), "transcript_path": tp})
+	if n := len(fj.requests); n != 1 {
+		t.Fatalf("%d Jev calls, want 1", n)
+	}
+}

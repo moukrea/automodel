@@ -249,6 +249,21 @@ func Decide(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 				reqSess = &s
 			}
 		}
+		// A session first seen mid-conversation (switched to the routed model
+		// with /model, its state lost) has a work its transcript tells: judged
+		// as a first prompt on what the recent prompts asked, then this prompt
+		// related to it, as after a pause (live: "so, how's it going?" on a
+		// long deployment job read alone as low and became the work).
+		if trigger == "initial" && handedBack == nil && typed && !late && env.Cfg.Features.LateJoinContext {
+			if tr == nil {
+				tr = readTr(in.TranscriptPath)
+			}
+			if w, d := lateJoinWork(ctx, env, in, sess, tr, signals); w != nil {
+				s := *sess
+				s.Work, s.Main = w, d
+				reqSess, handedBack, trigger = &s, w, "cold"
+			}
+		}
 		req := mainRequest(env, in, reqSess, tr, signals, trigger)
 		req.FollowUp, req.ProposalGoAhead, req.BackFirst = followUp, proposalGoAhead, backFirst
 		req.Released = released
@@ -752,6 +767,29 @@ func effortTag(prompt string) string {
 func mustJSON(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// lateJoinWork is the work a session first seen mid-conversation was
+// doing: what its recent prompts asked, at the level Jev gives it as a first
+// prompt, and the decision that level runs (nil when the transcript has no
+// prompt before this one).
+func lateJoinWork(ctx context.Context, env *router.Env, in *Input, sess *state.Session, tr *transcript.Info, signals *state.RepoSignals) (*state.Work, *state.Decision) {
+	if tr == nil {
+		return nil, nil
+	}
+	g := recentGoal(tr.UserPrompts, in.Prompt)
+	if g == "" {
+		return nil, nil
+	}
+	gin := *in
+	gin.Prompt = g
+	req := mainRequest(env, &gin, sess, tr, signals, "initial")
+	req.Trigger = "late-join"
+	d, _ := env.Decide(ctx, req)
+	if d == nil {
+		return nil, nil
+	}
+	return &state.Work{Tier: d.Tier, Mode: d.Mode, Goal: g, Since: env.Now()}, d
 }
 
 // recentGoal names a work that has no goal from the prompts before this

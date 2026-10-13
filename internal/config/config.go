@@ -154,6 +154,12 @@ type Features struct {
 	// warm cache, instead of the level of whoever spawned it (an agent
 	// resumed after a restart asks for the session's model).
 	ResumedAgentsOwnLevel bool `toml:"resumed_agents_own_level"`
+	// LateJoinContext: a session automodel first sees mid-conversation
+	// (switched to the routed model with /model, its state lost) is judged
+	// from its transcript: the work its recent prompts asked for gets a
+	// level of its own, and the prompt is related to it, instead of being
+	// read alone as a first prompt.
+	LateJoinContext bool `toml:"late_join_context"`
 }
 
 func Default() *Config {
@@ -183,7 +189,7 @@ func Default() *Config {
 			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
-			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true,
+			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true, LateJoinContext: true,
 		},
 	}
 }

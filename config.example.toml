@@ -84,6 +84,11 @@ trailing_go_ahead = true
 # for it, weighed against rewriting its warm cache, instead of the level of
 # whoever spawned it. Forks keep their parent's model.
 resumed_agents_own_level = true
+# A session first seen mid-conversation (switched to the routed model with
+# /model, or its automodel state lost) is judged from its transcript: the work
+# its recent prompts asked for gets its own level, and the prompt is related to
+# it, instead of being read alone as the session's first prompt.
+late_join_context = true
 
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.
