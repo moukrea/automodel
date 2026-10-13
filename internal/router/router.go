@@ -751,6 +751,16 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 			v.Keep = "same tier"
 		case free || x.any() || req.MinTier != "":
 		case tier.Rank < cur.Rank && e.downConfidence(rd, req.Scope, tier) < f.WarmMinConfidence:
+			// The cheapest move may be one Jev doesn't back (live: a 620K
+			// teammate read sonnet-high 0.88 went to Haiku, given 0.01,
+			// because its rewrite cost less); a lower tier that is enough
+			// on Jev's reading may still pay back.
+			if alt, apk := e.safeDown(req, rd, cur, pk, params); alt != nil && (v.Model == "" || v.Model == alt.Model) {
+				v.Tier, v.Pick = alt, apk
+				why = append(why, fmt.Sprintf("%s not enough on Jev's reading (%.2f): %s", tier.ID, e.downConfidence(rd, req.Scope, tier), alt.ID))
+				v.Hold = strings.Join(why, "; ")
+				break
+			}
 			v.Tier = cur
 			if mode == curMode {
 				v.Keep = fmt.Sprintf("confidence %.2f below %.2f", e.downConfidence(rd, req.Scope, tier), f.WarmMinConfidence)
@@ -912,7 +922,51 @@ func (e *Env) downConfidence(rd Reading, scope string, t *catalog.Tier) float64 
 			p += rd.probs[x.ID]
 		}
 	}
-	return max(p, rd.conf)
+	// Jev's confidence is in its top level, not in t: it only stands for
+	// t when t is that level (live: Haiku, given 0.01, passed on the 0.91
+	// of sonnet-high).
+	if t.ID == rd.top {
+		return max(p, rd.conf)
+	}
+	return p
+}
+
+// safeDown is the move below cur that pays back best among the tiers Jev's
+// reading says are enough (downConfidence at or above warm_min_confidence),
+// when Jev is sure of that reading,
+// or nil when none beats staying.
+func (e *Env) safeDown(req Request, rd Reading, cur *catalog.Tier, pk *policy.Pick, params policy.Params) (*catalog.Tier, *policy.Pick) {
+	// Only on a sure reading: an unsure one keeps the tier in force, as
+	// before.
+	if pk == nil || req.SwitchCost == nil || !e.Cfg.Features.CumulativeDownConfidence || rd.conf < e.Cfg.Features.WarmMinConfidence {
+		return nil, nil
+	}
+	scale := params.Scale
+	if scale <= 0 {
+		scale = 1
+	}
+	curL, ok := pk.Loss[cur.ID]
+	if !ok {
+		return nil, nil
+	}
+	stay := scale * curL
+	var best *catalog.Tier
+	bestV := stay
+	for _, t := range e.Catalog.TiersByRank(req.Scope) {
+		l, ok := pk.Loss[t.ID]
+		if t.Rank >= cur.Rank || !ok || e.downConfidence(rd, req.Scope, t) < e.Cfg.Features.WarmMinConfidence {
+			continue
+		}
+		if v := scale*l + req.SwitchCost(t); v < bestV-1e-12 {
+			best, bestV = t, v
+		}
+	}
+	if best == nil {
+		return nil, nil
+	}
+	np := *pk
+	np.Tier, np.Gain, np.SwitchCost = best, stay-bestV, req.SwitchCost(best)
+	return best, &np
 }
 
 // Reading is Jev's answer mapped onto the catalog.
