@@ -194,8 +194,24 @@ type Session struct {
 
 	PendingAgents []PendingAgent       `json:"pending_agents,omitempty"`
 	Agents        map[string]*Decision `json:"agents,omitempty"`
+	// AgentEfforts is per-turn effort for each subagent with a decision of
+	// its own, keyed by agent ID, as EffortBase/EffortMarks are for the main
+	// thread: the routed effort applies over the medium Claude Code states
+	// in every subagent conversation, and a later change keeps its cache.
+	AgentEfforts map[string]*AgentEffort `json:"agent_efforts,omitempty"`
 
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AgentEffort is a subagent conversation's per-turn effort (see the main
+// thread's EffortBase). Model is the model it applies to: another model
+// starts a new conversation epoch (its cache is gone anyway).
+type AgentEffort struct {
+	Model    string       `json:"model"`
+	Base     string       `json:"base"`
+	Marks    []EffortMark `json:"marks,omitempty"`
+	Rejected bool         `json:"rejected,omitempty"`
+	UsedAt   time.Time    `json:"used_at"`
 }
 
 // EffortMark switches the effort from message Index on. Anchor is a hash of

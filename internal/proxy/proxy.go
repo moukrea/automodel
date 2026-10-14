@@ -121,6 +121,7 @@ type route struct {
 
 	plainBody   []byte // the request without per-turn effort, for retryTransport
 	perTurnBeta string
+	agentEffort bool // per-turn effort of the subagent's own (retryTransport)
 }
 
 func cloneFields(f map[string]json.RawMessage) map[string]json.RawMessage {
@@ -258,12 +259,28 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 			fields["max_tokens"], _ = json.Marshal(m.MaxOutput)
 		}
 	}
-	if custom && rt.scope == catalog.ScopeMain && p.Cfg.Features.PerTurnEffort && perTurn(cat, m) {
+	pt := p.Cfg.Features.PerTurnEffort && perTurn(cat, m)
+	// A subagent with a decision of its own (a routed tier still in the
+	// catalog) runs its routed effort: Claude Code states medium in every
+	// subagent conversation, which the API applies over the top-level
+	// effort.
+	ownAgent := rt.scope == catalog.ScopeSubagent && dec.Scope == catalog.ScopeSubagent && cat.Tier(catalog.ScopeSubagent, dec.Tier) != nil
+	var turn func() (string, bool)
+	switch {
+	case pt && custom && rt.scope == catalog.ScopeMain:
+		turn = func() (string, bool) { return p.turnEffort(rt.sessionID, fields, dec.Effort, countTokens) }
+	case pt && ownAgent && p.Cfg.Features.EnforceAgentEffort:
+		rt.agentEffort = true
+		turn = func() (string, bool) {
+			return p.perTurnEffort(rt.sessionID, fields, dec.Effort, countTokens, agentTrack(rt.agentID, m.ID, dec.Effort, time.Now()))
+		}
+	}
+	if turn != nil {
 		// The plain body (top-level effort only) is kept for the retry
 		// transport in case the API refuses per-turn effort.
 		plain := cloneFields(fields)
 		applyEffort(plain, m, dec.Effort, countTokens)
-		if base, ok := p.turnEffort(rt.sessionID, fields, dec.Effort, countTokens); ok {
+		if base, ok := turn(); ok {
 			applyEffort(fields, m, base, countTokens)
 			rt.plainBody, _ = json.Marshal(plain)
 			rt.perTurnBeta = cat.Meta.PerTurnEffortBeta

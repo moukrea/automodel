@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/moukrea/automodel/internal/catalog"
 	"github.com/moukrea/automodel/internal/state"
@@ -109,10 +110,60 @@ func firstUser(msgs []msg) int {
 	return -1
 }
 
+// effortTrack points at one conversation's per-turn effort state: the main
+// thread's (Session.EffortBase...) or a subagent's (Session.AgentEfforts).
+type effortTrack struct {
+	base     *string
+	marks    *[]state.EffortMark
+	pending  **state.PendingEffort
+	rejected *bool
+}
+
+// mainTrack is the main thread's per-turn effort state.
+func mainTrack(s *state.Session) (*effortTrack, bool) {
+	return &effortTrack{&s.EffortBase, &s.EffortMarks, &s.PendingEffort, &s.PerTurnRejected}, false
+}
+
+// agentTrack is a subagent's per-turn effort state, created on its first
+// request. Its effort is always "pending": a request whose newest message
+// comes after a decision that changed the effort (a message sent to the
+// agent) gets a mark there.
+func agentTrack(agentID, model, want string, now time.Time) func(s *state.Session) (*effortTrack, bool) {
+	return func(s *state.Session) (*effortTrack, bool) {
+		changed := false
+		ae := s.AgentEfforts[agentID]
+		if ae == nil || ae.Model != model {
+			if s.AgentEfforts == nil {
+				s.AgentEfforts = map[string]*state.AgentEffort{}
+			}
+			for id, old := range s.AgentEfforts {
+				if now.Sub(old.UsedAt) > agentEffortTTL {
+					delete(s.AgentEfforts, id)
+				}
+			}
+			ae = &state.AgentEffort{Model: model}
+			s.AgentEfforts[agentID], changed = ae, true
+		}
+		if now.Sub(ae.UsedAt) > time.Hour {
+			ae.UsedAt, changed = now, true
+		}
+		pe := &state.PendingEffort{Effort: want}
+		return &effortTrack{&ae.Base, &ae.Marks, &pe, &ae.Rejected}, changed
+	}
+}
+
+// agentEffortTTL drops the per-turn state of agents idle this long.
+const agentEffortTTL = 48 * time.Hour
+
 // turnEffort rewrites fields for per-turn effort and returns the top-level
 // effort to send. want is the effort of the current decision. readOnly
 // (count_tokens) applies the recorded marks without binding or resetting.
 func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, want string, readOnly bool) (string, bool) {
+	return p.perTurnEffort(sessionID, fields, want, readOnly, mainTrack)
+}
+
+// perTurnEffort is turnEffort for the conversation pick returns.
+func (p *Proxy) perTurnEffort(sessionID string, fields map[string]json.RawMessage, want string, readOnly bool, pick func(*state.Session) (*effortTrack, bool)) (string, bool) {
 	var raws []json.RawMessage
 	if json.Unmarshal(fields["messages"], &raws) != nil || len(raws) == 0 || sessionID == "" {
 		return "", false
@@ -145,23 +196,23 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 	var base string
 	var marks []state.EffortMark
 	apply := func(s *state.Session) bool {
-		changed := false
-		if s.PerTurnRejected {
+		t, changed := pick(s)
+		if *t.rejected {
 			base = ""
-			return false
+			return changed
 		}
-		if s.EffortBase == "" {
-			s.EffortBase, s.EffortMarks, changed = want, nil, true
+		if *t.base == "" {
+			*t.base, *t.marks, changed = want, nil, true
 			if continuing {
 				// A thread we didn't see start: keep the effort it was created with.
 				if e := clientEffort(fields); e != "" {
-					s.EffortBase = e
+					*t.base = e
 				}
 			}
 		}
 		if continuing {
-			for k := range s.EffortMarks {
-				s.EffortMarks[k].Index = -1 // in the thread already, not in this request
+			for k := range *t.marks {
+				(*t.marks)[k].Index = -1 // in the thread already, not in this request
 			}
 		} else {
 			// Place each mark after the message it follows, found by what that
@@ -169,18 +220,18 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 			// rewritten (compaction, rewind): the cache is gone anyway, start a
 			// new epoch at the current effort.
 			pos := 0
-			for k, mk := range s.EffortMarks {
+			for k, mk := range *t.marks {
 				j := pos
 				for j < len(kept) && anchor(kept[j]) != mk.Anchor {
 					j++
 				}
 				if j == len(kept) {
-					log.Printf("per-turn effort %s: history changed (mark %d of %d not found in %d messages, thread %q), new epoch at %s", short(sessionID), k, len(s.EffortMarks), len(kept), th.Type, want)
-					s.EffortBase, s.EffortMarks, s.PendingEffort, changed = want, nil, nil, true
+					log.Printf("per-turn effort %s: history changed (mark %d of %d not found in %d messages, thread %q), new epoch at %s", short(sessionID), k, len(*t.marks), len(kept), th.Type, want)
+					*t.base, *t.marks, *t.pending, changed = want, nil, nil, true
 					break
 				}
-				if s.EffortMarks[k].Index != j {
-					s.EffortMarks[k].Index, changed = j, true
+				if (*t.marks)[k].Index != j {
+					(*t.marks)[k].Index, changed = j, true
 				}
 				pos = j + 1
 			}
@@ -188,29 +239,41 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 			// beta on, an unstated effort is rendered at the newest turn, which
 			// moves on every prompt and would defeat the cache (Claude Code does
 			// the same).
-			if len(s.EffortMarks) == 0 && !readOnly {
+			if len(*t.marks) == 0 && !readOnly {
 				if i := firstUser(msgs); i >= 0 {
-					s.EffortMarks, changed = []state.EffortMark{{Index: i, Anchor: anchor(kept[i]), Effort: s.EffortBase}}, true
+					*t.marks, changed = []state.EffortMark{{Index: i, Anchor: anchor(kept[i]), Effort: *t.base}}, true
 				}
 			}
 		}
-		if pe := s.PendingEffort; pe != nil && !readOnly {
+		if pe := *t.pending; pe != nil && !readOnly {
 			if i := promptIndex(msgs); i >= 0 {
-				effective := s.EffortBase
+				effective := *t.base
 				var keep []state.EffortMark
-				for _, mk := range s.EffortMarks {
-					if continuing || mk.Index < i {
+				placed := false
+				for _, mk := range *t.marks {
+					switch {
+					case continuing || mk.Index < i:
 						effective = mk.Effort
 						keep = append(keep, mk)
+					case mk.Index == i && mk.Effort == pe.Effort:
+						// Already there (the opening statement, or this request
+						// sent again): keep it where it is.
+						keep, placed = append(keep, mk), true
 					}
 				}
-				if pe.Effort != effective {
+				if !placed && pe.Effort != effective {
 					keep = append(keep, state.EffortMark{Index: i, Anchor: anchor(kept[i]), Effort: pe.Effort})
 				}
-				s.EffortMarks, s.PendingEffort, changed = keep, nil, true
+				if len(keep) != len(*t.marks) || pe.Effort != effective {
+					changed = true
+				}
+				*t.marks, *t.pending = keep, nil
+				if t.pending == &s.PendingEffort {
+					changed = true // the main thread's pending change is now bound
+				}
 			}
 		}
-		base, marks = s.EffortBase, append([]state.EffortMark(nil), s.EffortMarks...)
+		base, marks = *t.base, append([]state.EffortMark(nil), *t.marks...)
 		return changed
 	}
 	if readOnly {
@@ -229,8 +292,15 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 
 	// Each statement follows the user message it applies to, before the
 	// response (Claude Code's placement); the newest one may end the list.
+	// A system message of Claude Code's own that states an effort (it puts
+	// medium on the first one of every subagent conversation) says the
+	// effort in force at its place instead, or it would override ours.
 	out := make([]json.RawMessage, 0, len(kept)+len(marks))
+	effective := base
 	for i, r := range kept {
+		if msgs[i].Role == "system" && len(msgs[i].OutputConfig) > 0 {
+			r = restate(r, effective)
+		}
 		out = append(out, r)
 		for _, mk := range marks {
 			if mk.Index == i {
@@ -239,11 +309,35 @@ func (p *Proxy) turnEffort(sessionID string, fields map[string]json.RawMessage, 
 					"output_config": map[string]string{"effort": mk.Effort},
 				})
 				out = append(out, sys)
+				effective = mk.Effort
 			}
 		}
 	}
 	fields["messages"], _ = json.Marshal(out)
 	return base, true
+}
+
+// restate sets the effort a system message states, keeping the rest of it.
+func restate(raw json.RawMessage, effort string) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return raw
+	}
+	var oc map[string]json.RawMessage
+	if json.Unmarshal(m["output_config"], &oc) != nil {
+		return raw
+	}
+	var cur string
+	if json.Unmarshal(oc["effort"], &cur) != nil || cur == "" || cur == effort {
+		return raw
+	}
+	oc["effort"], _ = json.Marshal(effort)
+	m["output_config"], _ = json.Marshal(oc)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // retryTransport resends a request without per-turn effort when the API
@@ -271,6 +365,12 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	log.Printf("per-turn effort refused for %s (%s); retrying without it", short(rt.sessionID), strings.TrimSpace(string(body)))
 	if _, err := t.p.State.Update(rt.sessionID, func(s *state.Session) bool {
+		if rt.agentEffort {
+			if ae := s.AgentEfforts[rt.agentID]; ae != nil {
+				ae.Rejected, ae.Base, ae.Marks = true, "", nil
+			}
+			return true
+		}
 		s.PerTurnRejected, s.EffortBase, s.EffortMarks, s.PendingEffort = true, "", nil, nil
 		return true
 	}); err != nil {

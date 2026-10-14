@@ -64,6 +64,9 @@ max_on_jev_reading = true
 route_named_subagent_models = true
 # Forks keep their parent's model and effort, so they read its cache.
 forks_inherit = true
+# Apply a routed subagent's effort: Claude Code states medium in every
+# subagent conversation, which otherwise overrides the routed effort.
+enforce_agent_effort = true
 # A scheduled prompt read apart from the work (a status check) takes its own
 # level instead of the work's.
 scheduled_own_level = true
@@ -100,4 +103,4 @@ cumulative_down_confidence = true
 # usd_per_day = 0                             # 0 = off
 # usd_per_session = 0
 # max_tier_when_over = "medium"
-# max_subagent_tier_when_over = "sonnet-xhigh"
+# max_subagent_tier_when_over = "sonnet-high"

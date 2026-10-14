@@ -465,7 +465,7 @@ privacy = "metadata"            # a repo can make privacy stricter, never looser
 usd_per_day = 20               # 0 = off (the default)
 usd_per_session = 0            # optional, per session
 max_tier_when_over = "medium"  # the highest tier once a cap is reached
-max_subagent_tier_when_over = "sonnet-xhigh"
+max_subagent_tier_when_over = "sonnet-high"
 ```
 
 The proxy prices every response with the catalog and keeps the day's total

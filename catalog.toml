@@ -10,7 +10,7 @@ benchmark = "artificial-analysis-intelligence-index"
 benchmark_version = "v4.3.2"
 jev_model = "typesafe/jev-1.13"
 default_main_tier = "high"
-default_subagent_tier = "sonnet-xhigh"
+default_subagent_tier = "sonnet-medium"
 # Windows above 200k: long_context = "native" models get it without a beta
 # (the proxy strips the beta for them: on a native model it defeats the
 # prompt cache); long_context = "beta" models need this anthropic-beta value.
@@ -214,7 +214,7 @@ sources = [
 [models.claude-sonnet-5-5]
 label = "Sonnet 5.5"
 status = "active"
-reason = "Subagents at low (reading and reporting), high (small changes and work with a known recipe) and xhigh (design, research and multi-file work with edge cases). Cache reads cost $0.10/M since 2026-10-07, half of Opus 5.5's, and they are most of a Claude Code agent's cost (this owner's subagents: median request 279k tokens). Priced on the owner's real subagent requests with each config's steps and tokens per task (CursorBench 4.0; docs/research/2026-10-model-mix.md), Opus high = 1: Sonnet high 0.33 scores above Opus low 0.47 on all five per-effort coding benchmarks (Anthropic's Terminal-Bench 4.0 43.0 vs 38.5, FrontierCode 49.4 vs 47.3, CursorBench 47.8 vs 43.7, AA Terminal-Bench 43.9 vs 31.3, index 46.8 vs 42.3); Sonnet xhigh 0.62 scores at least Opus medium's (0.80) on four of five (61.5 vs 57.6, 53.1 vs 52.5, 57.1 vs 52.5, 51.9 vs 51.2; FrontierCode 52.1 vs 54.6) and 1.7 to 2.9 points under Opus high's on four (61.5 vs 64.2, 52.1 vs 54.0, 53.1 vs 56.0, 51.9 vs 53.6; AA Terminal-Bench 57.1 vs 56.6), about one standard error of Terminal-Bench (2.5 points), for 0.62 vs 1 (0.83 if it takes 1.37x CursorBench's relative steps in Claude Code, as Coding Agent Index max suggests): Opus high doesn't clearly win, so the two Opus levels below xhigh run on Sonnet xhigh. At list prices on short benchmark prompts Opus high is cheaper (index $1.82 vs $2.01): the primary benchmark flags sonnet-xhigh as dominated, the owner's traffic does not. Xhigh is 1.4-1.5x slower per task (AA Terminal-Bench 1106 s vs Opus high 806 s). Medium: no tier (low and high bracket it). Max: no tier, verbose in Claude Code (FrontierCode 598k output tokens and 46.2 at $20.78; Coding Agent Index 266 steps vs Opus max 155). No main tier: replayed on this owner's routed main sessions (median context 556k), Sonnet for the low and medium levels saves at most 1.8% with a perfect switch oracle and costs 9% more switching on every low or medium stretch (12% if Sonnet takes 1.37x CursorBench's relative steps), because a switch writes the whole context again (about $2.2 at the median context) and low or medium stretches last 10-11 requests (median)."
+reason = "Subagents at medium (well-specified work: reading and reporting, small changes and work with a known recipe) and high (harder or longer work: design, research and multi-file work with edge cases), Anthropic's guidance for Sonnet 5.5 agentic work (2026-10-14, docs/research/2026-10-effort-guidance.md); xhigh dropped (Opus high dominates it on the primary benchmark, and Anthropic keeps xhigh for 30-minute-plus runs). Before 2026-10-14: low, high and xhigh. Cache reads cost $0.10/M since 2026-10-07, half of Opus 5.5's, and they are most of a Claude Code agent's cost (this owner's subagents: median request 279k tokens). Priced on the owner's real subagent requests with each config's steps and tokens per task (CursorBench 4.0; docs/research/2026-10-model-mix.md), Opus high = 1: Sonnet high 0.33 scores above Opus low 0.47 on all five per-effort coding benchmarks (Anthropic's Terminal-Bench 4.0 43.0 vs 38.5, FrontierCode 49.4 vs 47.3, CursorBench 47.8 vs 43.7, AA Terminal-Bench 43.9 vs 31.3, index 46.8 vs 42.3); Sonnet xhigh 0.62 scores at least Opus medium's (0.80) on four of five (61.5 vs 57.6, 53.1 vs 52.5, 57.1 vs 52.5, 51.9 vs 51.2; FrontierCode 52.1 vs 54.6) and 1.7 to 2.9 points under Opus high's on four (61.5 vs 64.2, 52.1 vs 54.0, 53.1 vs 56.0, 51.9 vs 53.6; AA Terminal-Bench 57.1 vs 56.6), about one standard error of Terminal-Bench (2.5 points), for 0.62 vs 1 (0.83 if it takes 1.37x CursorBench's relative steps in Claude Code, as Coding Agent Index max suggests): Opus high doesn't clearly win, so the two Opus levels below xhigh run on Sonnet xhigh. At list prices on short benchmark prompts Opus high is cheaper (index $1.82 vs $2.01): the primary benchmark flags sonnet-xhigh as dominated, the owner's traffic does not. Xhigh is 1.4-1.5x slower per task (AA Terminal-Bench 1106 s vs Opus high 806 s). Medium: no tier (low and high bracket it). Max: no tier, verbose in Claude Code (FrontierCode 598k output tokens and 46.2 at $20.78; Coding Agent Index 266 steps vs Opus max 155). No main tier: replayed on this owner's routed main sessions (median context 556k), Sonnet for the low and medium levels saves at most 1.8% with a perfect switch oracle and costs 9% more switching on every low or medium stretch (12% if Sonnet takes 1.37x CursorBench's relative steps), because a switch writes the whole context again (about $2.2 at the median context) and low or medium stretches last 10-11 requests (median)."
 api_id = "claude-sonnet-5-5"
 alias = "sonnet"
 context = 1_000_000
@@ -1590,19 +1590,23 @@ no = "Work one assistant does well alone: a single feature, bug, question, or re
 # The Agent tool only accepts model aliases, so subagent models need `alias`.
 # Subagents start with a fresh context: a model choice costs no cache.
 #
-# 2026-10-08 (docs/research/2026-10-model-mix.md): each level runs the
-# cheapest config that holds up on the agentic-coding benchmarks, priced on
-# this owner's real subagent requests (88% of them past 100k prompt tokens,
-# cache reads most of the cost) with each config's steps and tokens per task
-# (CursorBench 4.0), Opus high = 1. Opus low (0.47) is dominated by Sonnet
-# high (0.33) on all five per-effort coding benchmarks: its small changes
-# and checks moved to sonnet-high. Opus medium (0.80) and Opus high (1.00)
-# gave way to Sonnet xhigh (0.62): at least Opus medium's score on four of
-# five, 1.7-2.9 points under Opus high's on four (about one standard
-# error), 1.4-1.5x slower. Opus stays where it clearly wins: xhigh (Sonnet
-# xhigh 2.5-4.9 points under it on four of five) and max. Tier costs are the
-# primary benchmark's (list prices on short prompts), where Sonnet xhigh
-# ($2.01) costs more than Opus high ($1.82) would: they rise with rank.
+# 2026-10-14 (docs/research/2026-10-effort-guidance.md): the ladder follows
+# Anthropic's guidance (choosing-a-model, optimizing-for-cost-and-intelligence
+# and effort pages, read 2026-10-14). Sonnet 5.5 is the default for
+# well-scoped agentic work: medium for well-specified tasks, high for harder
+# or longer ones; xhigh and max only where evals show a gain. Opus 5.5 is
+# for complex reasoning and difficult coding (high), xhigh for agentic work
+# running over 30 minutes with budgets in the millions of tokens (+1.4
+# points on SWE-bench Pro over high for 2.5x the cost), max for the deepest
+# reasoning. Haiku 5.5 at medium for mechanical work. The routed effort now
+# applies (features.enforce_agent_effort): Claude Code states medium in
+# every subagent conversation, which used to override it, so every agent
+# ran at medium whatever its tier. Dropped: sonnet-low (Haiku medium and
+# Sonnet medium cover its reading and reporting) and sonnet-xhigh (dominated
+# by Opus high on the primary benchmark, $2.01 vs $1.82, and xhigh is for
+# 30-minute-plus runs). Tier costs are the primary benchmark's: they rise
+# with rank (Haiku 0.14, Sonnet medium 0.48, high 0.88, Opus high 1.82,
+# xhigh 3.46, max 5.98), all on the v4.3.2 frontier.
 
 [tiers.subagent.haiku]
 rank = 1
@@ -1616,41 +1620,29 @@ effort = "medium"
 cost = 0.14
 criteria = "Mechanical, fully specified work: finding files, listing or extracting facts, grepping, applying an explicit edit, one-line answers."
 
-[tiers.subagent.sonnet-low]
+[tiers.subagent.sonnet-medium]
 rank = 2
 model = "claude-sonnet-5-5"
-effort = "low"
-criteria = "Reading and reporting that needs some understanding but little reasoning: summarizing a file, a diff or a log, explaining what a piece of code does, answering a question about the code from a few files."
+effort = "medium"
+criteria = "Well-specified work with a clear path: reading and reporting (summarizing a file, a diff or a log, explaining what code does, answering a question about the code from a few files), a focused edit or fix whose cause is known, updating a few call sites, writing tests for existing code, adding a small feature by copying an existing pattern, a mechanical refactor across a few files, tracing a flow and reporting it, updating docs or a spec to match the code."
 
-# Sonnet 5.5 at high, on this owner's subagent requests 0.33 against Opus
-# low's 0.47 (Opus high = 1), scores more than Opus low on every per-effort
-# coding benchmark: Anthropic's Terminal-Bench 4.0 43.0 vs 38.5,
-# FrontierCode 49.4 vs 47.3, CursorBench 47.8 vs 43.7, AA's Terminal-Bench
-# 43.9 vs 31.3, index 46.8 vs 42.3. It takes opus-low's small changes and
-# checks.
 [tiers.subagent.sonnet-high]
 rank = 3
 model = "claude-sonnet-5-5"
 effort = "high"
-criteria = "Small self-contained changes and bounded work that follows a known recipe in one area: a focused edit or fix whose cause is known, updating a few call sites, checking how something behaves, writing tests for existing code, adding a small feature by copying an existing pattern, a mechanical refactor across a few files, tracing a flow through a few files and reporting it, updating docs or a spec to match the code."
+criteria = "Harder or longer work that needs design decisions or a real investigation: a component or a prototype with nothing in the codebase to copy, a multi-file feature with design choices, a data migration with edge cases, comparing approaches and recommending one, reviewing a branch or a diff for bugs and missing tests, a bug that reproduces but whose cause is still unknown."
 
-# Sonnet 5.5 at xhigh takes the work of opus-medium and opus-high: 0.62 on
-# this owner's subagent requests against 0.80 and 1.00 (0.83 if Sonnet takes
-# 1.37x CursorBench's relative steps in Claude Code). Scores (Sonnet xhigh /
-# Opus medium / Opus high): Terminal-Bench 4.0 61.5 / 57.6 / 64.2,
-# FrontierCode 52.1 / 54.6 / 54.0, CursorBench 53.1 / 52.5 / 56.0, AA's
-# Terminal-Bench 57.1 / 52.5 / 56.6, index 51.9 / 51.2 / 53.6.
-[tiers.subagent.sonnet-xhigh]
+[tiers.subagent.opus-high]
 rank = 4
-model = "claude-sonnet-5-5"
-effort = "xhigh"
-criteria = "Work that needs design, research or real edge cases: a component with nothing in the codebase to copy, a data migration with edge cases, comparing approaches and recommending one, a multi-file investigation or implementation with design decisions."
+model = "claude-opus-5-5"
+effort = "high"
+criteria = "Complex reasoning where a wrong answer is expensive: an intermittent bug nobody could reproduce or that earlier attempts failed to find, a review for subtle bugs in concurrent, security-critical or money-handling code, a correctness proof, an architecture decision with lasting consequences."
 
 [tiers.subagent.opus-xhigh]
 rank = 5
 model = "claude-opus-5-5"
 effort = "xhigh"
-criteria = "Hard debugging, reviews for subtle bugs, security or concurrency analysis, proofs; a wrong answer is expensive."
+criteria = "Long-running, very hard autonomous work, well over half an hour: porting or migrating a whole subsystem end to end, reverse-engineering behaviour from binaries or game data, a large multi-stage investigation where each stage builds on the last."
 
 [tiers.subagent.opus-max]
 rank = 6

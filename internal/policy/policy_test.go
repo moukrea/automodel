@@ -79,7 +79,7 @@ func TestCosts(t *testing.T) {
 		t.Errorf("measured costs: %v", m)
 	}
 	s := Costs(c, catalog.ScopeSubagent)
-	if s["haiku"] != 0.14 || s["sonnet-high"] != 0.884 || s["sonnet-xhigh"] != 2.012 {
+	if s["haiku"] != 0.14 || s["sonnet-medium"] != 0.483 || s["sonnet-high"] != 0.884 || s["opus-high"] != 1.823 {
 		t.Errorf("subagent costs: %v", s)
 	}
 }
