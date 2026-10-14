@@ -96,6 +96,12 @@ late_join_context = true
 # tier is enough (the work needs it or less) to reach warm_min_confidence,
 # instead of Jev's confidence in a single level.
 cumulative_down_confidence = true
+# A subagent goes to another model than the one Jev's reading weighs most
+# only when that model holds at least half of the reading.
+agent_model_on_jev_reading = true
+# A subagent kept on its model (a switch wouldn't pay back its cache rewrite)
+# runs at the lowest effort of that model Jev's reading says is enough.
+agent_effort_step_down = true
 
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.

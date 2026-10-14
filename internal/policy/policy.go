@@ -132,6 +132,9 @@ type Params struct {
 	// (session-calibrated cost per prompt times the switch horizon). It is
 	// only compared against switch costs, which are in dollars.
 	Scale float64
+	// Allow restricts the tiers Best may move to (nil: all). The current
+	// tier can always stay.
+	Allow func(*catalog.Tier) bool
 }
 
 // Costs returns each tier's relative cost per task. Tiers without a
@@ -233,6 +236,9 @@ func Best(c *catalog.Catalog, scope string, probs map[string]float64, current *c
 	curV := bestV
 	for _, t := range c.TiersByRank(scope) {
 		if current != nil && t.ID == current.ID {
+			continue
+		}
+		if p.Allow != nil && !p.Allow(t) {
 			continue
 		}
 		if v := total(t); v < bestV-1e-12 || (best != nil && current == nil && v <= bestV+1e-12 && t.Rank > best.Rank) {

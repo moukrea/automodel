@@ -168,6 +168,16 @@ type Features struct {
 	// reach warm_min_confidence, not Jev's confidence in one level: a split
 	// between two levels both below the tier in force is a sure downgrade.
 	CumulativeDownConfidence bool `toml:"cumulative_down_confidence"`
+	// AgentModelOnJevReading: a subagent goes to another model than the
+	// one Jev's reading weighs most only when that model holds at least
+	// half of it (the underprovision penalty must not carry a Sonnet
+	// reading over to Opus on the Opus share of a split).
+	AgentModelOnJevReading bool `toml:"agent_model_on_jev_reading"`
+	// AgentEffortStepDown: a subagent kept on its model because a model
+	// switch wouldn't pay back its cache rewrite runs at the lowest effort
+	// of that model Jev's reading says is enough (an effort change keeps
+	// the cache), instead of the tier's effort.
+	AgentEffortStepDown bool `toml:"agent_effort_step_down"`
 }
 
 func Default() *Config {
@@ -198,7 +208,8 @@ func Default() *Config {
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
 			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true, LateJoinContext: true,
-			CumulativeDownConfidence: true, EnforceAgentEffort: true,
+			CumulativeDownConfidence: true, EnforceAgentEffort: true, AgentModelOnJevReading: true,
+			AgentEffortStepDown: true,
 		},
 	}
 }

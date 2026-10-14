@@ -322,16 +322,24 @@ func agentSwitchCost(env *router.Env, cur *state.Decision, context int) func(*ca
 }
 
 // agentScale converts catalog cost units into dollars for the agent's next
-// turn: its observed cost per turn relative to its current tier's catalog
-// cost (one turn: a switch must pay back on the work just sent).
+// switch_horizon_prompts messages: its observed cost per turn relative to
+// its current tier's catalog cost. A resumed agent gets more messages (live,
+// 2026-10-08 to 14: median 8 per agent, 16 still to come after any one); on
+// one message's horizon an agent Jev read as Sonnet work at 0.8 or more
+// stayed on Opus in 24 of 36 cases, while the next three messages on Sonnet
+// would have cost 28% less, rewrite included.
 func agentScale(env *router.Env, t *catalog.Tier, turnUSD float64) float64 {
+	h := env.Cfg.Features.SwitchHorizonPrompts
+	if h <= 0 {
+		h = 1
+	}
 	if turnUSD <= 0 {
-		return 1
+		return h
 	}
 	if c := policyCost(env, t); c > 0 {
-		return turnUSD / c
+		return h * turnUSD / c
 	}
-	return 1
+	return h
 }
 
 func policyCost(env *router.Env, t *catalog.Tier) float64 {

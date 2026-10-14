@@ -421,6 +421,21 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	rec.Shadow = shadow
 	e.fill(dec, v.Tier, v.Mode)
 	e.onModel(dec, v.Model)
+	// A subagent that stays on its model (a model switch wouldn't pay back
+	// its cache) runs at the lowest effort of that model Jev's reading says
+	// is enough: an effort change keeps the cache (live: agents moved from
+	// opus-xhigh stayed on opus-high for a dozen messages Jev read as
+	// Sonnet medium work).
+	if cur != nil && req.Scope == catalog.ScopeSubagent && req.Warm && req.Current != nil && v.Tier != nil && v.Tier.Model == cur.Model && dec.Mode == "" && dec.Model == req.Current.Model {
+		if eff := e.agentEffort(rd, v.Tier); eff != dec.Effort {
+			dec.Effort = eff
+			if eff != req.Current.Effort {
+				v.Keep = ""
+				v.Hold = strings.TrimPrefix(v.Hold+"; ", "; ") + "effort " + eff + " on the same model (keeps the cache)"
+				rec.Hold = v.Hold
+			}
+		}
+	}
 	// The switch costs what moving to the model and effort the decision
 	// ends up on costs (the work's model, a paused work's, one asked in
 	// words), not the tier's.
@@ -1069,6 +1084,78 @@ func (e *Env) Read(ans map[string]jev.Answer, ids []string, scope string) Readin
 	return rd
 }
 
+// agentEffort is the effort a subagent kept on tier t runs at: the lowest
+// effort of t's model, from medium (Anthropic's start for agents) up to
+// t's own, whose measured cost covers tiers holding at least
+// warm_min_confidence of Jev's reading. An effort with no measurement is
+// skipped. t's effort when the feature is off or nothing lower is enough.
+func (e *Env) agentEffort(rd Reading, t *catalog.Tier) string {
+	f := e.Cfg.Features
+	c := e.Catalog
+	m := c.Model(t.Model)
+	if !f.AgentEffortStepDown || !f.EnforceAgentEffort || m == nil || len(rd.probs) == 0 {
+		return t.Effort
+	}
+	tiers := c.TiersByRank(catalog.ScopeSubagent)
+	for _, eff := range []string{"medium", "high", "xhigh"} {
+		if catalog.EffortRank(eff) >= catalog.EffortRank(t.Effort) {
+			break
+		}
+		if !m.SupportsEffort(eff) {
+			continue
+		}
+		ce := c.TierCost(&catalog.Tier{Model: t.Model, Effort: eff})
+		if ce <= 0 {
+			continue
+		}
+		var p float64
+		for _, x := range tiers {
+			if c.TierCost(x) <= ce*(1+1e-9) {
+				p += rd.probs[x.ID]
+			}
+		}
+		if p >= f.WarmMinConfidence {
+			return eff
+		}
+	}
+	return t.Effort
+}
+
+// modelMass is the share of Jev's reading on the tiers of model.
+func (e *Env) modelMass(scope string, probs map[string]float64, model string) float64 {
+	var p float64
+	for _, t := range e.Catalog.TiersByRank(scope) {
+		if t.Model == model {
+			p += probs[t.ID]
+		}
+	}
+	return p
+}
+
+// topModel is the model of scope's highest tier (Opus for subagents).
+func (e *Env) topModel(scope string) string {
+	ts := e.Catalog.TiersByRank(scope)
+	if len(ts) == 0 {
+		return ""
+	}
+	return ts[len(ts)-1].Model
+}
+
+// majorityModel is the model Jev's reading weighs most, and its share.
+func (e *Env) majorityModel(scope string, probs map[string]float64) (string, float64) {
+	mass := map[string]float64{}
+	for _, t := range e.Catalog.TiersByRank(scope) {
+		mass[t.Model] += probs[t.ID]
+	}
+	best, bp := "", 0.0
+	for m, p := range mass {
+		if p > bp || (p == bp && m < best) {
+			best, bp = m, p
+		}
+	}
+	return best, bp
+}
+
 // pick applies the cost-aware policy (or the v1 confidence rule).
 func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Params) (*catalog.Tier, *policy.Pick) {
 	c := e.Catalog
@@ -1081,6 +1168,24 @@ func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Par
 			params.Scale = 1
 		}
 		pk := policy.Best(c, req.Scope, rd.probs, cur, sc, params)
+		// A subagent goes to the costliest model (Opus) only on Jev's
+		// reading: when Opus holds under half of it and a cheaper model holds
+		// more, the pick stays among that model's tiers (a Haiku/Sonnet split
+		// still hedges up: Haiku only does mechanical work) (live: after sonnet-xhigh
+		// left the scale, sonnet-high 0.54 / opus 0.46 splits went to
+		// opus-high, and Opus took 61% of subagent decisions for 32% of
+		// Jev's top answers).
+		if req.Scope == catalog.ScopeSubagent && e.Cfg.Features.AgentModelOnJevReading && pk.Tier != nil {
+			if m, mp := e.majorityModel(req.Scope, rd.probs); m != "" && m != pk.Tier.Model && pk.Tier.Model == e.topModel(req.Scope) && e.modelMass(req.Scope, rd.probs, pk.Tier.Model) < 0.5 && mp > e.modelMass(req.Scope, rd.probs, pk.Tier.Model) {
+				p := params
+				// Moving on the current model's tiers changes the effort only,
+				// which keeps the cache: those stay open.
+				p.Allow = func(t *catalog.Tier) bool { return t.Model == m || (cur != nil && t.Model == cur.Model) }
+				if alt := policy.Best(c, req.Scope, rd.probs, cur, sc, p); alt.Tier != nil {
+					pk = alt
+				}
+			}
+		}
 		// The costliest tier only on Jev's own reading: the underprovision
 		// penalty must not settle a split reading there (live: a subagent
 		// read high 0.43 / max 0.42 ran at max for five days, 17% of a
