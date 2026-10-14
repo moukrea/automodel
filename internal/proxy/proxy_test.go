@@ -594,3 +594,25 @@ func TestResponseNamesTheCustomModel(t *testing.T) {
 		t.Errorf("message = %s (%v)", got, err)
 	}
 }
+
+// The usage row says which effort the API applied: a per-message statement
+// (Claude Code puts one on a subagent's first system message) wins over the
+// top-level effort.
+func TestTurnEffortRecorded(t *testing.T) {
+	p, _, ps := setup(t)
+	p.State.Update("sess-e", func(s *state.Session) bool {
+		s.Agents = map[string]*state.Decision{"agent-1": {Scope: "subagent", Tier: "sonnet-xhigh", Model: "claude-sonnet-5-5",
+			APIID: "claude-sonnet-5-5", Effort: "xhigh", Trigger: TriggerResumeAgent}}
+		return true
+	})
+	body := `{"model":"claude-sonnet-5-5","output_config":{"effort":"medium"},"messages":[` +
+		user("task", true) + `,{"role":"system","content":"Deferred tools are now available.","output_config":{"effort":"medium"}}]}`
+	post(t, ps.URL, map[string]string{HeaderSession: "sess-e", HeaderAgent: "agent-1"}, body)
+	waitFor(t, func() bool {
+		b, _ := os.ReadFile(p.Cfg.Ledger)
+		return strings.Contains(string(b), `"turn_effort":"medium"`)
+	})
+	if got := lastTurnEffort(map[string]json.RawMessage{"messages": json.RawMessage(`[` + user("x", false) + `]`)}); got != "" {
+		t.Errorf("no statement: %q", got)
+	}
+}

@@ -104,6 +104,12 @@ type Usage struct {
 	// and any per-model window the API sends), to measure what each model
 	// and effort costs in quota.
 	Limits map[string]float64 `json:"limits,omitempty"`
+	// TurnEffort is the effort the request's last per-message statement
+	// sets (an effort-only system message, or a system message carrying
+	// output_config), which the API applies over the top-level Effort. On
+	// subagent requests it is Claude Code's own: measured 2026-10-14, it
+	// says medium whatever the agent was routed to.
+	TurnEffort string `json:"turn_effort,omitempty"`
 }
 
 type Ledger struct{ Path string }
