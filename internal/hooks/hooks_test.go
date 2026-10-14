@@ -371,14 +371,15 @@ func TestWarmDecisions(t *testing.T) {
 	}
 
 	// A switch that costs something (no per-turn effort: the cache is
-	// rebuilt) needs a confident answer, and never downgrades work that
-	// continues.
+	// rebuilt) goes only as low as Jev's reading says is enough (low 0.6,
+	// medium 0.4: medium is enough at 1.0, low only at 0.6), and never
+	// downgrades work that continues.
 	env.Cfg.Features.PerTurnEffort = false
 	warmSession(t, env, "w2c", "xhigh", 2_000)
 	fj.answers = []fa{{tier: "low", conf: 0.5}}
 	decide("w2c", "hmm")
-	if s := main("w2c"); s.Main.Tier != "xhigh" {
-		t.Errorf("costly switch on low confidence: %+v", s.Main)
+	if s := main("w2c"); s.Main.Tier != "medium" {
+		t.Errorf("costly switch on an unsure reading: %+v, want medium (the lowest tier enough on Jev's reading)", s.Main)
 	}
 	warmSession(t, env, "w3c", "xhigh", 2_000)
 	fj.answers = []fa{{tier: "low", conf: 0.9, rel: "continue"}}

@@ -137,9 +137,11 @@ func TestMessageHookTeammate(t *testing.T) {
 	if d == nil || d.Trigger != TriggerResumeAgent {
 		t.Fatalf("teammate decision under %s = %+v", key, d)
 	}
-	if d.Model != "claude-opus-5-5" {
+	// The reading (haiku 0.3, sonnet-low 0.7) says sonnet-low is enough;
+	// Haiku, cheaper to rewrite, is not (0.3).
+	if d.Model == "claude-haiku-5-5" || d.Tier != "sonnet-low" {
 		l, _ := os.ReadFile(env.Cfg.Ledger)
-		t.Errorf("an unsure reading moved a 507k-context teammate off Opus: %+v\n%s", d, l)
+		t.Errorf("507k-context teammate moved to %s (%s), want sonnet-low: %+v\n%s", d.Tier, d.Model, d, l)
 	}
 }
 

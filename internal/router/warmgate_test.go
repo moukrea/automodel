@@ -58,3 +58,35 @@ func TestDownConfidenceIsTheTargets(t *testing.T) {
 		t.Errorf("sonnet-high: %.2f, want Jev's 0.91", got)
 	}
 }
+
+// When the cost pick fails the gate, a lower tier that passes it still
+// replaces the current one, sure reading or not (live: a teammate on
+// opus-max, read sonnet-high 0.72 / sonnet-xhigh 0.13 / haiku 0.10 /
+// opus-max 0, stayed on opus-max: Haiku failed the gate at 0.10 and the
+// fallback only ran when Jev's top confidence reached 0.8).
+func TestWarmDownFallsBackOnUnsureReading(t *testing.T) {
+	e := testEnv(t)
+	cur := e.Catalog.Tier(catalog.ScopeSubagent, "opus-max")
+	rd := Reading{probs: map[string]float64{"sonnet-high": 0.72, "sonnet-xhigh": 0.13, "haiku": 0.10, "sonnet-low": 0.04, "opus-xhigh": 0.01}, conf: 0.72, top: "sonnet-high"}
+	const ctx = 500_000
+	sc := func(t *catalog.Tier) float64 {
+		switch {
+		case t.ID == cur.ID:
+			return 0
+		case t.Model == "claude-haiku-5-5":
+			return ctx * (1.00 - 0.2) / 1e6
+		case t.Model == cur.Model:
+			return ctx * (8 - 0.2) / 1e6
+		}
+		return ctx * (4 - 0.2) / 1e6
+	}
+	req := Request{Scope: catalog.ScopeSubagent, Warm: true, Current: &state.Decision{Scope: catalog.ScopeSubagent, Tier: cur.ID, Model: cur.Model, Effort: cur.Effort}, SwitchCost: sc}
+	p := policy.Params{Penalty: 1.5, Scale: 1.5}
+	v := e.Judge(req, rd, cur, policy.RepoPolicy{}, p)
+	if v.Tier.ID == cur.ID {
+		t.Fatalf("stayed on %s (keep %q), Jev gives it 0 and sonnet-high/sonnet-xhigh are enough", cur.ID, v.Keep)
+	}
+	if got := e.downConfidence(rd, req.Scope, v.Tier); got < e.Cfg.Features.WarmMinConfidence {
+		t.Errorf("moved to %s, not enough on Jev's reading (%.2f)", v.Tier.ID, got)
+	}
+}
