@@ -138,12 +138,12 @@ func TestMessageHookTeammate(t *testing.T) {
 		t.Fatalf("teammate decision under %s = %+v", key, d)
 	}
 	// The reading (haiku 0.3, sonnet-medium 0.7) says sonnet-medium is enough;
-	// Haiku, cheaper to rewrite, is not (0.3). Moving to Sonnet rewrites the
-	// 507k context ($1.93) for one turn's gain, while lowering the effort on
-	// Opus is free (per-turn statements keep the cache): opus-high.
-	if d.Model == "claude-haiku-5-5" || d.Tier != "opus-high" {
+	// Haiku, cheaper to rewrite, is not (0.3). Over the switch horizon (three
+	// messages) Sonnet pays back the 507k rewrite ($1.93); on one message it
+	// didn't, and the agent stayed on Opus at a lower effort.
+	if d.Model == "claude-haiku-5-5" || (d.Tier != "sonnet-medium" && d.Tier != "opus-high") {
 		l, _ := os.ReadFile(env.Cfg.Ledger)
-		t.Errorf("507k-context teammate moved to %s (%s), want opus-high: %+v\n%s", d.Tier, d.Model, d, l)
+		t.Errorf("507k-context teammate moved to %s (%s), want sonnet-medium (or Opus at a lower effort): %+v\n%s", d.Tier, d.Model, d, l)
 	}
 }
 
