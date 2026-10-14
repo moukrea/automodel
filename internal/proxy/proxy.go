@@ -115,6 +115,9 @@ type route struct {
 	// asked is the custom model ID the request named ("": another model):
 	// the response says it served that model (see servedAs).
 	asked string
+	// turnEffort is the effort the last per-message statement of the
+	// request sets, the one the API applies over the top-level effort.
+	turnEffort string
 
 	plainBody   []byte // the request without per-turn effort, for retryTransport
 	perTurnBeta string
@@ -271,6 +274,7 @@ func (p *Proxy) rewrite(r *http.Request, body []byte, rt *route) ([]byte, bool) 
 	} else {
 		applyEffort(fields, m, dec.Effort, countTokens)
 	}
+	rt.turnEffort = lastTurnEffort(fields)
 	out, err := json.Marshal(fields)
 	if err != nil {
 		return nil, false
@@ -576,4 +580,26 @@ func short(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// lastTurnEffort returns the effort of the request's last system message
+// that carries one (output_config.effort): from there on the API applies it
+// instead of the top-level effort. Claude Code puts one on the first system
+// message of a subagent's conversation.
+func lastTurnEffort(fields map[string]json.RawMessage) string {
+	var msgs []struct {
+		Role         string `json:"role"`
+		OutputConfig struct {
+			Effort string `json:"effort"`
+		} `json:"output_config"`
+	}
+	if json.Unmarshal(fields["messages"], &msgs) != nil {
+		return ""
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "system" && msgs[i].OutputConfig.Effort != "" {
+			return msgs[i].OutputConfig.Effort
+		}
+	}
+	return ""
 }

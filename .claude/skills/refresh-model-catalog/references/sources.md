@@ -6,7 +6,21 @@
    - Models overview (IDs, aliases, context, efforts): https://platform.claude.com/docs/en/about-claude/models/overview
    - Pricing (incl. cache writes 5m/1h, fast mode): https://platform.claude.com/docs/en/about-claude/pricing
    - Deprecations: https://platform.claude.com/docs/en/about-claude/model-deprecations
-   - Effort parameter (`output_config.effort`, supported models): https://platform.claude.com/docs/en/build-with-claude/effort
+   - Effort parameter (`output_config.effort`, supported models, **default
+     and recommended starting effort per model**, what each level is for):
+     https://platform.claude.com/docs/en/build-with-claude/effort
+   - Model selection (required at every refresh): which model to start with
+     and for what, and the default effort per model —
+     https://platform.claude.com/docs/en/about-claude/models/choosing-a-model;
+     cost vs intelligence (per-effort cost and score, when Sonnet or Haiku
+     suffice, orchestrator/worker patterns) —
+     https://platform.claude.com/docs/en/about-claude/models/optimizing-for-cost-and-intelligence
+     (long page: read past the first 100k characters too). Claude.ai
+     positioning (plain-language task fit per model) —
+     https://academy.claude.com/tutorials/choosing-the-right-claude-model.
+     The Academy course https://academy.claude.com/courses/claude-platform-101/choosing-the-right-model
+     lags model releases (2026-10-14: Sonnet 5 and Haiku 4.5): check the
+     model IDs it names before quoting it.
    - Model announcements: https://www.anthropic.com/news
    - The announcement page's charts carry their data in the HTML (series of
      `x` cost per task, `y` score, one point per effort: Terminal-Bench,
@@ -73,6 +87,15 @@ Verified 2026-09-26 on Claude Code 2.1.283 (see docs/spikes.md):
   at 41k context → 51 tokens written (top-level change: 13k rewritten), and
   the per-turn level is really applied (same hard prompt: low 151 output
   tokens, per-turn xhigh 256, top-level xhigh 282).
+- Subagents: Claude Code puts `output_config.effort` on the first system
+  message of a subagent's conversation (the deferred-tools notice), which
+  the API applies over the top-level effort the proxy sets for the agent.
+  Measured 2026-10-14 (2.1.29x, dev harness): it says `medium` whatever the
+  agent was routed to and whatever the session's effort; stripping it made a
+  routed-xhigh agent produce 1.2-1.8x more output in 3 of 3 pairs, and in the
+  ledger output per request is flat across routed agent efforts (Sonnet high
+  994, xhigh 943). The usage rows' `turn_effort` records the effort the API
+  applied: check it before trusting a subagent effort analysis.
 - Any `ANTHROPIC_BASE_URL` that isn't `api.anthropic.com` makes Claude Code
   treat the provider as a gateway in **every** session: Opus loses its native
   1M window (auto-compact at 200K), tool search and other first-party features

@@ -58,8 +58,16 @@ proposed copy. In a scheduled/unattended run, stop at the report.
    - deprecations and retirements;
    - price changes (input, output, cache read, cache writes 5m/1h);
    - Claude Code changes: effort levels, ultracode and workflow semantics,
-     custom-model variables, hooks (inputs/outputs), known bugs;
-   - new Jev version or Decisions API change.
+     custom-model variables, hooks (inputs/outputs), known bugs; which effort
+     subagents really run at (the ledger's `turn_effort`, references/sources.md);
+   - new Jev version or Decisions API change;
+   - **Anthropic's model-selection and effort guidance** (required: the
+     pages in references/sources.md): the default and recommended starting
+     effort of each model, what each effort level is for (e.g. xhigh: long
+     agentic work over 30 minutes), which work each model suits ("well-scoped
+     work" for Sonnet, sub-agent tasks for Haiku), and every per-effort cost
+     and score they publish. Record them with the date read; they feed the
+     check in step 5.
 
 3. **Measurements**
    - The primary benchmark (`meta.benchmark`/`benchmark_version`) sets tier
@@ -160,6 +168,19 @@ proposed copy. In a scheduled/unattended run, stop at the report.
      on the train split *and* holds on a held-out set.
    - Tiers without a measurement need a `cost` (relative cost per task, same
      unit as `cost_per_task`), otherwise it is interpolated (warning).
+   - **Check the mix against Anthropic's guidance** (step 2): compare each
+     scope's real decision shares (`automodel report --json`, the ledger) and
+     the eval's label shares with the guidance — the default effort per model
+     (Opus 5.5 and Haiku 5.5 start at medium, Sonnet 5.5 at high, medium for
+     well-specified agentic work), and what each level is for. Where the mix
+     sits higher (e.g. most main decisions at high or above, a subagent
+     default above the model's recommended start), either change it or write
+     down why, with ledger data (what the deviation buys or what a lower
+     level broke): "Anthropic says medium" is a starting point, not a label.
+     Split a high share into Jev's own readings and holds at the work level
+     before blaming the criteria. Effort only changes output and the number
+     of turns: on cache-heavy traffic, price the move before calling it
+     overkill.
    - An **asked tier** (`question` + `criteria` as its yes side + `no` +
      `threshold`) is not a Score level: Jev answers its own yes/no in the
      same call, and it replaces the scored tier ranked just above it when the

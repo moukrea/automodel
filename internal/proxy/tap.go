@@ -297,7 +297,7 @@ func (t *tap) record() {
 	rt := t.rt
 	err := t.p.Ledger.Append(ledger.Usage{
 		TS: time.Now(), Kind: "usage", SessionID: rt.sessionID, Scope: rt.scope, AgentID: rt.agentID,
-		Routed: rt.routed, Tier: rt.tier, Model: rt.model, Effort: rt.effort, Status: t.status,
+		Routed: rt.routed, Tier: rt.tier, Model: rt.model, Effort: rt.effort, TurnEffort: rt.turnEffort, Status: t.status,
 		InputTokens: t.u.InputTokens, OutputTokens: t.u.OutputTokens,
 		CacheReadInputTokens: t.u.CacheReadInputTokens, CacheCreationInputTokens: t.u.CacheCreationInputTokens,
 		Limits: t.limits,
