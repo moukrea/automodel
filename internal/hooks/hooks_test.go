@@ -38,8 +38,9 @@ type fa struct {
 	asked float64 // asked tiers (tier_*)
 	rel   string
 	relP  float64
-	offer float64 // after a detour: the assistant offered more of it
-	x     map[string]float64
+	offer  float64 // after a detour: the assistant offered more of it
+	rework float64 // the last work fell short
+	x      map[string]float64
 }
 
 func answer(tier string, conf float64) fa { return fa{tier: tier, conf: conf, ultra: 0.05} }
@@ -117,6 +118,9 @@ func (f *fakeJev) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			if id == jev.QOffer {
 				v = a.offer
+			}
+			if id == jev.QRework {
+				v = a.rework
 			}
 			if x, ok := strings.CutPrefix(id, jev.QExplicitPfx); ok {
 				v = 0.02

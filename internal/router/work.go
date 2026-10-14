@@ -190,6 +190,11 @@ func (e *Env) holdAt(req Request, rd Reading, work, cur *catalog.Tier) (*catalog
 		// read aside 0.73 and ran the investigation it carries on at low:
 		// whatever comes first, the last words go on with the work.
 		return work, HoldEndsGoAhead
+	case e.reworks(req, rd):
+		// A complaint that the last work fell short is more of that work,
+		// at the level in force at least (see Judge), however apart it
+		// reads.
+		return higher(work, cur), HoldRework
 	case rd.separate() >= e.Catalog.Meta.RelationSeparateThreshold() && !Blind(req):
 		return nil, ""
 	case done && top != catalog.RelationContinue && top != catalog.RelationExtend:
@@ -260,6 +265,9 @@ const (
 // HoldEndsGoAhead is why a prompt that ends by telling Claude to carry on
 // follows the work up (Request.EndsGoAhead).
 const HoldEndsGoAhead = "ends with a go-ahead"
+
+// HoldRework is the hold of a prompt that says the last work fell short.
+const HoldRework = "the last work fell short"
 
 // HigherWork is the work that needs more of a and b (either may be nil):
 // the higher tier, then the one with a mode; a on a tie.

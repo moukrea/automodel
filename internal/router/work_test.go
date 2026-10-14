@@ -116,9 +116,28 @@ func TestReworkKeepsTheLevelInForce(t *testing.T) {
 		t.Error("asked with the feature off")
 	}
 	e.Cfg.Features.ReworkKeepsLevel = true
+	// At the work's level: a complaint that reads apart (live: "you call
+	// that an acceptable in-between frame? the eye corners of the original
+	// are still there!" over high work read new_task 0.36, separate 0.75)
+	// stays on the work at its level, instead of new work below it.
 	req.Current = &state.Decision{Tier: "high", Effort: "high"}
+	if !e.ReworkAsked(req) {
+		t.Fatal("not asked with the turn at the work's level")
+	}
+	high := e.Catalog.Tier(catalog.ScopeMain, "high")
+	rd = Reading{probs: map[string]float64{"low": 0.59, "medium": 0.24, "high": 0.14, "xhigh": 0.03}, conf: 0.59, top: "low",
+		relation: map[string]float64{catalog.RelationNewTask: 0.36, catalog.RelationExtend: 0.24, catalog.RelationAside: 0.21, catalog.RelationSideQuestion: 0.17, catalog.RelationContinue: 0.02}, rework: 0.9}
+	v := e.Judge(req, rd, high, policy.RepoPolicy{}, p)
+	if v.Tier.ID != "high" || v.Hold != HoldRework || (v.Work != nil && v.Work.Kind == WorkNew) {
+		t.Errorf("complaint at the work's level: %s, hold %q, work %+v", v.Tier.ID, v.Hold, v.Work)
+	}
+	rd.rework = 0.05
+	if v := e.Judge(req, rd, high, policy.RepoPolicy{}, p); v.Work == nil || v.Work.Kind != WorkNew {
+		t.Errorf("separate work, no complaint: %+v", v.Work)
+	}
+	req.Work.Done = true
 	if e.ReworkAsked(req) {
-		t.Error("asked with the turn at the work's level")
+		t.Error("asked after the work was done")
 	}
 }
 
