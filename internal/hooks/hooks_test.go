@@ -32,12 +32,12 @@ import (
 // gets its own level) and the yes-probability of the explicit requests
 // (x, by request: effort_xhigh, mode_off...; 0.02 by default).
 type fa struct {
-	tier  string
-	conf  float64
-	ultra float64
-	asked float64 // asked tiers (tier_*)
-	rel   string
-	relP  float64
+	tier   string
+	conf   float64
+	ultra  float64
+	asked  float64 // asked tiers (tier_*)
+	rel    string
+	relP   float64
 	offer  float64 // after a detour: the assistant offered more of it
 	rework float64 // the last work fell short
 	x      map[string]float64
