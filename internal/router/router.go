@@ -933,12 +933,12 @@ func (e *Env) downConfidence(rd Reading, scope string, t *catalog.Tier) float64 
 
 // safeDown is the move below cur that pays back best among the tiers Jev's
 // reading says are enough (downConfidence at or above warm_min_confidence),
-// when Jev is sure of that reading,
-// or nil when none beats staying.
+// or nil when none beats staying. Each target passes the gate on its own,
+// so Jev's top confidence doesn't matter (live: a teammate on opus-max, read
+// sonnet-high 0.72 and opus-max 0, stayed on opus-max because the fallback
+// waited for a top confidence of 0.8).
 func (e *Env) safeDown(req Request, rd Reading, cur *catalog.Tier, pk *policy.Pick, params policy.Params) (*catalog.Tier, *policy.Pick) {
-	// Only on a sure reading: an unsure one keeps the tier in force, as
-	// before.
-	if pk == nil || req.SwitchCost == nil || !e.Cfg.Features.CumulativeDownConfidence || rd.conf < e.Cfg.Features.WarmMinConfidence {
+	if pk == nil || req.SwitchCost == nil || !e.Cfg.Features.CumulativeDownConfidence {
 		return nil, nil
 	}
 	scale := params.Scale
