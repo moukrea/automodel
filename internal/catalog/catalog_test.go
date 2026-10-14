@@ -62,10 +62,10 @@ func TestRepoCatalogIsValid(t *testing.T) {
 	for _, tr := range c.TiersByRank(ScopeSubagent) {
 		ids = append(ids, tr.ID)
 	}
-	if got := strings.Join(ids, ","); got != "haiku,sonnet-low,sonnet-high,sonnet-xhigh,opus-xhigh,opus-max" {
+	if got := strings.Join(ids, ","); got != "haiku,sonnet-medium,sonnet-high,opus-high,opus-xhigh,opus-max" {
 		t.Errorf("subagent tiers by rank = %s", got)
 	}
-	if got := c.DefaultTier(ScopeSubagent).ID; got != "sonnet-xhigh" {
+	if got := c.DefaultTier(ScopeSubagent).ID; got != "sonnet-medium" {
 		t.Errorf("default subagent tier = %s", got)
 	}
 }

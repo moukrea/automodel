@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -614,5 +615,73 @@ func TestTurnEffortRecorded(t *testing.T) {
 	})
 	if got := lastTurnEffort(map[string]json.RawMessage{"messages": json.RawMessage(`[` + user("x", false) + `]`)}); got != "" {
 		t.Errorf("no statement: %q", got)
+	}
+}
+
+func agentBody(msgs ...string) string {
+	return `{"model":"claude-sonnet-5-5","max_tokens":32000,"stream":true,"output_config":{"effort":"medium"},` +
+		`"metadata":{"user_id":"{\"session_id\":\"sess-a\"}"},"messages":[` + strings.Join(msgs, ",") + `]}`
+}
+
+const deferred = `{"role":"system","content":"Deferred tools are now available.","output_config":{"effort":"medium"}}`
+
+// A routed subagent runs its own effort: Claude Code states medium on the
+// first system message of every subagent conversation, which the API
+// applies over the top-level effort. A later change (a message sent to the
+// agent) is a per-turn statement, so the prefix, and the cache, stay put.
+func TestAgentEffortEnforced(t *testing.T) {
+	p, up, ps := setup(t)
+	h := map[string]string{HeaderSession: "sess-a", HeaderAgent: "agent-1"}
+	bind := func(tier, effort string) {
+		p.State.Update("sess-a", func(s *state.Session) bool {
+			s.Agents = map[string]*state.Decision{"agent-1": {Scope: "subagent", Tier: tier, Model: "claude-sonnet-5-5",
+				APIID: "claude-sonnet-5-5", Effort: effort, Trigger: TriggerResumeAgent}}
+			return true
+		})
+	}
+	msgsOf := func(m map[string]any) []any { return m["messages"].([]any) }
+	stated := func(ms []any) (out []string) {
+		for _, x := range ms {
+			if mm := x.(map[string]any); mm["role"] == "system" {
+				if oc, ok := mm["output_config"].(map[string]any); ok {
+					out = append(out, fmt.Sprint(oc["effort"]))
+				}
+			}
+		}
+		return out
+	}
+	bind("sonnet-high", "high")
+	post(t, ps.URL, h, agentBody(user("task", false), deferred))
+	m := up.last(t)
+	if m["output_config"].(map[string]any)["effort"] != "high" || strings.Join(stated(msgsOf(m)), ",") != "high,high" {
+		t.Fatalf("first request: top %v, statements %v", m["output_config"], stated(msgsOf(m)))
+	}
+	first := msgsOf(m)
+	// Sent a new message, the agent is moved to medium on the same model:
+	// the earlier statements stay as they were, a new one follows the message.
+	bind("sonnet-medium", "medium")
+	post(t, ps.URL, h, agentBody(user("task", false), deferred, asst("done"), user("now just rename it", true)))
+	m = up.last(t)
+	ms := msgsOf(m)
+	if got := strings.Join(stated(ms), ","); got != "high,high,medium" || m["output_config"].(map[string]any)["effort"] != "high" {
+		t.Fatalf("after the change: statements %s, top %v", got, m["output_config"])
+	}
+	for i := range first {
+		a, _ := json.Marshal(first[i])
+		b, _ := json.Marshal(ms[i])
+		if string(a) != string(b) {
+			t.Errorf("prefix message %d changed:\n%s\n%s", i, a, b)
+		}
+	}
+	// A tier the catalog no longer has keeps Claude Code's medium.
+	p2, up2, ps2 := setup(t)
+	p2.State.Update("sess-a", func(s *state.Session) bool {
+		s.Agents = map[string]*state.Decision{"agent-1": {Scope: "subagent", Tier: "sonnet-xhigh", Model: "claude-sonnet-5-5",
+			APIID: "claude-sonnet-5-5", Effort: "xhigh", Trigger: TriggerResumeAgent}}
+		return true
+	})
+	post(t, ps2.URL, h, agentBody(user("task", true), deferred))
+	if got := strings.Join(stated(msgsOf(up2.last(t))), ","); got != "medium" {
+		t.Errorf("retired tier: statements %s, want Claude Code's medium alone", got)
 	}
 }

@@ -32,7 +32,7 @@ func writeAgent(t *testing.T, dir, id, typ, name string, turns, context int, mod
 }
 
 func TestMessageHook(t *testing.T) {
-	fj := &fakeJev{answers: []fa{answer("sonnet-xhigh", 0.9)}}
+	fj := &fakeJev{answers: []fa{answer("sonnet-high", 0.9)}}
 	env := setup(t, fj)
 	sid := "s7"
 	markJev(t, env, sid)
@@ -55,7 +55,7 @@ func TestMessageHook(t *testing.T) {
 	send("flake-hunter", "Rebase your three PRs on main and check CI.")
 	sess, _ := env.State.Load(sid)
 	d := sess.Agents["a9e28da00fe9cf0fe"]
-	if d == nil || d.Tier != "sonnet-xhigh" || d.APIID != "claude-sonnet-5-5" || d.Trigger != TriggerResumeAgent {
+	if d == nil || d.Tier != "sonnet-high" || d.APIID != "claude-sonnet-5-5" || d.Trigger != TriggerResumeAgent {
 		l, _ := os.ReadFile(env.Cfg.Ledger)
 		t.Fatalf("resumed agent decision = %+v\n%s", d, l)
 	}
@@ -137,11 +137,13 @@ func TestMessageHookTeammate(t *testing.T) {
 	if d == nil || d.Trigger != TriggerResumeAgent {
 		t.Fatalf("teammate decision under %s = %+v", key, d)
 	}
-	// The reading (haiku 0.3, sonnet-low 0.7) says sonnet-low is enough;
-	// Haiku, cheaper to rewrite, is not (0.3).
-	if d.Model == "claude-haiku-5-5" || d.Tier != "sonnet-low" {
+	// The reading (haiku 0.3, sonnet-medium 0.7) says sonnet-medium is enough;
+	// Haiku, cheaper to rewrite, is not (0.3). Moving to Sonnet rewrites the
+	// 507k context ($1.93) for one turn's gain, while lowering the effort on
+	// Opus is free (per-turn statements keep the cache): opus-high.
+	if d.Model == "claude-haiku-5-5" || d.Tier != "opus-high" {
 		l, _ := os.ReadFile(env.Cfg.Ledger)
-		t.Errorf("507k-context teammate moved to %s (%s), want sonnet-low: %+v\n%s", d.Tier, d.Model, d, l)
+		t.Errorf("507k-context teammate moved to %s (%s), want opus-high: %+v\n%s", d.Tier, d.Model, d, l)
 	}
 }
 
@@ -162,7 +164,7 @@ func TestAgentSwitchCostLongContext(t *testing.T) {
 // A resumed agent on Opus max that Jev reads split between two Sonnet levels
 // moves down: the lower tier is surely enough even if no single level is
 // (live: teammates stayed on opus-max, read 0 by Jev, at confidence 0.53-0.79
-// with sonnet-xhigh or below at 0.84-0.85).
+// with sonnet-high or below at 0.84-0.85).
 func TestMessageHookCumulativeDown(t *testing.T) {
 	for _, on := range []bool{true, false} {
 		fj := &fakeJev{answers: []fa{answer("sonnet-high", 0.5)}}
@@ -182,7 +184,9 @@ func TestMessageHookCumulativeDown(t *testing.T) {
 			"tool_input": map[string]any{"to": "render", "message": "Port the bloom pass from the dumped shader."}})
 		sess, _ := env.State.Load(sid)
 		d := sess.Agents["ae0000000000000009"]
-		if moved := d != nil && d.Tier != "opus-max"; moved != on {
+		// Off, the costly move to Sonnet is gated; lowering the effort on Opus
+		// is free (per-turn statements keep the cache) and still happens.
+		if d == nil || d.Tier == "opus-max" || (!on && d.Model != "claude-opus-5-5") {
 			l, _ := os.ReadFile(env.Cfg.Ledger)
 			t.Errorf("cumulative %v: decision %+v\n%s", on, d, l)
 		}

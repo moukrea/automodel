@@ -131,6 +131,9 @@ type Features struct {
 	// ForksInherit keeps forks on their parent's model and effort, which
 	// lets them read its prompt cache.
 	ForksInherit bool `toml:"forks_inherit"`
+	// EnforceAgentEffort applies a routed subagent's effort over the medium
+	// Claude Code states in every subagent conversation (per-turn effort).
+	EnforceAgentEffort bool `toml:"enforce_agent_effort"`
 	// ScheduledOwnLevel: a scheduled prompt read apart from the work (a
 	// status check) takes its own level instead of the work's.
 	ScheduledOwnLevel bool `toml:"scheduled_own_level"`
@@ -188,14 +191,14 @@ func Default() *Config {
 		RouteWorkflowSteps:           true,
 		RecordStates:                 true,
 		Update:                       Update{Auto: true, Interval: Duration{6 * time.Hour}},
-		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "sonnet-xhigh"},
+		Budget:                       Budget{MaxTierWhenOver: "medium", MaxSubagentTierWhenOver: "sonnet-high"},
 		Features: Features{
 			WarmDecisions: true, PerTurnEffort: true, CostAware: true, FastPath: true,
 			WarmMinConfidence: 0.8, WarmTimeout: Duration{4 * time.Second}, SwitchHorizonPrompts: 3,
 			SubagentCacheTTL: "1h", MaxOnJevReading: true, RouteNamedSubagentModels: true, ForksInherit: true,
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
 			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true, LateJoinContext: true,
-			CumulativeDownConfidence: true,
+			CumulativeDownConfidence: true, EnforceAgentEffort: true,
 		},
 	}
 }

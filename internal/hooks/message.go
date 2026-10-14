@@ -292,15 +292,18 @@ func nearestTier(c *catalog.Catalog, model, effort string) *catalog.Tier {
 	return best
 }
 
-// agentSwitchCost: moving the agent off its model, or changing its effort
-// (subagents get a top-level effort, part of the cached prefix), writes its
-// whole context to the cache again instead of reading it.
+// agentSwitchCost: moving the agent off its model writes its whole context
+// to the cache again instead of reading it; so does changing its effort,
+// unless the proxy changes it with per-turn statements.
 func agentSwitchCost(env *router.Env, cur *state.Decision, context int) func(*catalog.Tier) float64 {
 	c := env.Catalog
 	from := c.Model(cur.Model)
 	long := subagentTTL(env) >= time.Hour
+	// The proxy changes a routed agent's effort with per-turn statements
+	// (enforce_agent_effort), which keep its cache.
+	perTurn := env.Cfg.Features.EnforceAgentEffort && env.Cfg.Features.PerTurnEffort && from != nil && from.PerTurnEffort && c.Meta.PerTurnEffortBeta != ""
 	return func(t *catalog.Tier) float64 {
-		if t.Model == cur.Model && (cur.Effort == "" || t.Effort == cur.Effort) {
+		if t.Model == cur.Model && (cur.Effort == "" || t.Effort == cur.Effort || perTurn) {
 			return 0
 		}
 		// At the agent's context: Haiku's write past 100k is 5x its list

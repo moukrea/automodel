@@ -113,3 +113,80 @@ Should routed agent effort be enforced? That means stripping Claude Code's state
   - Sonnet high for harder or longer work;
   - xhigh and Opus where the eval shows the gain.
 - **Measure first.** Use `turn_effort` on real traffic, and check whether the medium agents' work is good enough, before deciding. The owner has not complained about agent quality while they ran at medium.
+
+## 5. Follow-up (2026-10-14, v0.29.0): the agent ladder follows the guidance, and its effort applies
+
+The owner asked to align the subagent ladder with Anthropic's guidance and
+to make the routed effort real.
+
+**New ladder** (cost per task on the primary benchmark, all on its frontier):
+
+| Tier | Model, effort | For | Cost |
+|---|---|---|---|
+| haiku | Haiku 5.5 medium | mechanical, fully specified work | 0.14 |
+| sonnet-medium | Sonnet 5.5 medium | well-specified work (the default) | 0.48 |
+| sonnet-high | Sonnet 5.5 high | harder or longer work: design, prototypes, reviews of a diff, bugs of unknown cause | 0.88 |
+| opus-high | Opus 5.5 high | complex reasoning: intermittent bugs, reviews of concurrent/security/money code, proofs, lasting architecture | 1.82 |
+| opus-xhigh | Opus 5.5 xhigh | long autonomous work, well over 30 minutes | 3.46 |
+| opus-max | Opus 5.5 max | the deepest reasoning | 5.98 |
+
+Dropped: sonnet-low (Haiku medium and Sonnet medium cover it) and
+sonnet-xhigh (dominated by Opus high on the primary benchmark; Anthropic keeps
+xhigh for 30-minute-plus runs and Sonnet xhigh "only where evals show a gain").
+
+**The effort now applies** (`features.enforce_agent_effort`). The proxy
+restates the effort of Claude Code's own statements in a routed agent's
+conversation and adds per-turn statements, as on the main thread: a later
+change (a message sent to the agent) keeps its cache. In the ledger since
+v0.28.0 the applied effort was mixed, not always medium: teammates often ran
+the parent's xhigh, some agents had no statement (the routed top-level effort
+applied), others ran Claude Code's medium. Verified in the dev harness:
+- turn_effort = the routed effort (high) with the switch on, medium off (4 pairs);
+- a 5-request agent reads its cache on every request (writes 642, 78, 78, 78 tokens after the first).
+Agents on a retired tier keep what Claude Code states.
+
+**Relabelled eval cases (subagent scope).** Each old label class maps to the
+tier the guidance gives that work:
+- sonnet-low and sonnet-high → sonnet-medium (well-specified work: Sonnet medium);
+- sonnet-xhigh → sonnet-high (harder or longer: Sonnet high);
+- opus-xhigh → opus-high (complex reasoning, difficult code: high; xhigh is for long runs);
+- opus-max stays (accepting opus-xhigh);
+- two explicit edits (`sh-callsite-arg`, `sh-flaky-skip`) → haiku (Haiku medium covers agentic coding of fully specified edits);
+- five new invented train cases: four long autonomous runs at opus-xhigh, one short review at sonnet-medium.
+
+**Measured** (3 repeats; subagent cases only; heldout4/5 have none):
+
+| Split | exact | acceptable | rank error | per-tier recall |
+|---|---|---|---|---|
+| train, before (old ladder, old labels) | 81% | 99% | 0.21 | sonnet-low 71%, sonnet-high 72%, opus-max 0% |
+| train, after | 90% | 100% | 0.12 | ≥ 88% except opus-max (1 case, 0%) |
+| test, before | 90% | 100% | 0.10 | haiku 67% |
+| test, after (run once) | 85% | 100% | 0.15 | haiku 67%, sonnet-high 67% (two design stages read opus-high) |
+
+On the eval cases the old decisions map to the new ones almost one to one:
+sonnet-xhigh → sonnet-high 94% (opus-high 6%), opus-xhigh → opus-high 100%,
+sonnet-high → sonnet-medium 94%.
+
+**Weekly cost** (Home, 2026-10-07 to 10-14, $7,439 of subagent traffic at list
+prices; owner-traffic cost per effort from the model-mix note, Opus high = 1:
+Sonnet medium 0.20, high 0.33, xhigh 0.62; Opus high 1.00, xhigh 1.61, max 2.90):
+- if Sonnet agents ran at medium and Opus agents at their routed effort (what the
+  ledger's output per request suggests): $7,439 → $8,219 (+10%): Sonnet agents
+  routed to the harder level now really run at high (+$1.5k), Opus xhigh
+  agents move to high (−$0.7k);
+- with the mix measured since v0.28.0: −11%; if every agent ran at medium: +53%.
+The guidance, not the bill, sets the ladder: the likely outcome costs about 10% more.
+
+**Audit: does every override take effect?** (Home ledger, week to 2026-10-14; Jev costs about $0.0003 a call, so the calls themselves cost cents a week)
+
+| Path | Jev calls/week | Effect verified | Action |
+|---|---|---|---|
+| Agent spawn (Agent tool) | 160 | model: yes (alias); effort: mostly no (Claude Code's statement won) | effort made effective (enforce_agent_effort, harness turn_effort = routed) |
+| Resumed agent (SendMessage) | 1,484 | model changes 102: yes since v0.27.1; effort-only changes 105: mostly no | made effective, and priced as free (per-turn statements keep the cache) |
+| Fork | 0 (forks_inherit) | model: parent's; effort: no statement in forks, the top-level (main's) applies | kept. 10 real forks wrote 170-350K of cache; not automodel's marks (harness: a fork reads the parent's cache with or without them), a parent-marks change had no effect and was dropped |
+| Named-model agent | 0 when respected | — | kept |
+| Workflow stage | 3 | model: yes (injected); effort: the stage's option becomes Claude Code's statement (dump) | kept |
+| Main, peer message | 80 | 34 of 181 since 09-30 changed the level, the work or the mode | kept |
+| Main, mid-turn | 81 | 4 changed this week | kept |
+| Main, scheduled | 67 | own level for status checks (since v0.22) | kept |
+| Main, compaction | ~45 | 7 new works and 1 mode of 83 since 09-30 | kept |
