@@ -77,8 +77,9 @@ blind_stage_context = true
 name_custom_model = true
 # Handing a pin back ([effort:auto]) judges the work done while pinned again.
 rejudge_on_pin_release = true
-# A follow-up that says the last work was left undone or botched keeps the
-# level the turn ran at instead of going back to the work's.
+# A prompt that says the last work was left undone or botched stays on that
+# work at the level the turn ran at, instead of going back to the work's level
+# or reading as new work below it.
 rework_keeps_level = true
 # A prompt that ends by telling Claude to carry on ("just curious, carry on")
 # follows the work up at its level, whatever comes before.

@@ -569,9 +569,13 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 		top = catalog.RelationAside
 	}
 	// A prompt that ends by telling Claude to carry on goes on with the work
-	// (holdAt), on its mode, whatever its first words read as.
+	// (holdAt), on its mode, whatever its first words read as; a complaint
+	// that the last work fell short is more of it, whatever it reads as.
 	if reason == HoldEndsGoAhead {
 		top = catalog.RelationContinue
+	}
+	if reason == HoldRework {
+		top = catalog.RelationExtend
 	}
 	// A scheduled task's prompt Jev reads apart from the work (a status
 	// check) runs at its own level, answered alone: it neither starts,
@@ -639,7 +643,7 @@ func (e *Env) Judge(req Request, rd Reading, cur *catalog.Tier, rp policy.RepoPo
 			floor = higher(floor, t)
 			why = append(why, "ultrathink")
 		}
-		if hold != nil && cur != nil && cur.Rank > hold.Rank && e.reworks(req, rd) {
+		if hold != nil && cur != nil && cur.Rank > hold.Rank && reason != HoldRework && e.reworks(req, rd) {
 			// A complaint that the last work fell short doesn't go back
 			// below the level it ran at (live: "the alternate paths aren't
 			// done, you have the game data, figure it out" over high work
@@ -1506,9 +1510,14 @@ func shortWhy(reason string) string {
 	return "kept"
 }
 
-// ReworkAsked says whether a prompt gets the rework question: a follow-up
-// typed by the user while the turn runs above the work's level, the only
-// case where going back to the work's level lowers it.
+// ReworkAsked says whether a prompt gets the rework question: a prompt
+// typed by the user on a warm turn with work in progress. Whatever the
+// level the turn runs at, a complaint that the last work fell short must
+// not lower it: above the work, by going back to the work's level; at the
+// work's, by reading as separate new work at a lower level (live: "you
+// call that an acceptable in-between frame? and the eye corners of the
+// original image are still there!" over high work read new_task 0.36,
+// separate 0.75, and started new medium work).
 func (e *Env) ReworkAsked(req Request) bool { return e.reworkAsked(req) }
 
 func (e *Env) reworkAsked(req Request) bool {
@@ -1516,7 +1525,7 @@ func (e *Env) reworkAsked(req Request) bool {
 		return false
 	}
 	cur, work := e.Catalog.Tier(req.Scope, req.Current.Tier), e.Catalog.Tier(req.Scope, req.Work.Tier)
-	return cur != nil && work != nil && cur.Rank > work.Rank
+	return cur != nil && work != nil
 }
 
 // reworks reports a follow-up that says the last work fell short.

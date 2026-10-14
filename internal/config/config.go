@@ -146,8 +146,9 @@ type Features struct {
 	// RejudgeOnPinRelease: handing a pin back judges the work done while
 	// pinned again, instead of reading the prompt alone.
 	RejudgeOnPinRelease bool `toml:"rejudge_on_pin_release"`
-	// ReworkKeepsLevel: a follow-up that says the last work was left undone
-	// or botched doesn't go below the level the turn ran at.
+	// ReworkKeepsLevel: a prompt that says the last work was left undone or
+	// botched is more of that work and doesn't go below the level the turn
+	// ran at, however apart it reads.
 	ReworkKeepsLevel bool `toml:"rework_keeps_level"`
 	// TrailingGoAhead: a prompt that ends by telling Claude to carry on
 	// ("just curious, carry on") follows the work up, whatever comes first.
