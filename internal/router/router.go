@@ -159,6 +159,8 @@ type Request struct {
 	Current    *state.Decision
 	SwitchCost func(*catalog.Tier) float64
 	Scale      float64
+	// PrevProbs is a resumed agent's previous reading (nil: none).
+	PrevProbs map[string]float64
 }
 
 // Outcome says what a warm decision did.
@@ -450,6 +452,9 @@ func (e *Env) Decide(ctx context.Context, req Request) (*state.Decision, Outcome
 	turnOnly := v.TurnOnly != "" && !e.capsMode(req, v.TurnOnly)
 	if v.Keep != "" {
 		d, out := keep(v.Keep)
+		if req.Scope == catalog.ScopeSubagent {
+			d.Probs = rd.probs // the agent's latest reading (hysteresis)
+		}
 		out.Work, out.Asked, out.TurnOnly = v.Work, v.Asked, turnOnly
 		return d, out
 	}
@@ -1160,6 +1165,59 @@ func (e *Env) majorityModel(scope string, probs map[string]float64) (string, flo
 	return best, bp
 }
 
+// agentLeaveHorizon is how many more messages a resumed agent gets after
+// any one (median, 2026-10-08 to 14): the horizon a move off Opus pays back on.
+const agentLeaveHorizon = 16
+
+// opusSustained: a resumed agent's need for the costliest model holds
+// (0.7 of this reading, or half of it on this reading and the previous).
+func (e *Env) opusSustained(req Request, rd Reading) bool {
+	top := e.topModel(req.Scope)
+	p := e.modelMass(req.Scope, rd.probs, top)
+	return p >= 0.7 || (p >= 0.5 && req.PrevProbs != nil && e.modelMass(req.Scope, req.PrevProbs, top) >= 0.5)
+}
+
+// hysteresis keeps a resumed agent's model choice symmetric: it goes onto
+// the costliest model only on a sustained reading, and leaves it once the
+// cheaper models hold warm_min_confidence of the reading, for a tier Jev
+// says is enough, when the rewrite pays back on the agent's remaining
+// messages rather than the next three (live: an agent went to Opus on one 0.54 reading, then stayed there on
+// readings of 0.15 and 0.22 because the rewrite back didn't pay back
+// within three messages; agents ran on Opus for 49% of their messages,
+// 49 of them read under 0.3 Opus).
+func (e *Env) hysteresis(req Request, rd Reading, cur *catalog.Tier, pk policy.Pick, sc func(*catalog.Tier) float64, params policy.Params) policy.Pick {
+	c := e.Catalog
+	top := e.topModel(req.Scope)
+	p := params
+	switch {
+	case cur.Model != top && pk.Tier.Model == top && !e.opusSustained(req, rd):
+		p.Allow = func(t *catalog.Tier) bool { return t.Model != top }
+		if alt := policy.Best(c, req.Scope, rd.probs, cur, sc, p); alt.Tier != nil && alt.Tier.Model != top {
+			return alt
+		}
+	case cur.Model == top && 1-e.modelMass(req.Scope, rd.probs, top) >= e.Cfg.Features.WarmMinConfidence:
+		// Leaving: to the best tier Jev says is enough, when the rewrite
+		// pays back on the agent's remaining messages (16 still to come
+		// after any one, median, 2026-10-08 to 14), not on the next three.
+		// Staying is weighed at the cheapest effort of its own model, a free
+		// move (per-turn effort keeps the cache).
+		enough := func(t *catalog.Tier) bool {
+			return t.Model != top && e.downConfidence(rd, req.Scope, t) >= e.Cfg.Features.WarmMinConfidence
+		}
+		p.Allow = func(t *catalog.Tier) bool { return t.Model == cur.Model || enough(t) }
+		if p.Scale <= 0 {
+			p.Scale = 1
+		}
+		if h := e.Cfg.Features.SwitchHorizonPrompts; h > 0 {
+			p.Scale *= agentLeaveHorizon / h
+		}
+		if alt := policy.Best(c, req.Scope, rd.probs, cur, sc, p); alt.Tier != nil && enough(alt.Tier) {
+			return alt
+		}
+	}
+	return pk
+}
+
 // pick applies the cost-aware policy (or the v1 confidence rule).
 func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Params) (*catalog.Tier, *policy.Pick) {
 	c := e.Catalog
@@ -1189,6 +1247,9 @@ func (e *Env) pick(req Request, rd Reading, cur *catalog.Tier, params policy.Par
 					pk = alt
 				}
 			}
+		}
+		if req.Scope == catalog.ScopeSubagent && e.Cfg.Features.AgentModelHysteresis && req.Warm && cur != nil && pk.Tier != nil {
+			pk = e.hysteresis(req, rd, cur, pk, sc, params)
 		}
 		// The costliest tier only on Jev's own reading: the underprovision
 		// penalty must not settle a split reading there (live: a subagent

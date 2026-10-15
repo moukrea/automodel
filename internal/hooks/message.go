@@ -92,6 +92,9 @@ func Message(ctx context.Context, env *router.Env, in *Input) (*Output, error) {
 		req.SwitchCost = agentSwitchCost(env, cur, ag.Context)
 		req.Scale = agentScale(env, t, ag.TurnUSD)
 	}
+	if prev, ok := sess.Agents[ag.Key]; ok && prev != nil && prev.Scope == catalog.ScopeSubagent {
+		req.PrevProbs = prev.Probs
+	}
 	dec, _ := env.Decide(ctx, req)
 	if dec == nil || c.Model(dec.Model) == nil {
 		return nil, nil

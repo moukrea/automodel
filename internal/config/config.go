@@ -179,6 +179,14 @@ type Features struct {
 	// of that model Jev's reading says is enough (an effort change keeps
 	// the cache), instead of the tier's effort.
 	AgentEffortStepDown bool `toml:"agent_effort_step_down"`
+	// AgentModelHysteresis: a resumed agent with a warm cache moves onto
+	// the costliest model (Opus) only on a sustained reading (Opus holds
+	// 0.7 of it, or half of it on this message and the one before), and
+	// leaves it as soon as the cheaper models hold warm_min_confidence of
+	// the reading, without waiting for the rewrite to pay back on the next
+	// few messages: going up on one reading and coming down only on a
+	// payback kept agents on Opus for messages Jev read as Sonnet work.
+	AgentModelHysteresis bool `toml:"agent_model_hysteresis"`
 }
 
 func Default() *Config {
@@ -210,7 +218,7 @@ func Default() *Config {
 			ScheduledOwnLevel: true, BlindStageContext: true, NameCustomModel: true, RejudgeOnPinRelease: true,
 			ReworkKeepsLevel: true, TrailingGoAhead: true, ResumedAgentsOwnLevel: true, LateJoinContext: true,
 			CumulativeDownConfidence: true, EnforceAgentEffort: true, AgentModelOnJevReading: true,
-			AgentEffortStepDown: true,
+			AgentEffortStepDown: true, AgentModelHysteresis: true,
 		},
 	}
 }

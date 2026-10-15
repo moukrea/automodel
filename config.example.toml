@@ -104,6 +104,11 @@ agent_model_on_jev_reading = true
 # runs at the lowest effort of that model Jev's reading says is enough.
 agent_effort_step_down = true
 
+# A resumed agent with a warm cache goes onto Opus only on a sustained reading
+# (Opus at 0.7, or at half on this message and the previous one) and leaves
+# Opus once Sonnet and Haiku hold warm_min_confidence of Jev's reading.
+agent_model_hysteresis = true
+
 # Spending cap (prices from the catalog). Once reached, routing stays at or
 # below max_tier_when_over until the next day (or session). Pins are not capped.
 # [budget]
